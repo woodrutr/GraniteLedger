@@ -198,103 +198,130 @@ Objective is to minimize costs to the electric power system. Costs include dispa
 
 Minimize total cost ($)
 
+
 $$
-        \min \mathbf{C_{tot}} =  C_{disp}+ C_{unload} \\
-        (+ C_{exp} + C_{fom} \quad if \quad sw\_expansion = 1 )\\ 
-        (+ C_{tra} \quad if \quad sw\_trade = 1 )\\
-        (+ C_{ramp} \quad if \quad sw\_ramp = 1 )\\
-        (+ C_{or}\quad if \quad sw\_reserves = 1 )
-        \tag{1}
+\begin{aligned}
+        \min \mathbf{C\_{tot}} =  C\_{disp}+ C\_{unload} \\
+        (+ C\_{exp} + C\_{fom} \quad if \quad sw\\_expansion = 1 )\\ 
+        (+ C\_{tra} \quad if \quad sw\\_trade = 1 )\\
+        (+ C\_{ramp} \quad if \quad sw\\_ramp = 1 )\\
+        (+ C\_{or}\quad if \quad sw\\_reserves = 1 )
+\end{aligned}
 $$
+
 
 where:
 
 Dispatch cost: 
+
 $$
-C_{disp} = 
-        \sum_{h \in H | s=MHS_h}{}
-        (WD_h \times 
-        \sum_{{t,y,r,s} \in \theta^{GSH}_h}{WY_y \times SPR_{r,seas,t,s,y} \times \mathbf{GEN}_{t,y,r,s,h}}\\
-        +\sum_{{t,y,r,s} \in \theta^{SSH}_h}{(WY_y \times (0.5 \times SPR_{r,seas,t,s,y} \times (\mathbf{STOR^{in}}_{t,y,r,s,h} + \mathbf{STOR^{out}}_{t,y,r,s,h})}\\
-        + (HW_h \times STORLC) \times \mathbf{STOR^{level}}_{t,y,r,s,h}))\\
-        +\sum_{{t,y,r,s} \in \theta^{H2SH}_h}{WY_y \times H2PR_{r,seas,t,s,y} \times H2HR \times \mathbf{GEN}_{t,y,r,1,h}}) 
-        \tag{2}
+\begin{aligned}
+C\_{disp} = 
+        \sum\_{h \in H \| s=MHS\_h}{}
+        (WD\_h \times 
+        \sum\_{{t,y,r,s} \in \theta^{GSH}\_h}{WY\_y \times SPR\_{r,seas,t,s,y} \times \mathbf{GEN}\_{t,y,r,s,h}}\\
+        +\sum\_{{t,y,r,s} \in \theta^{SSH}\_h}{(WY\_y \times (0.5 \times SPR\_{r,seas,t,s,y} \times (\mathbf{STOR^{in}}\_{t,y,r,s,h} + \mathbf{STOR^{out}}\_{t,y,r,s,h})}\\
+        + (HW\_h \times STORLC) \times \mathbf{STOR^{level}}\_{t,y,r,s,h}))\\
+        +\sum\_{{t,y,r,s} \in \theta^{H2SH}\_h}{WY\_y \times H2PR\_{r,seas,t,s,y} \times H2HR \times \mathbf{GEN}\_{t,y,r,1,h}}) 
+\end{aligned}
 $$
+
 
 Unmet load cost:
+
 $$
-        C_{unload} = 
-        \sum_{{r,y,h} \in \Theta_{um}}{
-        WD_h \times 
-        WY_y \times UMLPEN \times \mathbf{UNLOAD}_{r,y,h}}
-        \tag{3}
+\begin{aligned}
+        C\_{unload} = 
+        \sum\_{{r,y,h} \in \Theta\_{um}}{
+        WD\_h \times 
+        WY\_y \times UMLPEN \times \mathbf{UNLOAD}\_{r,y,h}}
+\end{aligned}
 $$
+
 
 Capacity expansion cost: 
-$$        
-C_{exp} = 
-        \sum_{{r,t,y,s} \in \Theta_{cc}}
-       ( CAPC0_{r,t,y,s} 
+
+$$
+\begin{aligned}
+C\_{exp} = 
+        \sum\_{{r,t,y,s} \in \Theta\_{cc}}
+       ( CAPC0\_{r,t,y,s} 
        \\
        \times \left( \frac{
-            SCL_t + 0.001 \times (y-YR0) 
-            + \sum_{{r,t1,s} \in \Theta_{cc0} | t1 = t}{ \sum_{y1 \in Y | y1<y}{\mathbf{CAP^{new}}_{r,t1,y1,s}}}
-            }{SCL_t} \right) ^{-LR_t} 
+            SCL\_t + 0.001 \times (y-YR0) 
+            + \sum\_{{r,t1,s} \in \Theta\_{cc0} \| t1 = t}{ \sum\_{y1 \in Y \| y1 \< y}{\mathbf{CAP^{new}}\_{r,t1,y1,s}}}
+            }{SCL\_t} \right) ^{-LR\_t} 
             \\
-            \times \mathbf{CAP^{new}}_{r,t,y,s} )
+            \times \mathbf{CAP^{new}}\_{r,t,y,s} )
          \\
-        \quad if \quad sw\_learning = 2 
-       \tag{4a}
+        \quad if \quad sw\\_learning = 2 
+\end{aligned}
 $$
+
 <br />
 
+
 $$
-        C_{exp} = 
-        \sum_{{r,t,y,s} \in \Theta_{cc}}{
-       CAPCL_{r,t,y,s} \times \mathbf{CAP^{new}}_{r,t,y,s}} \\
-       \quad if \quad sw\_learning < 2 
-       \tag{4b}
+\begin{aligned}
+        C\_{exp} = 
+        \sum\_{{r,t,y,s} \in \Theta\_{cc}}{
+       CAPCL\_{r,t,y,s} \times \mathbf{CAP^{new}}\_{r,t,y,s}} \\
+       \quad if \quad sw\\_learning  \<  2 
+\end{aligned}
 $$
+
 
 Fixed O\&M cost:
+
 $$
-        C_{fom} =
-        \sum_{{r,seas,t,s,y} \in \Theta_{sc} | seas=2}{
-        WY_y \times FOMC_{r,t,s} \times \mathbf{CAP^{tot}}_{r,seas,t,s,y}}
-        \tag{5}
+\begin{aligned}
+        C\_{fom} =
+        \sum\_{{r,seas,t,s,y} \in \Theta\_{sc} \| seas=2}{
+        WY\_y \times FOMC\_{r,t,s} \times \mathbf{CAP^{tot}}\_{r,seas,t,s,y}}
+\end{aligned}
 $$
+
 
 Interregional trade cost:
+
 $$
-        C_{tra} =
-        \sum_{{r,r1,y,h} \in \Theta_{tra}}{
-        WD_h \times WY_y \times TRAC_{r,r1,y} \times \mathbf{TRA}_{r,r1,y,h}}\\
+\begin{aligned}
+        C\_{tra} =
+        \sum\_{{r,r1,y,h} \in \Theta\_{tra}}{
+        WD\_h \times WY\_y \times TRAC\_{r,r1,y} \times \mathbf{TRA}\_{r,r1,y,h}}\\
         +
-        \sum_{{r,r^{int},y,c,h} \in \Theta_{tracan}}{WD_h \times WY_y \times TRACC_{r,r^{int},c,y} \times 
-        \mathbf{TRA^{int}_{r,r^{int},y,c,h}}}
-        \tag{6}
+        \sum\_{{r,r^{int},y,c,h} \in \Theta\_{tracan}}{WD\_h \times WY\_y \times TRACC\_{r,r^{int},c,y} \times 
+        \mathbf{TRA^{int}\_{r,r^{int},y,c,h}}}
+\end{aligned}
 $$
+
 
 Ramping cost:
+
 $$
-        C_{ramp} =
-        \sum_{{t,y,r,s,h} \in \Theta_{ramp}}{
-        WD_h \times WY_y \times 
-        (RUC_t \times \mathbf{RAMP^{up}}_{t,y,r,s,h}
-        + RDC_t \times \mathbf{RAMP^{up}}_{t,y,r,s,h})}
-        \tag{7}
+\begin{aligned}
+        C\_{ramp} =
+        \sum\_{{t,y,r,s,h} \in \Theta\_{ramp}}{
+        WD\_h \times WY\_y \times 
+        (RUC\_t \times \mathbf{RAMP^{up}}\_{t,y,r,s,h}
+        + RDC\_t \times \mathbf{RAMP^{up}}\_{t,y,r,s,h})}
+\end{aligned}
 $$
 
+
 Operating reserve cost:
+
 $$
-    C_{op} =
-        \sum_{{o,t,y,r,s,h} \in \Theta_{orp}}{
-        WD_h \times WY_y \times 
-        ORC_t \times
-        \mathbf{ORP}_{o,t,y,r,s,h}
+\begin{aligned}
+    C\_{op} =
+        \sum\_{{o,t,y,r,s,h} \in \Theta\_{orp}}{
+        WD\_h \times WY\_y \times 
+        ORC\_t \times
+        \mathbf{ORP}\_{o,t,y,r,s,h}
         }
-        \tag{8}
+\end{aligned}
 $$
+
 
 ### Constraints
 
@@ -304,38 +331,47 @@ Balance constraints exist for generation as well as energy storage. For demand, 
 For energy storage technologies, the balance constraints ensure that the storage level in the current time segment is equal to the storage level in the previous time-segment plus any storage charge and/or discharge (while also accounting for round-trip efficiency losses). 
 
 Demand balance constraint:
+
 $$
-    LOAD_{r,y,h} \leq \sum_{{t,s} \in \theta^{GDB}_{y,r,h}}{\mathbf{GEN}_{t,y,r,s,h}}\\
-    + \sum_{{t,s} \in \theta^{SDB}_{y,r,h}}{(\mathbf{STOR^{out}}_{t,y,r,s,h} 
-    - \mathbf{STOR^{in}}_{t,y,r,s,h})}\\
-        + \mathbf{UNLOAD}_{r,y,h}\\
-        (+ \sum_{r1 \in \theta^{TDB}_{y,r,h}}{\left(\mathbf{TRA}_{r,r1,y,h} \times (1 - LL) - \mathbf{TRA}_{r1,r,y,h}\right)} 
-        \quad if \quad sw\_trade = 1)\\
-    (+ \sum_{r_{int},c \in \theta^{TCDB}_{y,r,h}}{(\mathbf{TRA}^{int}_{r,r_{int},y,c,h} 
-    \times (1 - LL) - \mathbf{TRA}^{int}_{r_{int},r,y,c,h})} 
-    \quad if \quad sw\_trade = 1)\\
-        \forall  {r,y,h} \in \Theta_{load}
-        \tag{1}
+\begin{aligned}
+    LOAD\_{r,y,h} \leq \sum\_{{t,s} \in \theta^{GDB}\_{y,r,h}}{\mathbf{GEN}\_{t,y,r,s,h}}\\
+    + \sum\_{{t,s} \in \theta^{SDB}\_{y,r,h}}{(\mathbf{STOR^{out}}\_{t,y,r,s,h} 
+    - \mathbf{STOR^{in}}\_{t,y,r,s,h})}\\
+        + \mathbf{UNLOAD}\_{r,y,h}\\
+        (+ \sum\_{r1 \in \theta^{TDB}\_{y,r,h}}{\left(\mathbf{TRA}\_{r,r1,y,h} \times (1 - LL) - \mathbf{TRA}\_{r1,r,y,h}\right)} 
+        \quad if \quad sw\\_trade = 1)\\
+    (+ \sum\_{r\_{int},c \in \theta^{TCDB}\_{y,r,h}}{(\mathbf{TRA}^{int}\_{r,r\_{int},y,c,h} 
+    \times (1 - LL) - \mathbf{TRA}^{int}\_{r\_{int},r,y,c,h})} 
+    \quad if \quad sw\\_trade = 1)\\
+        \forall  {r,y,h} \in \Theta\_{load}
+\end{aligned}
 $$
 
+
 First hour storage balance constraint:
+
 $$
-        \mathbf{STOR^{level}}_{t,y,r,s,h} = 
-        \mathbf{STOR^{level}}_{t,y,r,s,h+N - 1}\\
-        + EFF_t \times \mathbf{STOR^{in}}_{t,y,r,s,h} - \mathbf{STOR^{out}}_{t,y,r,s,h}\\
-        \forall {t,y,r,s,h} \in \Theta_{SBFH}
-        \tag{2}
-$$ 
+\begin{aligned}
+        \mathbf{STOR^{level}}\_{t,y,r,s,h} = 
+        \mathbf{STOR^{level}}\_{t,y,r,s,h+N - 1}\\
+        + EFF\_t \times \mathbf{STOR^{in}}\_{t,y,r,s,h} - \mathbf{STOR^{out}}\_{t,y,r,s,h}\\
+        \forall {t,y,r,s,h} \in \Theta\_{SBFH}
+\end{aligned}
+$$
+
 
 
 Storage balance (not first hour) constraint:
+
 $$
-        \mathbf{STOR^{level}}_{t,y,r,s,h} = 
-        \mathbf{STOR^{level}}_{t,y,r,s,h - 1}\\
-        + EFF_t \times \mathbf{STOR^{in}}_{t,y,r,s,h} - \mathbf{STOR^{out}}_{t,y,r,s,h}\\
-        \forall {t,y,r,s,h} \in \Theta_{SBH}
-        \tag{3}
+\begin{aligned}
+        \mathbf{STOR^{level}}\_{t,y,r,s,h} = 
+        \mathbf{STOR^{level}}\_{t,y,r,s,h - 1}\\
+        + EFF\_t \times \mathbf{STOR^{in}}\_{t,y,r,s,h} - \mathbf{STOR^{out}}\_{t,y,r,s,h}\\
+        \forall {t,y,r,s,h} \in \Theta\_{SBH}
+\end{aligned}
 $$
+
 
 #### Generation Upper Bounds
 
@@ -346,254 +382,323 @@ $$ Generation + Reserve Procurement <= Capacity \times Capacity Factor $$
 This is the same constraint for dispatchable, hydroelectric, and intermittent technologies. For intermittent technologies, the capacity factors are exogenously specified in the input data. In addition, hydroelectric generation has an additional seasonal constraint, where hydroelectric capacity is seasonally limited based on assumed availability of water resources seasonally, as specified in the input data. Storage upper bound constraints need to account for the upper bounds on both the charge and discharge of the technology, as well as the operating level in any given time segment. 
 
 Hydroelectric generation seasonal upper bound:
+
 $$
-        \sum_{h \in \theta^{HSH}_{seas}}{\mathbf{GEN}_{t,y,r,1,h} \times Idaytq_{MHD_{h}}} \leq \mathbf{CAP^{tot}}_{r,seas,t,1,y} \times HCF_{r,seas}
-        \times WHS_{seas}\\
-            \forall {t,y,r,seas} \in \Theta_{hs}
-            \tag{4}
+\begin{aligned}
+        \sum\_{h \in \theta^{HSH}\_{seas}}{\mathbf{GEN}\_{t,y,r,1,h} \times Idaytq\_{MHD\_{h}}} \leq \mathbf{CAP^{tot}}\_{r,seas,t,1,y} \times HCF\_{r,seas}
+        \times WHS\_{seas}\\
+            \forall {t,y,r,seas} \in \Theta\_{hs}
+\end{aligned}
 $$
+
 
 
 Dispatchable technology generation upper bound:
+
 $$
-        \mathbf{GEN}_{t,y,r,s,h} \\
-        (+ \sum_{rt \in RT}{\mathbf{OPRP}_{rt,t,y,r,s,h}} 
-        \quad if \quad sw\_rm = 1)\\
-        \leq \mathbf{CAP^{tot}}_{r,MHS_h,t,s,y} \times HW_h\\
-        \forall {t,y,r,s,h} \in \Theta_{dt^{max}}
-        \tag{5}
+\begin{aligned}
+        \mathbf{GEN}\_{t,y,r,s,h} \\
+        (+ \sum\_{rt \in RT}{\mathbf{OPRP}\_{rt,t,y,r,s,h}} 
+        \quad if \quad sw\\_rm = 1)\\
+        \leq \mathbf{CAP^{tot}}\_{r,MHS\_h,t,s,y} \times HW\_h\\
+        \forall {t,y,r,s,h} \in \Theta\_{dt^{max}}
+\end{aligned}
 $$
+
 
 
 Hydroelectric technology generation upper bound:
+
 $$
-        \mathbf{GEN}_{t,y,r,s,h} \\
-        (+ \sum_{rt \in RT}{\mathbf{OPRP}_{rt,t,y,r,s,h}}
-        \quad if \quad sw\_rm = 1)\\
-        \leq \mathbf{CAP^{tot}}_{r,MHS_h,t,s,y} \times HCF_{r,MHS_h} \times HW_h\\
-        \forall {t,y,r,s,h} \in \Theta_{ht^{max}}
-        \tag{6}
+\begin{aligned}
+        \mathbf{GEN}\_{t,y,r,s,h} \\
+        (+ \sum\_{rt \in RT}{\mathbf{OPRP}\_{rt,t,y,r,s,h}}
+        \quad if \quad sw\\_rm = 1)\\
+        \leq \mathbf{CAP^{tot}}\_{r,MHS\_h,t,s,y} \times HCF\_{r,MHS\_h} \times HW\_h\\
+        \forall {t,y,r,s,h} \in \Theta\_{ht^{max}}
+\end{aligned}
 $$
+
 
 
 Intermittent technology upper bound:
+
 $$
-        \mathbf{GEN}_{t,y,r,s,h} \\
-        (+ \sum_{rt \in RT}{\mathbf{OPRP}_{rt,t,y,r,s,h}}
-        \quad if \quad sw\_rm = 1)\\
-        \leq \mathbf{CAP^{tot}}_{r,MHS_h,t,s,y} \times ICF_{t,y,r,s,h} \times HW_h\\
-        \forall {t,y,r,s,h} \in \Theta_{it^{max}}
-        \tag{7}
+\begin{aligned}
+        \mathbf{GEN}\_{t,y,r,s,h} \\
+        (+ \sum\_{rt \in RT}{\mathbf{OPRP}\_{rt,t,y,r,s,h}}
+        \quad if \quad sw\\_rm = 1)\\
+        \leq \mathbf{CAP^{tot}}\_{r,MHS\_h,t,s,y} \times ICF\_{t,y,r,s,h} \times HW\_h\\
+        \forall {t,y,r,s,h} \in \Theta\_{it^{max}}
+\end{aligned}
 $$
+
 
 
 Storage technology inflow upper bound:
+
 $$
-        \mathbf{STOR^{in}}_{t,y,r,s,h} + 
-        \leq \mathbf{CAP^{tot}}_{r,MHS_h,t,s,y} \times HW_h\\
-        \forall {t,y,r,s,h} \in \Theta_{stor}
-        \tag{8}
-$$ 
+\begin{aligned}
+        \mathbf{STOR^{in}}\_{t,y,r,s,h} + 
+        \leq \mathbf{CAP^{tot}}\_{r,MHS\_h,t,s,y} \times HW\_h\\
+        \forall {t,y,r,s,h} \in \Theta\_{stor}
+\end{aligned}
+$$
+
 
 Storage technology outflow upper bound:
+
 $$
-        \mathbf{STOR^{out}}_{t,y,r,s,h} \\
-        (+\sum_{rt \in RT}{\mathbf{OPRP}_{rt,t,y,r,s,h}}
-        \quad if \quad sw\_rm = 1)\\
-        \leq \mathbf{CAP^{tot}}_{r,MHS_h,t,s,y} \times HW_h\\
-        \forall {t,y,r,s,h} \in \Theta_{stor}
-        \tag{9}
+\begin{aligned}
+        \mathbf{STOR^{out}}\_{t,y,r,s,h} \\
+        (+\sum\_{rt \in RT}{\mathbf{OPRP}\_{rt,t,y,r,s,h}}
+        \quad if \quad sw\\_rm = 1)\\
+        \leq \mathbf{CAP^{tot}}\_{r,MHS\_h,t,s,y} \times HW\_h\\
+        \forall {t,y,r,s,h} \in \Theta\_{stor}
+\end{aligned}
 $$
+
 
 
 Storage technology level upper bound:
+
 $$
-        \mathbf{STOR^{level}}_{t,y,r,s,h} 
-        \leq \mathbf{CAP^{tot}}_{r,MHS_h,t,s,y} \times STOR^{dur}_t\\
-        \forall {t,y,r,s,h} \in \Theta_{stor}
-        \tag{10}
+\begin{aligned}
+        \mathbf{STOR^{level}}\_{t,y,r,s,h} 
+        \leq \mathbf{CAP^{tot}}\_{r,MHS\_h,t,s,y} \times STOR^{dur}\_t\\
+        \forall {t,y,r,s,h} \in \Theta\_{stor}
+\end{aligned}
 $$
+
 
 #### Capacity Expansion
 
 The model can build new generating technologies each year (when the expansion switch is turned on). The expansion constraint ensures that operating capacity is based on the capacity in the previous year, plus any additions and minus any retirements. The retirement constraint ensures that retirements never exceed the capacity available on the system.
 
 Total capacity balance:
+
 $$
-        \mathbf{CAP^{tot}}_{r,seas,t,s,y}
-        = CAP^{exist}_{r,seas,t,s,y} \\
-        (+ \sum_{cy \in Y \leq y}{\mathbf{CAP^{new}}_{r,t,cy,s}} 
-        \quad if \quad sw\_expansion = 1)\\
-        (+ \sum_{cy \in Y \leq y}{\mathbf{CAP^{ret}}_{t,cy,r,s}} 
-        \quad if \quad sw\_expansion = 1)\\
-        \forall {r,seas,t,s,y} \in \Theta_{SC}
-        \tag{11}
+\begin{aligned}
+        \mathbf{CAP^{tot}}\_{r,seas,t,s,y}
+        = CAP^{exist}\_{r,seas,t,s,y} \\
+        (+ \sum\_{cy \in Y \leq y}{\mathbf{CAP^{new}}\_{r,t,cy,s}} 
+        \quad if \quad sw\\_expansion = 1)\\
+        (+ \sum\_{cy \in Y \leq y}{\mathbf{CAP^{ret}}\_{t,cy,r,s}} 
+        \quad if \quad sw\\_expansion = 1)\\
+        \forall {r,seas,t,s,y} \in \Theta\_{SC}
+\end{aligned}
 $$
+
 
 
 Capacity retirement upper bound:
+
 $$
-        \mathbf{CAP^{ret}}_{t,y,r,s} \leq
-        CAP^{exist}_{r,2,t,s,y} +
-        \sum_{cy \in Y < y}{\mathbf{CAP^{new}}_{r,t,cy,s}} -
-        \sum_{cy \in Y < y}{\mathbf{CAP^{ret}}_{t,cy,r,s}} \\
-        \forall {t,y,r,s} \in \Theta_{ret} \\
-        \quad if \quad sw\_expansion = 1 \\
-        \tag{12}
+\begin{aligned}
+        \mathbf{CAP^{ret}}\_{t,y,r,s} \leq
+        CAP^{exist}\_{r,2,t,s,y} +
+        \sum\_{cy \in Y  \<  y}{\mathbf{CAP^{new}}\_{r,t,cy,s}} -
+        \sum\_{cy \in Y  \<  y}{\mathbf{CAP^{ret}}\_{t,cy,r,s}} \\
+        \forall {t,y,r,s} \in \Theta\_{ret} \\
+        \quad if \quad sw\\_expansion = 1 \\
+\end{aligned}
 $$
+
 
 
 #### Trade
 Electricity trade constraints ensure that trade within any given time segment cannot exceed the capabilities of the transmission lines between the regions trading. In addition, there are supply quantity/price constraints for international trade, where supply from international regions cannot exceed the availability from the region.  
 
 International interregional trade line capacity upper bound:
+
 $$
-        \sum_{c}{\mathbf{TRA^{int}}_{r,r^{int},y,c,h}} \leq
-        TRALINLIM^{int}_{r,r^{int},y,h} * HW_h \\
-        \forall {r,r^{int},y,h} \in \Theta_{traLL^{int}} \\
-        \quad if \quad sw\_trade = 1\\
-        \tag{13}
+\begin{aligned}
+        \sum\_{c}{\mathbf{TRA^{int}}\_{r,r^{int},y,c,h}} \leq
+        TRALINLIM^{int}\_{r,r^{int},y,h} * HW\_h \\
+        \forall {r,r^{int},y,h} \in \Theta\_{traLL^{int}} \\
+        \quad if \quad sw\\_trade = 1\\
+\end{aligned}
 $$
 
+
 International interregional trade resource capacity upper bound:
+
 $$
-        \sum_{r}{\mathbf{TRA^{int}}_{r,r^{int},y,c,h}} \leq
-        TRALIM^{int}_{r^{int},c,y,h} * HW_h \\
-        \forall {r,r^{int},y,h} \in \Theta_{traL^{int}} \\
-        \quad if \quad sw\_trade = 1\\
-        \tag{14}
-$$ 
+\begin{aligned}
+        \sum\_{r}{\mathbf{TRA^{int}}\_{r,r^{int},y,c,h}} \leq
+        TRALIM^{int}\_{r^{int},c,y,h} * HW\_h \\
+        \forall {r,r^{int},y,h} \in \Theta\_{traL^{int}} \\
+        \quad if \quad sw\\_trade = 1\\
+\end{aligned}
+$$
+
 
 
 Domestic interregional trade line capacity upper bound:
+
 $$
-        \mathbf{TRA}_{r,r1,y,h} \leq
-        TRALINLIM_{r,r1,MHS_h,y} * HW_h \\
-        \forall {r,r1,y,h} \in \Theta_{traLL} \\
-        \quad if \quad sw\_trade = 1\\
-        \tag{15}
+\begin{aligned}
+        \mathbf{TRA}\_{r,r1,y,h} \leq
+        TRALINLIM\_{r,r1,MHS\_h,y} * HW\_h \\
+        \forall {r,r1,y,h} \in \Theta\_{traLL} \\
+        \quad if \quad sw\\_trade = 1\\
+\end{aligned}
 $$
+
 
 #### Reserve Margin
 Reserve margin constraints ensure that there is additional quantity of capacity available beyond load requirements in each time segment. Available capacity that can contribute to the reserve margin is also potentially decremented based on capacity credit assumptions. Storage technologies have additional reserve margin constraints accounts for both the power capacity and the energy capacity availability towards contributing to reserve margin requirements.  
 
 Reserve margin requirement constraint:
+
 $$
-        LOAD_{r,y,h} \times
-        (1 + RM_r ) \leq
-        HW_h \times \\
-        \sum_{{t,s} \in \theta^{scrm}_{y,r,MHS_h}}{CC_{t,y,r,s,h} \times (\mathbf{STOR^{avail}}_{t,y,r,s,h} + \mathbf{CAP^{tot}_{r,MHS_h,t,s,y}})}\\
-        \forall {r,y,h} \in \Theta_{load}\\
-        \quad if \quad sw\_rm = 1\\
-        \tag{16}
+\begin{aligned}
+        LOAD\_{r,y,h} \times
+        (1 + RM\_r ) \leq
+        HW\_h \times \\
+        \sum\_{{t,s} \in \theta^{scrm}\_{y,r,MHS\_h}}{CC\_{t,y,r,s,h} \times (\mathbf{STOR^{avail}}\_{t,y,r,s,h} + \mathbf{CAP^{tot}\_{r,MHS\_h,t,s,y}})}\\
+        \forall {r,y,h} \in \Theta\_{load}\\
+        \quad if \quad sw\\_rm = 1\\
+\end{aligned}
 $$
+
 
 
 Constraint to ensure available storage capacity to meet RM <= power cap, upper bound:
+
 $$
-    \mathbf{STOR^{avail}}_{t,y,r,s,h} \leq    \mathbf{CAP^{tot}}_{r,MHS_h,t,s,y}\\
-        \forall {t,y,r,s,h} \in \Theta_{stor}\\
-        \quad if \quad sw\_rm = 1\\
-        \tag{17}
+\begin{aligned}
+    \mathbf{STOR^{avail}}\_{t,y,r,s,h} \leq    \mathbf{CAP^{tot}}\_{r,MHS\_h,t,s,y}\\
+        \forall {t,y,r,s,h} \in \Theta\_{stor}\\
+        \quad if \quad sw\\_rm = 1\\
+\end{aligned}
 $$
+
 
 
 Constraint to ensure available storage capacity to meet RM <= existing storage level, upper bound:
+
 $$
-    \mathbf{STOR^{avail}}_{t,y,r,s,h} \leq    
-    \mathbf{STOR^{level}}_{t,y,r,s,h}\\
-        \forall {t,y,r,s,h} \in \Theta_{stor}\\
-        \quad if \quad sw\_rm = 1\\
-        \tag{18}
+\begin{aligned}
+    \mathbf{STOR^{avail}}\_{t,y,r,s,h} \leq    
+    \mathbf{STOR^{level}}\_{t,y,r,s,h}\\
+        \forall {t,y,r,s,h} \in \Theta\_{stor}\\
+        \quad if \quad sw\\_rm = 1\\
+\end{aligned}
 $$
+
 
 #### Ramping
 Ramping constraints ensure that generating technologies are limited in the rate in which they can increase or decrease their generation from one time segment to the next. Ramping capabilities are balanced within each day.
 
 First hour ramping balance constraint:
+
 $$
-    \mathbf{GEN}_{t,y,r,s,h} =    \mathbf{GEN}_{t,y,r,s,h+N-1} + \mathbf{RAMP^{up}}_{t,y,r,s,h} - \mathbf{RAMP^{down}}_{t,y,r,s,h}\\
-    \forall {t,y,r,s,h} \in \Theta_{ramp1} \\
-        \quad if \quad sw\_ramp = 1\\
-    \tag{19}
+\begin{aligned}
+    \mathbf{GEN}\_{t,y,r,s,h} =    \mathbf{GEN}\_{t,y,r,s,h+N-1} + \mathbf{RAMP^{up}}\_{t,y,r,s,h} - \mathbf{RAMP^{down}}\_{t,y,r,s,h}\\
+    \forall {t,y,r,s,h} \in \Theta\_{ramp1} \\
+        \quad if \quad sw\\_ramp = 1\\
+\end{aligned}
 $$
 
+
 Ramping balance (not first hour) constraint:
+
 $$
-    \mathbf{GEN}_{t,y,r,s,h} =    \mathbf{GEN}_{t,y,r,s,h-1} + \mathbf{RAMP^{up}}_{t,y,r,s,h} - \mathbf{RAMP^{down}}_{t,y,r,s,h}\\
-    \forall {t,y,r,s,h} \in \Theta_{ramp23} \\
-        \quad if \quad sw\_ramp = 1\\
-    \tag{20}
+\begin{aligned}
+    \mathbf{GEN}\_{t,y,r,s,h} =    \mathbf{GEN}\_{t,y,r,s,h-1} + \mathbf{RAMP^{up}}\_{t,y,r,s,h} - \mathbf{RAMP^{down}}\_{t,y,r,s,h}\\
+    \forall {t,y,r,s,h} \in \Theta\_{ramp23} \\
+        \quad if \quad sw\\_ramp = 1\\
+\end{aligned}
 $$
+
 
 
 Ramp up upper bound:
+
 $$
-    \mathbf{RAMP^{up}}_{t,y,r,s,h} \leq   
-    HW_h \times RR_t \times
-    \mathbf{CAP^{tot}}_{r,MHS_h,t,s,y}\\
-    \forall {t,y,r,s,h} \in \Theta_{ramp} \\
-        \quad if \quad sw\_ramp = 1\\
-    \tag{21}
+\begin{aligned}
+    \mathbf{RAMP^{up}}\_{t,y,r,s,h} \leq   
+    HW\_h \times RR\_t \times
+    \mathbf{CAP^{tot}}\_{r,MHS\_h,t,s,y}\\
+    \forall {t,y,r,s,h} \in \Theta\_{ramp} \\
+        \quad if \quad sw\\_ramp = 1\\
+\end{aligned}
 $$
+
 
 
 Ramp down upper bound:
+
 $$
-    \mathbf{RAMP^{down}}_{t,y,r,s,h} \leq   
-    HW_h \times RR_t \times
-    \mathbf{CAP^{tot}}_{r,MHS_h,t,s,y}\\
-    \forall {t,y,r,s,h} \in \Theta_{ramp} \\
-        \quad if \quad sw\_ramp = 1\\
-    \tag{22}
+\begin{aligned}
+    \mathbf{RAMP^{down}}\_{t,y,r,s,h} \leq   
+    HW\_h \times RR\_t \times
+    \mathbf{CAP^{tot}}\_{r,MHS\_h,t,s,y}\\
+    \forall {t,y,r,s,h} \in \Theta\_{ramp} \\
+        \quad if \quad sw\\_ramp = 1\\
+\end{aligned}
 $$
+
 
 #### Operating Reserves
 The model allows for three different types of operating reserves to be represented within the model, either spinning reserves, regulation reserves, or flexibility reserve requirements. These operating reserves reflect the need to additional capacity to be held in reserve to meet and short-term needs for generation based on un-expected changes in things like electricity demand or variable renewable generation output.  
 
 Spinning reserve requirement constraint. 3\% of load required:
+
 $$
-    0.03 \times LOAD_{r,y,h} \leq 
-    \sum_{{t,s} \in \theta^{opres}_{1,r,y,h}}{\mathbf{ORP}_{1,t,y,r,s,h}}\\
-    \forall {r,y,h} \in \Theta_{load} \\
-        \quad if \quad sw\_reserves = 1\\
-    \tag{23}
+\begin{aligned}
+    0.03 \times LOAD\_{r,y,h} \leq 
+    \sum\_{{t,s} \in \theta^{opres}\_{1,r,y,h}}{\mathbf{ORP}\_{1,t,y,r,s,h}}\\
+    \forall {r,y,h} \in \Theta\_{load} \\
+        \quad if \quad sw\\_reserves = 1\\
+\end{aligned}
 $$
 
+
 Regulation reserve requirement constraint. 1\% of load + 0.5\% of wind generation + 0.3\% of solar capacity required:
+
 $$
-    0.01 \times LOAD_{r,y,h}\\
-    + 0.005 \times \sum_{{t^w,s} \in \theta^{windor}_{y,r,h}}{\mathbf{GEN}_{t^w,y,r,s,h}} \\
-    + 0.003 \times HW_h \times \sum_{{t^s,s} \in \theta^{solor}_{y,r,h}}{\mathbf{CAP^{tot}}_{r,MHS_h,t^s,s,y}}\\
+\begin{aligned}
+    0.01 \times LOAD\_{r,y,h}\\
+    + 0.005 \times \sum\_{{t^w,s} \in \theta^{windor}\_{y,r,h}}{\mathbf{GEN}\_{t^w,y,r,s,h}} \\
+    + 0.003 \times HW\_h \times \sum\_{{t^s,s} \in \theta^{solor}\_{y,r,h}}{\mathbf{CAP^{tot}}\_{r,MHS\_h,t^s,s,y}}\\
     \leq
-    \sum_{{t,s} \in \theta^{opres}_{2,r,y,h}}{\mathbf{ORP}_{2,t,y,r,s,h}}\\
-    \forall {r,y,h} \in \Theta_{load} \\
-        \quad if \quad sw\_reserves = 1\\
-    \tag{24}
+    \sum\_{{t,s} \in \theta^{opres}\_{2,r,y,h}}{\mathbf{ORP}\_{2,t,y,r,s,h}}\\
+    \forall {r,y,h} \in \Theta\_{load} \\
+        \quad if \quad sw\\_reserves = 1\\
+\end{aligned}
 $$
+
 
 
 Flexibility reserve requirement constraint. 10\% of wind generation + 4\% of solar capacity required:
+
 $$
-    0.1 \times \sum_{{t^w,s} \in \theta^{windor}_{y,r,h}}{\mathbf{GEN}_{t^w,y,r,s,h}} \\
-    + 0.04 \times HW_h \times \sum_{{t^s,s} \in \theta^{solor}_{y,r,h}}{\mathbf{CAP^{tot}}_{r,MHS_h,t^s,s,y}}\\
+\begin{aligned}
+    0.1 \times \sum\_{{t^w,s} \in \theta^{windor}\_{y,r,h}}{\mathbf{GEN}\_{t^w,y,r,s,h}} \\
+    + 0.04 \times HW\_h \times \sum\_{{t^s,s} \in \theta^{solor}\_{y,r,h}}{\mathbf{CAP^{tot}}\_{r,MHS\_h,t^s,s,y}}\\
     \leq
-    \sum_{{t,s} \in \theta^{opres}_{3,r,y,h}}{\mathbf{ORP}_{3,t,y,r,s,h}}\\
-    \forall {r,y,h} \in \Theta_{load} \\
-        \quad if \quad sw\_reserves = 1\\
-    \tag{25}
+    \sum\_{{t,s} \in \theta^{opres}\_{3,r,y,h}}{\mathbf{ORP}\_{3,t,y,r,s,h}}\\
+    \forall {r,y,h} \in \Theta\_{load} \\
+        \quad if \quad sw\\_reserves = 1\\
+\end{aligned}
 $$
 
+
 Operating reserve procurement upper bound:
+
 $$
-    \mathbf{ORP}_{o,t,y,r,s,h}
+\begin{aligned}
+    \mathbf{ORP}\_{o,t,y,r,s,h}
     \leq
-    RTUB_{o,t} \times HW_h \times
-    \mathbf{CAP^{tot}}_{r,MHS_h,t^s,s,y}\\
-    \forall {o,t,y,r,s,h} \in \Theta_{proc} \\
-    \quad if \quad sw\_reserves = 1\\
-    \tag{26}
+    RTUB\_{o,t} \times HW\_h \times
+    \mathbf{CAP^{tot}}\_{r,MHS\_h,t^s,s,y}\\
+    \forall {o,t,y,r,s,h} \in \Theta\_{proc} \\
+    \quad if \quad sw\\_reserves = 1\\
+\end{aligned}
 $$
+
 
 
 ## Code Documentation
