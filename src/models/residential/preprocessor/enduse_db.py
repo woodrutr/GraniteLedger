@@ -100,7 +100,7 @@ def stock_download(vyear, stock_dir, stock_list, state_list, db_dir):
         data_requests = (grequests.get(u) for u in request_urls[stock])
 
         # send all-at-once (parallel)
-        responses = grequests.map(data_requests)
+        responses = grequests.imap(data_requests, size=20)
         data_requests.close()
 
         # iterate over the responses
