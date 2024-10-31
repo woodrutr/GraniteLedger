@@ -39,7 +39,7 @@ For example, the following table would generate the regionality in the below dia
 
 This would append all the rows after the column labeled data to the rightmost region that appears in that row. You can create any parameters you want; the model can freely be expanded upon. 
 
-![Alt](./images/region_sets.png "Set view") ![Alt](./images/tree.png "Tree view")
+![Alt](images\region_sets.png "Set view") ![Alt](images\tree.png "Tree view")
 
 A few final notes on the *regions* data formatting:
 * **IMPORTANT NOTE: region names must be *unique***. If this is a problem (for example, where all region types use numeric-naming) you can hyphenate the names or append a prefix depending on which column it is in.
@@ -81,7 +81,7 @@ This takes the name of a region as an argument and makes that region absorb all 
 
 A user who wants to model only some regions in detail and wants a coarser representation of other regions to reduce complexity could use this feature to simplify a grid. For example, see the following grid:
 
-![Alt](./images/grid.png "the set as input")
+![Alt](images\grid.png "the set as input")
 
 If the user runs the following method...
 ```python
@@ -90,26 +90,26 @@ grid.collapse('South')
 
 ... they create a grid with the southern region collapsed as visualized in the network.
 
-![Alt](./images/south_collapse.png "southern region collapsed")
+![Alt](images\south_collapse.png "southern region collapsed")
 
 
 #### collapse_level(depth: int)
 
 This method takes the desired depth of region nesting, and collapses all regions at that depth. If you have four levels of region-nesting, say Region, Census Region, State, County, and you want to collapse the data to only two levels of depth, you'd use collapse_level. For example, our regionality in the image above:
 
-![Alt](./images/grid.png "the set as input")
+![Alt](images\grid.png "the set as input")
 
 would become the following after running ```collapse_level```
 ```python
 grid.collapse_level(2)
 ```
-![Alt](./images/collapse_level_2.png "level 2 collapse")
+![Alt](images\collapse_level_2.png "level 2 collapse")
 
 Collapsing further to the highest nesting level results in a more "sparse" grid object.
 ```python
 grid.collapse_level(1)
 ```
-![Alt](./images/collapse_level_1.png "level 1 collapse") 
+![Alt](images\collapse_level_1.png "level 1 collapse") 
 
 ## Model Overview
 
@@ -172,13 +172,9 @@ Currently, Production cost uses the below formula.\
 Letting $\Theta = H\times T \times Y$ and $r(h) =$ the region hub $h$ is in, Production Cost is:
 
 
-
 $$
-\begin{aligned}
-ProductionCost = \sum\_{\{h,t,y\}\in \Theta} \boldsymbol{PVOL}\_{h,t,y}\cdot PCST\_{h,t,y}
-\end{aligned}
-$$
-
+ProductionCost = \sum_{\{h,t,y\}\in \Theta} \boldsymbol{PVOL}_{h,t,y}\cdot PCST_{h,t,y}
+$$ 
 
 
 #### Production Capacity Expansion Cost
@@ -187,25 +183,17 @@ Production Capacity Expansion cost is the levelized annual financing cost of bui
 
 Letting $\Theta = H\times T \times Y$ and $r(h) = $ the region hub $h$ is in, Production Capacity Expansion Cost is:
 
-
 $$
-\begin{aligned}
-ProductionCapacityExpansionCost = \sum\_{\{h,t,y\}\in \Theta} \boldsymbol{PCEX}\_{h,t,y}\cdot PCXC\_{r(h),t} 
-\end{aligned}
+ProductionCapacityExpansionCost = \sum_{\{h,t,y\}\in \Theta} \boldsymbol{PCEX}_{h,t,y}\cdot PCXC_{r(h),t} 
 $$
-
 
 #### Transportation Cost
 
 Let $TCST_{a,y}$ be the Transportation cost per kg for Arc a in year $y$. Then we have:
 
-
 $$
-\begin{aligned}
-TransportationCost = \sum\_{a \in A, y\in Y}\boldsymbol{TVOL}\_{a,y}\cdot TCST\_{a,y}
-\end{aligned}
+TransportationCost = \sum_{a \in A, y\in Y}\boldsymbol{TVOL}_{a,y}\cdot TCST_{a,y}
 $$
-
 
 The values going into $TCST$ are left as a black box that a function fills out, with the details of the calculation left for later.
 
@@ -213,13 +201,9 @@ The values going into $TCST$ are left as a black box that a function fills out, 
 
 Let $TCXC_{a,y}$ be the transportation capacity expansion cost per kg H2/year expansion
 
-
 $$
-\begin{aligned}
-TransportationCapacityExpansionCost = \sum\_{a\in A, y\in Y}TCEX\_{a,y}\cdot TCXC\_{a,y}
-\end{aligned}
+TransportationCapacityExpansionCost = \sum_{a\in A, y\in Y}TCEX_{a,y}\cdot TCXC_{a,y}
 $$
-
 
 The details of transportation capacity expansion cost are glossed over, but should depend on the distance and terrain in between the origin and destination hubs, which isn't fully known. 
 
@@ -249,18 +233,14 @@ The Constraint expression for the capacity constraints are by hub, and take the 
 
 $\forall y \in Y,\forall h \in H, \forall t \in T:$
 
-
 $$
-\begin{aligned}
-\boldsymbol{PVOL}\_{h,t,y} \leq PCAP\_{h,t} + \sum\_{
+\boldsymbol{PVOL}_{h,t,y} \leq PCAP_{h,t} + \sum_{
 \begin{matrix}
 v \in Y\\
-y - s \leq v  \<  y
+y - s \leq v < y
 \end{matrix}
-}\boldsymbol{PCEX}\_{h,t,v}
-\end{aligned}
+}\boldsymbol{PCEX}_{h,t,v}
 $$
-
 
 #### Transportation Capacity Constraints
 
@@ -280,19 +260,15 @@ $\boldsymbol{TVOL}_{a,y}:$ transportation volume for arc a in year y
 
 $\forall y \in Y, \forall a \in A:$
 
-
 $$
-\begin{aligned}
-\boldsymbol{TVOL}\_{a,y} \leq TCAP\_{a} + 
-\sum\_{
+\boldsymbol{TVOL}_{a,y} \leq TCAP_{a} + 
+\sum_{
 \begin{matrix}
 v \in Y\\
-v  \<  y
+v < y
 \end{matrix}
-}\boldsymbol{TEXP}\_{a,v}
-\end{aligned}
+}\boldsymbol{TEXP}_{a,v}
 $$
-
 
 ### Storage Constraint
 Currently not implemented
@@ -321,19 +297,15 @@ The constraints are by region, which is how demand is processed for the model. T
 
 $\forall r \in R, \forall y \in Y:$  
 
-
 $$
-\begin{aligned}
-\left(\sum\_{
+\left(\sum_{
 \begin{matrix}    
     h \in H^{r}\\
     t\in T
 \end{matrix}    
-    } \boldsymbol{PVOL}\_{h,t,y}\right) + \sum\_{h \in H\_{r}} \left( \sum\_{a \in h\_{in}} \boldsymbol{TVOL}\_{a,y} - \sum\_{a \in h\_{out}} \boldsymbol{TVOL}\_{a,y} \right)
-    = DMND\_{r,y}
-\end{aligned}
+    } \boldsymbol{PVOL}_{h,t,y}\right) + \sum_{h \in H_{r}} \left( \sum_{a \in h_{in}} \boldsymbol{TVOL}_{a,y} - \sum_{a \in h_{out}} \boldsymbol{TVOL}_{a,y} \right)
+    = DMND_{r,y}
 $$
-
 
 # Code Documentation
 

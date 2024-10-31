@@ -31,8 +31,8 @@ class Hub:
         self.region = region
 
         if data is not None:
-            with pd.option_context('future.no_silent_downcasting', True):
-                self.data = data.fillna(0).infer_objects(copy=False)
+            
+            self.data = data.fillna(0).infer_objects(copy=False)
 
         # outbound and inbound dictionaries mapping names of hubs to the arc objects
         self.outbound = {}

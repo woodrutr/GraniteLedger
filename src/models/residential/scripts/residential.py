@@ -132,8 +132,15 @@ class residentialModule:
             self.loads['BaseLoads'] = pd.read_csv(loadFile).set_index(['r', 'y', 'hr'], drop=False)
         elif not self.loads:
             root_path = PROJECT_ROOT
-            path_to_load_data = root_path / 'src/models/residential/input/Load.csv'
-            self.loads['BaseLoads'] = pd.read_csv(path_to_load_data)
+
+            y = 2023
+            path_to_load_data = Path(PROJECT_ROOT, 'src/models/residential/input/load/Load_'+str(y)+'.csv')
+            self.loads['BaseLoads']  = pd.read_csv(path_to_load_data)
+            for y in range(2024,2050):
+                path_to_load_data = Path(PROJECT_ROOT, 'src/models/residential/input/load/Load_'+str(y)+'.csv')
+                tmp = pd.read_csv(path_to_load_data)
+                self.loads['BaseLoads'] = pd.concat([self.loads['BaseLoads'],tmp]).reset_index(drop=True)
+
             self.loads['BaseLoads'] = self.loads['BaseLoads'].set_index(
                 ['r', 'y', 'hr'], drop=False
             )

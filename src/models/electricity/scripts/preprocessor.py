@@ -356,8 +356,13 @@ def preprocessor(setin):
         all_frames = readin_sql(all_frames)
 
     # read in load data from residential model
-    load_file = Path(PROJECT_ROOT, 'src/models/residential/input/Load.csv')
+    y = 2023
+    load_file = Path(PROJECT_ROOT, 'src/models/residential/input/load/Load_'+str(y)+'.csv')
     all_frames['Load'] = pd.read_csv(load_file)
+    for y in range(2024,2050):
+        load_file = Path(PROJECT_ROOT, 'src/models/residential/input/load/Load_'+str(y)+'.csv')
+        tmp = pd.read_csv(load_file)
+        all_frames['Load'] = pd.concat([all_frames['Load'],tmp]).reset_index(drop=True)
 
     # international trade sets
     r_file = all_frames['TranLimitCapInt'][['r', 'r1']].drop_duplicates()

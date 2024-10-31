@@ -1,3 +1,16 @@
-version https://git-lfs.github.com/spec/v1
-oid sha256:404b27b01f62533d47888af7074398fcaf67fe468abd4d63f8dabad51319edef
-size 377
+pt,ptc,ptr,pth,pts,pti,ptw,ptsol,pth2,ptd,ptg
+1,ptc,,,,,,,,ptd,ptg
+2,ptc,,,,,,,,ptd,ptg
+3,ptc,,,,,,,,ptd,ptg
+4,ptc,,,,,,,,ptd,ptg
+5,,,,,,,,pth2,ptd,ptg
+6,ptc,,,,,,,,ptd,ptg
+7,,ptr,,,,,,,ptd,ptg
+8,,ptr,,,,,,,ptd,ptg
+9,,ptr,,,,,,,ptd,ptg
+10,,ptr,pth,,,,,,ptd,ptg
+11,,,,pts,,,,,,
+12,,,,pts,,,,,,
+13,,,,,pti,ptw,,,,ptg
+14,,,,,pti,ptw,,,,ptg
+15,,,,,pti,,ptsol,,,ptg
