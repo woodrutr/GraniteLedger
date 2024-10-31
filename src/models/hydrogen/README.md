@@ -169,12 +169,16 @@ Production cost is a variable cost associated with hydrogen production. In the c
 
 Currently, Production cost uses the below formula.\
 \
-Letting $\Theta = H\times T \times Y$ and $r(h) =$ the region hub $h$ is in, Production Cost is:
+Letting $\Theta = H\times T \times Y$ and $r(h) = $ the region hub $h$ is in, Production Cost is:
+
 
 
 $$
-ProductionCost = \sum_{\{h,t,y\}\in \Theta} \boldsymbol{PVOL}_{h,t,y}\cdot PCST_{h,t,y}
-$$ 
+\begin{aligned}
+ProductionCost = \sum\_{\{h,t,y\}\in \Theta} \boldsymbol{PVOL}\_{h,t,y}\cdot PCST\_{h,t,y}
+\end{aligned}
+$$
+
 
 
 #### Production Capacity Expansion Cost
@@ -183,17 +187,25 @@ Production Capacity Expansion cost is the levelized annual financing cost of bui
 
 Letting $\Theta = H\times T \times Y$ and $r(h) = $ the region hub $h$ is in, Production Capacity Expansion Cost is:
 
+
 $$
-ProductionCapacityExpansionCost = \sum_{\{h,t,y\}\in \Theta} \boldsymbol{PCEX}_{h,t,y}\cdot PCXC_{r(h),t} 
+\begin{aligned}
+ProductionCapacityExpansionCost = \sum\_{\{h,t,y\}\in \Theta} \boldsymbol{PCEX}\_{h,t,y}\cdot PCXC\_{r(h),t} 
+\end{aligned}
 $$
+
 
 #### Transportation Cost
 
 Let $TCST_{a,y}$ be the Transportation cost per kg for Arc a in year $y$. Then we have:
 
+
 $$
-TransportationCost = \sum_{a \in A, y\in Y}\boldsymbol{TVOL}_{a,y}\cdot TCST_{a,y}
+\begin{aligned}
+TransportationCost = \sum\_{a \in A, y\in Y}\boldsymbol{TVOL}\_{a,y}\cdot TCST\_{a,y}
+\end{aligned}
 $$
+
 
 The values going into $TCST$ are left as a black box that a function fills out, with the details of the calculation left for later.
 
@@ -201,9 +213,13 @@ The values going into $TCST$ are left as a black box that a function fills out, 
 
 Let $TCXC_{a,y}$ be the transportation capacity expansion cost per kg H2/year expansion
 
+
 $$
-TransportationCapacityExpansionCost = \sum_{a\in A, y\in Y}TCEX_{a,y}\cdot TCXC_{a,y}
+\begin{aligned}
+TransportationCapacityExpansionCost = \sum\_{a\in A, y\in Y}TCEX\_{a,y}\cdot TCXC\_{a,y}
+\end{aligned}
 $$
+
 
 The details of transportation capacity expansion cost are glossed over, but should depend on the distance and terrain in between the origin and destination hubs, which isn't fully known. 
 
@@ -233,14 +249,18 @@ The Constraint expression for the capacity constraints are by hub, and take the 
 
 $\forall y \in Y,\forall h \in H, \forall t \in T:$
 
+
 $$
-\boldsymbol{PVOL}_{h,t,y} \leq PCAP_{h,t} + \sum_{
+\begin{aligned}
+\boldsymbol{PVOL}\_{h,t,y} \leq PCAP\_{h,t} + \sum\_{
 \begin{matrix}
 v \in Y\\
-y - s \leq v < y
+y - s \leq v  \<  y
 \end{matrix}
-}\boldsymbol{PCEX}_{h,t,v}
+}\boldsymbol{PCEX}\_{h,t,v}
+\end{aligned}
 $$
+
 
 #### Transportation Capacity Constraints
 
@@ -260,15 +280,19 @@ $\boldsymbol{TVOL}_{a,y}:$ transportation volume for arc a in year y
 
 $\forall y \in Y, \forall a \in A:$
 
+
 $$
-\boldsymbol{TVOL}_{a,y} \leq TCAP_{a} + 
-\sum_{
+\begin{aligned}
+\boldsymbol{TVOL}\_{a,y} \leq TCAP\_{a} + 
+\sum\_{
 \begin{matrix}
 v \in Y\\
-v < y
+v  \<  y
 \end{matrix}
-}\boldsymbol{TEXP}_{a,v}
+}\boldsymbol{TEXP}\_{a,v}
+\end{aligned}
 $$
+
 
 ### Storage Constraint
 Currently not implemented
@@ -297,15 +321,19 @@ The constraints are by region, which is how demand is processed for the model. T
 
 $\forall r \in R, \forall y \in Y:$  
 
+
 $$
-\left(\sum_{
+\begin{aligned}
+\left(\sum\_{
 \begin{matrix}    
     h \in H^{r}\\
     t\in T
 \end{matrix}    
-    } \boldsymbol{PVOL}_{h,t,y}\right) + \sum_{h \in H_{r}} \left( \sum_{a \in h_{in}} \boldsymbol{TVOL}_{a,y} - \sum_{a \in h_{out}} \boldsymbol{TVOL}_{a,y} \right)
-    = DMND_{r,y}
+    } \boldsymbol{PVOL}\_{h,t,y}\right) + \sum\_{h \in H\_{r}} \left( \sum\_{a \in h\_{in}} \boldsymbol{TVOL}\_{a,y} - \sum\_{a \in h\_{out}} \boldsymbol{TVOL}\_{a,y} \right)
+    = DMND\_{r,y}
+\end{aligned}
 $$
+
 
 # Code Documentation
 
