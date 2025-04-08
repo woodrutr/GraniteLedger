@@ -1,3 +1,6 @@
-version https://git-lfs.github.com/spec/v1
-oid sha256:bdef5be1481ddab5135bf3adb16faf1747a7b13961e3a7c30caa4938692efe43
-size 59
+tech,RampDownCost
+1,0.01
+2,0.01
+3,0.01
+4,0.01
+6,0.01
