@@ -10,7 +10,7 @@
 
 [Project BlueSky](https://www.eia.gov/totalenergy/data/bluesky/) is an EIA initiative to develop an open source, next generation energy systems model, which will eventually be used to produce the Annual Energy Outlook ([AEO](https://www.eia.gov/outlooks/aeo/)) and International Energy Outlook ([IEO](https://www.eia.gov/outlooks/ieo/)). Our outlooks are focused on projecting realistic outcomes under a given set of assumptions, accounting for rapid technological innovation, new policy, changing consumer preferences, shifting trade patterns, and the real-world friction associated with the adoption of novel or risky technology. To address these challenges, the next generation model is designed to be modular, flexible, transparent, and robust. 
 
-The BlueSky Prototype is the first step towards creating this next generation model. Our objective in releasing the prototype is to give the modeling community an early opportunity to experiment with the new framework and provide feedback. See the [contribution file](/CONTRIBUTING.md) for information on how to give feedback.
+The BlueSky Prototype is the first step towards creating this next generation model. Our objective in releasing the prototype is to give the modeling community an early opportunity to experiment with the new framework and provide feedback. See the [contribution file](/CONTRIBUTING.md) for information on how to give feedback. 
 
 Given current resource constraints, EIA has paused future Project BlueSky model development activity. Project BlueSky enabled EIA to explore new energy modeling approaches, and this foundational work will serve as a basis for EIA’s future long-term model development efforts as EIA continues to advance its energy modeling capabilities.
 

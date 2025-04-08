@@ -35,13 +35,9 @@ We include two sample sensitivity methods that use a first-order Taylor approxim
 
 **The first is an analytical method that calculates the derivative directly by using the sympy package for python.** Sympy is a computer algebra system, so functions can be written and treated symbolically before substituting in values. **The second method uses a complex-step derivative approximation.** Both find a value for the derivative and calculate an upper and lower range based on the percent change (Δ) provided as in: 
 
-
-$$
-\begin{aligned}
+$$ 
 f\left(a\pm a\cdot Δ\right)\ \approx \ f\left(a\right)\pm f^{'}\left(a\right)\left(a\cdot Δ\right)
-\end{aligned}
 $$
-
 
 The user may choose which input variable to change and by what amount. These settings are found as described in the “Prepare Data” section. The output for both of these methods will be a graph with the Load value calculated normally and the upper and lower values associated with an increase or decrease in the desired input value. For example, the following graph shows the calculated Load for Region 7 in Year 2023, and it has the estimates for the Load if the input price increased or decreased by 10%: 
 
@@ -79,39 +75,23 @@ The updating function takes in base values from the input files. The original eq
 
 The updating function is as follows for each region ($r$), year ($y$), and hour ($h$):
 
-
+$$ 
+NewLoad_{r,y,h} = BaseLoad_{r,y,h} * PriceIndex_{r,y,h} * IncomeIndex_{r,y,h} * LongTermTrend_{r,y}
 $$
-\begin{aligned}
-NewLoad\_{r,y,h} = BaseLoad\_{r,y,h} * PriceIndex\_{r,y,h} * IncomeIndex\_{r,y,h} * LongTermTrend\_{r,y}
-\end{aligned}
-$$
-
 
 The indexes are defined as:
 
-
 $$
-\begin{aligned}
-PriceIndex\_{r,y,h} = \left(\frac{Price\_{r,y,h}}{BasePrice\_{r,y,h}}\right)^{PriceElasticity\_{r,y}}
-\end{aligned}
+PriceIndex_{r,y,h} = \left(\frac{Price_{r,y,h}}{BasePrice_{r,y,h}}\right)^{PriceElasticity_{r,y}}
 $$
 
-
-
 $$
-\begin{aligned}
-IncomeIndex\_{r,y,h} = \left(\frac{Income\_{r,y,h}}{Income\_{r,baseYear,h}}\right)^{IncomeElasticity\_{r,y}}
-\end{aligned}
+IncomeIndex_{r,y,h} = \left(\frac{Income_{r,y,h}}{Income_{r,baseYear,h}}\right)^{IncomeElasticity_{r,y}}
 $$
 
-
-
 $$
-\begin{aligned}
-LongTermTrend\_{r,y} = 1 + \left(\frac{y-LastModelYear}{LastModelYear - BaseYear}\right) * \left({TrendGrowthRate\_{r,y}+1}\right)^{LastModelYear - BaseYear}
-\end{aligned}
+LongTermTrend_{r,y} = 1 + \left(\frac{y-LastModelYear}{LastModelYear - BaseYear}\right) * \left({TrendGrowthRate_{r,y}+1}\right)^{LastModelYear - BaseYear}
 $$
-
 
 ### Model Use
 
