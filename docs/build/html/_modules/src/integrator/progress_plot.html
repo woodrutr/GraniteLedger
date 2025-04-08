@@ -89,12 +89,10 @@
 
 <span class="sd">&quot;&quot;&quot;</span>
 
+<span class="c1"># Import packages</span>
 <span class="kn">from</span> <span class="nn">matplotlib</span> <span class="kn">import</span> <span class="n">pyplot</span> <span class="k">as</span> <span class="n">plt</span><span class="p">,</span> <span class="n">ticker</span>
 <span class="kn">from</span> <span class="nn">pathlib</span> <span class="kn">import</span> <span class="n">Path</span>
 <span class="kn">from</span> <span class="nn">datetime</span> <span class="kn">import</span> <span class="n">datetime</span>
-
-<span class="kn">from</span> <span class="nn">src.integrator.utilities</span> <span class="kn">import</span> <span class="n">get_output_root</span>
-
 
 <span class="c1"># some defaults</span>
 
@@ -110,6 +108,7 @@
 <div class="viewcode-block" id="plot_it">
 <a class="viewcode-back" href="../../../src.integrator.html#src.integrator.progress_plot.plot_it">[docs]</a>
 <span class="k">def</span> <span class="nf">plot_it</span><span class="p">(</span>
+    <span class="n">OUTPUT_ROOT</span><span class="p">,</span>
     <span class="n">h2_price_records</span><span class="o">=</span><span class="p">[],</span>
     <span class="n">elec_price_records</span><span class="o">=</span><span class="p">[],</span>
     <span class="n">h2_obj_records</span><span class="o">=</span><span class="p">[],</span>
@@ -185,8 +184,6 @@
     <span class="n">ax3</span><span class="o">.</span><span class="n">grid</span><span class="p">(</span><span class="kc">True</span><span class="p">)</span>
     <span class="n">ax4</span><span class="o">.</span><span class="n">grid</span><span class="p">(</span><span class="kc">True</span><span class="p">)</span>
 
-    <span class="n">OUTPUT_ROOT</span> <span class="o">=</span> <span class="n">get_output_root</span><span class="p">()</span>
-
     <span class="n">plt</span><span class="o">.</span><span class="n">savefig</span><span class="p">(</span>
         <span class="n">Path</span><span class="p">(</span><span class="n">OUTPUT_ROOT</span> <span class="o">/</span> <span class="s1">&#39;iteration_check.png&#39;</span><span class="p">),</span>
         <span class="nb">format</span><span class="o">=</span><span class="s1">&#39;png&#39;</span><span class="p">,</span>
@@ -198,13 +195,12 @@
 
 <div class="viewcode-block" id="plot_price_distro">
 <a class="viewcode-back" href="../../../src.integrator.html#src.integrator.progress_plot.plot_price_distro">[docs]</a>
-<span class="k">def</span> <span class="nf">plot_price_distro</span><span class="p">(</span><span class="n">price_records</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">float</span><span class="p">]):</span>
+<span class="k">def</span> <span class="nf">plot_price_distro</span><span class="p">(</span><span class="n">OUTPUT_ROOT</span><span class="p">,</span> <span class="n">price_records</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">float</span><span class="p">]):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;cheap/quick analyisis and plot of the price records&quot;&quot;&quot;</span>
     <span class="c1"># convert $/GWh to $/MWh</span>
     <span class="n">plt</span><span class="o">.</span><span class="n">hist</span><span class="p">(</span><span class="nb">list</span><span class="p">(</span><span class="n">t</span> <span class="o">/</span> <span class="mi">1000</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">price_records</span><span class="p">),</span> <span class="n">bins</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s1">&#39;Price&#39;</span><span class="p">)</span>
     <span class="n">plt</span><span class="o">.</span><span class="n">xlabel</span><span class="p">(</span><span class="s1">&#39;Electricity price ($/MWh)&#39;</span><span class="p">)</span>
     <span class="n">plt</span><span class="o">.</span><span class="n">ylabel</span><span class="p">(</span><span class="s1">&#39;Number of representative hours&#39;</span><span class="p">)</span>
-    <span class="n">OUTPUT_ROOT</span> <span class="o">=</span> <span class="n">get_output_root</span><span class="p">()</span>
     <span class="n">plt</span><span class="o">.</span><span class="n">savefig</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="n">OUTPUT_ROOT</span> <span class="o">/</span> <span class="s1">&#39;histogram.png&#39;</span><span class="p">),</span> <span class="nb">format</span><span class="o">=</span><span class="s1">&#39;png&#39;</span><span class="p">)</span></div>
 
     <span class="c1"># plt.show()</span>

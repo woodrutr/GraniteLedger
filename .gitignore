@@ -25,7 +25,7 @@ __pycache__
 /docs/update_index_nb.ipynb
 ## /docs/build/html/*
 ## /docs/build/blueskyprototypemodel.pdf
-/docs/run_log/
+## /docs/run_log/
 ## setup_prgm.bat
 /src/models/electricity/process_md_files.py
 
@@ -36,13 +36,12 @@ src/models/hydrogen/output/*.csv
 output/*
 !output/*.bat
 !output/*.py
-!output/pt_colors.csv
+!output/tech_colors.csv
 !output/test
 output/test/*
 unit_tests/model_test/mode_test_log
+unit_tests/test_logs/cw_temporal.csv
+unit_tests/test_logs/electricity/prices/elec_price.csv
 *.db
-*com_raw.csv
-*res_raw.csv
-src/models/residential/input/final.csv
-
-
+*.h5
+*.zip

@@ -1,28 +1,26 @@
+
+
 <!DOCTYPE html>
 <html class="writer-html5" lang="en" data-content_root="./">
 <head>
   <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>src.models.hydrogen.utilities package &mdash; BlueSky Prototype Model v1 documentation</title>
-      <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=80d5e7a1" />
-      <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=19f00094" />
+  <title>src.models.hydrogen.utilities &mdash; BlueSky Prototype Model v1.1 documentation</title>
+      <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=e59714d7" />
 
   
-  <!--[if lt IE 9]>
-    <script src="_static/js/html5shiv.min.js"></script>
-  <![endif]-->
-  
-        <script src="_static/jquery.js?v=5d32c60e"></script>
-        <script src="_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
-        <script src="_static/documentation_options.js?v=5cb08e4e"></script>
-        <script src="_static/doctools.js?v=888ff710"></script>
-        <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+      <script src="_static/jquery.js?v=5d32c60e"></script>
+      <script src="_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="_static/documentation_options.js?v=45183d27"></script>
+      <script src="_static/doctools.js?v=9bcbadda"></script>
+      <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="_static/js/theme.js"></script>
     <link rel="index" title="Index" href="genindex.html" />
     <link rel="search" title="Search" href="search.html" />
-    <link rel="next" title="src.models.residential package" href="src.models.residential.html" />
-    <link rel="prev" title="src.models.hydrogen.network package" href="src.models.hydrogen.network.html" /> 
+    <link rel="next" title="src.models.hydrogen.utilities.h2_functions" href="src.models.hydrogen.utilities.h2_functions.html" />
+    <link rel="prev" title="src.models.hydrogen.network.transportation_arc" href="src.models.hydrogen.network.transportation_arc.html" /> 
 </head>
 
 <body class="wy-body-for-nav"> 
@@ -44,22 +42,38 @@
   </form>
 </div>
         </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
-              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
-<ul class="current">
-<li class="toctree-l1"><a class="reference internal" href="modules.html">src</a></li>
-<li class="toctree-l1"><a class="reference internal" href="src.integrator.html">src.integrator package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="src.models.electricity.html">src.models.electricity package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="src.html">src package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="src.models.html">src.models package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="src.models.residential.scripts.html">src.models.residential.scripts package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="src.models.residential.html">src.models.residential package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="src.models.residential.preprocessor.html">src.models.residential.preprocessor package</a></li>
-<li class="toctree-l1 current"><a class="current reference internal" href="#">src.models.hydrogen.utilities package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="src.models.hydrogen.html">src.models.hydrogen package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="src.models.hydrogen.network.html">src.models.hydrogen.network package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="src.models.hydrogen.model.html">src.models.hydrogen.model package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="src.models.electricity.scripts.html">src.models.electricity.scripts package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="src.models.electricity.scripts.common.html">src.models.electricity.scripts.common package</a></li>
+              <ul class="current">
+<li class="toctree-l1 current"><a class="reference internal" href="src.models.html">src.models</a><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="src.models.electricity.html">src.models.electricity</a></li>
+<li class="toctree-l2 current"><a class="reference internal" href="src.models.hydrogen.html">src.models.hydrogen</a><ul class="current">
+<li class="toctree-l3"><a class="reference internal" href="src.models.hydrogen.model.html">src.models.hydrogen.model</a></li>
+<li class="toctree-l3"><a class="reference internal" href="src.models.hydrogen.network.html">src.models.hydrogen.network</a></li>
+<li class="toctree-l3 current"><a class="current reference internal" href="#">src.models.hydrogen.utilities</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="src.models.hydrogen.utilities.h2_functions.html">src.models.hydrogen.utilities.h2_functions</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="src.models.residential.html">src.models.residential</a></li>
+</ul>
+</li>
+<li class="toctree-l1 current"><a class="reference internal" href="src.html">src</a><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="src.common.html">src.common</a></li>
+<li class="toctree-l2"><a class="reference internal" href="src.integrator.html">src.integrator</a></li>
+<li class="toctree-l2 current"><a class="reference internal" href="src.models.html">src.models</a><ul class="current">
+<li class="toctree-l3"><a class="reference internal" href="src.models.electricity.html">src.models.electricity</a></li>
+<li class="toctree-l3 current"><a class="reference internal" href="src.models.hydrogen.html">src.models.hydrogen</a><ul class="current">
+<li class="toctree-l4"><a class="reference internal" href="src.models.hydrogen.model.html">src.models.hydrogen.model</a></li>
+<li class="toctree-l4"><a class="reference internal" href="src.models.hydrogen.network.html">src.models.hydrogen.network</a></li>
+<li class="toctree-l4 current"><a class="current reference internal" href="#">src.models.hydrogen.utilities</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="src.models.residential.html">src.models.residential</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="src.sensitivity.html">src.sensitivity</a></li>
+</ul>
+</li>
 </ul>
 
         </div>
@@ -76,11 +90,9 @@
           <div role="navigation" aria-label="Page navigation">
   <ul class="wy-breadcrumbs">
       <li><a href="index.html" class="icon icon-home" aria-label="Home"></a></li>
-          <li class="breadcrumb-item"><a href="modules.html">src</a></li>
-          <li class="breadcrumb-item"><a href="src.html">src package</a></li>
-          <li class="breadcrumb-item"><a href="src.models.html">src.models package</a></li>
-          <li class="breadcrumb-item"><a href="src.models.hydrogen.html">src.models.hydrogen package</a></li>
-      <li class="breadcrumb-item active">src.models.hydrogen.utilities package</li>
+          <li class="breadcrumb-item"><a href="src.models.html">src.models</a></li>
+          <li class="breadcrumb-item"><a href="src.models.hydrogen.html">src.models.hydrogen</a></li>
+      <li class="breadcrumb-item active">src.models.hydrogen.utilities</li>
       <li class="wy-breadcrumbs-aside">
             <a href="_sources/src.models.hydrogen.utilities.rst.txt" rel="nofollow"> View page source</a>
       </li>
@@ -90,167 +102,16 @@
           <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
            <div itemprop="articleBody">
              
-  <section id="src-models-hydrogen-utilities-package">
-<h1>src.models.hydrogen.utilities package<a class="headerlink" href="#src-models-hydrogen-utilities-package" title="Link to this heading"></a></h1>
-<section id="submodules">
-<h2>Submodules<a class="headerlink" href="#submodules" title="Link to this heading"></a></h2>
-</section>
-<section id="module-src.models.hydrogen.utilities.h2_functions">
-<span id="src-models-hydrogen-utilities-h2-functions-module"></span><h2>src.models.hydrogen.utilities.h2_functions module<a class="headerlink" href="#module-src.models.hydrogen.utilities.h2_functions" title="Link to this heading"></a></h2>
-<dl class="py function">
-<dt class="sig sig-object py" id="src.models.hydrogen.utilities.h2_functions.get_demand">
-<span class="sig-prename descclassname"><span class="pre">src.models.hydrogen.utilities.h2_functions.</span></span><span class="sig-name descname"><span class="pre">get_demand</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">hm</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference internal" href="src.models.hydrogen.model.html#src.models.hydrogen.model.h2_model.H2Model" title="src.models.hydrogen.model.h2_model.H2Model"><span class="pre">H2Model</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">region</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">time</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/src/models/hydrogen/utilities/h2_functions.html#get_demand"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#src.models.hydrogen.utilities.h2_functions.get_demand" title="Link to this definition"></a></dt>
-<dd><p>get demand for region at time. If mode not standard, just increase demand by 5% per year</p>
-<dl class="field-list simple">
-<dt class="field-odd">Parameters<span class="colon">:</span></dt>
-<dd class="field-odd"><dl class="simple">
-<dt><strong>hm</strong><span class="classifier">H2Model</span></dt><dd><p>model</p>
-</dd>
-<dt><strong>region</strong><span class="classifier">str</span></dt><dd><p>region</p>
-</dd>
-<dt><strong>time</strong><span class="classifier">int</span></dt><dd><p>year</p>
-</dd>
-</dl>
-</dd>
-<dt class="field-even">Returns<span class="colon">:</span></dt>
-<dd class="field-even"><dl class="simple">
-<dt>float</dt><dd><p>demand</p>
-</dd>
-</dl>
-</dd>
-</dl>
-</dd></dl>
-
-<dl class="py function">
-<dt class="sig sig-object py" id="src.models.hydrogen.utilities.h2_functions.get_elec_price">
-<span class="sig-prename descclassname"><span class="pre">src.models.hydrogen.utilities.h2_functions.</span></span><span class="sig-name descname"><span class="pre">get_elec_price</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">hm</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference internal" href="src.models.hydrogen.model.html#src.models.hydrogen.model.h2_model.H2Model" title="src.models.hydrogen.model.h2_model.H2Model"><span class="pre">H2Model</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">region</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">year</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/src/models/hydrogen/utilities/h2_functions.html#get_elec_price"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#src.models.hydrogen.utilities.h2_functions.get_elec_price" title="Link to this definition"></a></dt>
-<dd><p>get electricity price in region, year
-Parameters
-———-
-hm : H2Model</p>
-<blockquote>
-<div><p>_model</p>
-</div></blockquote>
-<dl class="simple">
-<dt>region<span class="classifier">str</span></dt><dd><p>region</p>
-</dd>
-<dt>year<span class="classifier">int</span></dt><dd><p>year</p>
-</dd>
-</dl>
-<dl class="field-list simple">
-<dt class="field-odd">Returns<span class="colon">:</span></dt>
-<dd class="field-odd"><dl class="simple">
-<dt>float</dt><dd><p>electricity price in region and year</p>
-</dd>
-</dl>
-</dd>
-</dl>
-</dd></dl>
-
-<dl class="py function">
-<dt class="sig sig-object py" id="src.models.hydrogen.utilities.h2_functions.get_electricity_consumption_rate">
-<span class="sig-prename descclassname"><span class="pre">src.models.hydrogen.utilities.h2_functions.</span></span><span class="sig-name descname"><span class="pre">get_electricity_consumption_rate</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">hm</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference internal" href="src.models.hydrogen.model.html#src.models.hydrogen.model.h2_model.H2Model" title="src.models.hydrogen.model.h2_model.H2Model"><span class="pre">H2Model</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">tech</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/src/models/hydrogen/utilities/h2_functions.html#get_electricity_consumption_rate"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#src.models.hydrogen.utilities.h2_functions.get_electricity_consumption_rate" title="Link to this definition"></a></dt>
-<dd><p>the electricity consumption rate for technology type tech
-Parameters
-———-
-hm : H2Model</p>
-<blockquote>
-<div><p>model</p>
-</div></blockquote>
-<dl class="simple">
-<dt>tech<span class="classifier">str</span></dt><dd><p>technology type</p>
-</dd>
-</dl>
-<dl class="field-list simple">
-<dt class="field-odd">Returns<span class="colon">:</span></dt>
-<dd class="field-odd"><dl class="simple">
-<dt>float</dt><dd><p>GWh per kg H2</p>
-</dd>
-</dl>
-</dd>
-</dl>
-</dd></dl>
-
-<dl class="py function">
-<dt class="sig sig-object py" id="src.models.hydrogen.utilities.h2_functions.get_electricty_consumption">
-<span class="sig-prename descclassname"><span class="pre">src.models.hydrogen.utilities.h2_functions.</span></span><span class="sig-name descname"><span class="pre">get_electricty_consumption</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">hm</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference internal" href="src.models.hydrogen.model.html#src.models.hydrogen.model.h2_model.H2Model" title="src.models.hydrogen.model.h2_model.H2Model"><span class="pre">H2Model</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">region</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">year</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/src/models/hydrogen/utilities/h2_functions.html#get_electricty_consumption"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#src.models.hydrogen.utilities.h2_functions.get_electricty_consumption" title="Link to this definition"></a></dt>
-<dd><p>get electricity consumption for region, year
-Parameters
-———-
-hm : H2Model</p>
-<blockquote>
-<div><p>model</p>
-</div></blockquote>
-<dl class="simple">
-<dt>region<span class="classifier">str</span></dt><dd><p>region</p>
-</dd>
-<dt>year<span class="classifier">int</span></dt><dd><p>year</p>
-</dd>
-</dl>
-<dl class="field-list simple">
-<dt class="field-odd">Returns<span class="colon">:</span></dt>
-<dd class="field-odd"><dl class="simple">
-<dt>float</dt><dd><p>the elecctricity consumption for a region and year in the model</p>
-</dd>
-</dl>
-</dd>
-</dl>
-</dd></dl>
-
-<dl class="py function">
-<dt class="sig sig-object py" id="src.models.hydrogen.utilities.h2_functions.get_gas_price">
-<span class="sig-prename descclassname"><span class="pre">src.models.hydrogen.utilities.h2_functions.</span></span><span class="sig-name descname"><span class="pre">get_gas_price</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">hm</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference internal" href="src.models.hydrogen.model.html#src.models.hydrogen.model.h2_model.H2Model" title="src.models.hydrogen.model.h2_model.H2Model"><span class="pre">H2Model</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">region</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">year</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/src/models/hydrogen/utilities/h2_functions.html#get_gas_price"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#src.models.hydrogen.utilities.h2_functions.get_gas_price" title="Link to this definition"></a></dt>
-<dd><p>get gas price for region, year</p>
-<dl class="field-list simple">
-<dt class="field-odd">Parameters<span class="colon">:</span></dt>
-<dd class="field-odd"><dl class="simple">
-<dt><strong>hm</strong><span class="classifier">H2Model</span></dt><dd><p>model</p>
-</dd>
-<dt><strong>region</strong><span class="classifier">str</span></dt><dd><p>region</p>
-</dd>
-<dt><strong>year</strong><span class="classifier">int</span></dt><dd><p>year</p>
-</dd>
-</dl>
-</dd>
-<dt class="field-even">Returns<span class="colon">:</span></dt>
-<dd class="field-even"><dl class="simple">
-<dt>float</dt><dd><p>gas price in region and year</p>
-</dd>
-</dl>
-</dd>
-</dl>
-</dd></dl>
-
-<dl class="py function">
-<dt class="sig sig-object py" id="src.models.hydrogen.utilities.h2_functions.get_production_cost">
-<span class="sig-prename descclassname"><span class="pre">src.models.hydrogen.utilities.h2_functions.</span></span><span class="sig-name descname"><span class="pre">get_production_cost</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">hm</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference internal" href="src.models.hydrogen.model.html#src.models.hydrogen.model.h2_model.H2Model" title="src.models.hydrogen.model.h2_model.H2Model"><span class="pre">H2Model</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">hub</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tech</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">year</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/src/models/hydrogen/utilities/h2_functions.html#get_production_cost"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#src.models.hydrogen.utilities.h2_functions.get_production_cost" title="Link to this definition"></a></dt>
-<dd><p>return production cost for tech at hub in year</p>
-<dl class="field-list simple">
-<dt class="field-odd">Parameters<span class="colon">:</span></dt>
-<dd class="field-odd"><dl class="simple">
-<dt><strong>hm</strong><span class="classifier">H2Model</span></dt><dd><p>model</p>
-</dd>
-<dt><strong>hub</strong><span class="classifier">str</span></dt><dd><p>hub</p>
-</dd>
-<dt><strong>tech</strong><span class="classifier">str</span></dt><dd><p>technology type</p>
-</dd>
-<dt><strong>year</strong><span class="classifier">int</span></dt><dd><p>year</p>
-</dd>
-</dl>
-</dd>
-<dt class="field-even">Returns<span class="colon">:</span></dt>
-<dd class="field-even"><dl class="simple">
-<dt>float</dt><dd><p>production cost of H2 for tech at hub in year</p>
-</dd>
-</dl>
-</dd>
-</dl>
-</dd></dl>
-
-</section>
-<section id="module-src.models.hydrogen.utilities">
-<span id="module-contents"></span><h2>Module contents<a class="headerlink" href="#module-src.models.hydrogen.utilities" title="Link to this heading"></a></h2>
-</section>
+  <section id="module-src.models.hydrogen.utilities">
+<span id="src-models-hydrogen-utilities"></span><h1>src.models.hydrogen.utilities<a class="headerlink" href="#module-src.models.hydrogen.utilities" title="Link to this heading"></a></h1>
+<p class="rubric">Modules</p>
+<table class="autosummary longtable docutils align-default">
+<tbody>
+<tr class="row-odd"><td><p><a class="reference internal" href="src.models.hydrogen.utilities.h2_functions.html#module-src.models.hydrogen.utilities.h2_functions" title="src.models.hydrogen.utilities.h2_functions"><code class="xref py py-obj docutils literal notranslate"><span class="pre">h2_functions</span></code></a></p></td>
+<td><p>This file is a collection of functions that are used in support of the hydrogen model.</p></td>
+</tr>
+</tbody>
+</table>
 </section>
 
 

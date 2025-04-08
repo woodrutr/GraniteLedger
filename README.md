@@ -10,7 +10,7 @@
 
 [Project BlueSky](https://www.eia.gov/totalenergy/data/bluesky/) is an EIA initiative to develop an open source, next generation energy systems model, which will eventually be used to produce the Annual Energy Outlook ([AEO](https://www.eia.gov/outlooks/aeo/)) and International Energy Outlook ([IEO](https://www.eia.gov/outlooks/ieo/)). Our outlooks are focused on projecting realistic outcomes under a given set of assumptions, accounting for rapid technological innovation, new policy, changing consumer preferences, shifting trade patterns, and the real-world friction associated with the adoption of novel or risky technology. To address these challenges, the next generation model is designed to be modular, flexible, transparent, and robust. 
 
-The BlueSky Prototype is the first step towards creating this next generation model. Our objective in releasing the prototype is to give the modeling community an early opportunity to experiment with the new framework and provide feedback. Feedback gathered from stakeholders will be used to develop a full-scale version of the model beginning in 2025. See the [contribution file](/CONTRIBUTING.md) for information on how to give feedback.
+The BlueSky Prototype is the first step towards creating this next generation model. Our objective in releasing the prototype is to give the modeling community an early opportunity to experiment with the new framework and provide feedback. See the [contribution file](/CONTRIBUTING.md) for information on how to give feedback.
 
 There are four key features associated with the BlueSky Prototype:
 
@@ -143,13 +143,36 @@ The repository will be cloned to your specified location.
 
 3. **Run the Environment Creation Script**
 
-   Run the batch file to set up the Conda environment:
+   Note: if you have already run this script, you must instead update the environment. Go to step 4 for more information.
+
+   For **Windows**, run the batch file to set up the Conda environment:
 
    ```bash
-   envs\env-setup
+   envs\env-setup.bat
+   ```
+
+   On **Linux** or **macOS**, run the contents of the bat file in Terminal.
+
+   ```bash
+   conda env create -f envs/conda_env.yml && conda activate bsky
    ```
 
    This will create and set up the necessary Conda environment for the project.
+
+4. **Update the Environment**
+
+   The update from BlueSky version 1.0 to 1.1 has several package changes that will require an environment update. To update an environment that already exists, run the following:
+
+   ```bash
+   conda env update --f envs/conda_env.yml  --prune
+   ```
+
+   We are aware of some conda issues where this may throw errors and not correctly update. In this case, run the following to re-create the environment from scratch:
+
+   ```bash
+   conda env create --f envs/conda_env.yml  --yes
+   ```
+
 
 #### Setup Instructions with *Screenshots*
 <details>
@@ -175,7 +198,7 @@ The repository will be cloned to your specified location.
 
 3. **Run the Environment Creation Script**
 
-   Run the batch file to set up the Conda environment:
+   On **Windows**, run the batch file to set up the Conda environment:
 
    ```bash
    envs\env-setup.bat
@@ -191,7 +214,7 @@ The repository will be cloned to your specified location.
 # Usage
 The BlueSky Prototype can be executed either as a Dash app that provides a graphical user interface (GUI), or run from the command line. All scripts should be run from the top-level directory of the project via the app or ```main.py``` file, as explained below. 
 
-Note that the Prototype can be run with different configuration options to indicate the modules, regionality, temporal resolution, solver options, and other module-specific settings. These options are encoded in [```run_config.toml```](src/integrator/run_config.toml). When running the model from the command line, ```run_config.toml``` must be modified directly and contains detailed descriptions of the configuration settings. When running the model from the GUI, the same configuration options can be set via the interface without accessing the file directly. For GUI users, the configuration options are described in detail [here](#dash-app-features).
+Note that the Prototype can be run with different configuration options to indicate the modules, regionality, temporal resolution, solver options, and other module-specific settings. These options are encoded in [```run_config.toml```](src/common/run_config.toml). When running the model from the command line, ```run_config.toml``` must be modified directly and contains detailed descriptions of the configuration settings. When running the model from the GUI, the same configuration options can be set via the interface without accessing the file directly. For GUI users, the configuration options are described in detail [here](#dash-app-features).
 
 One of the key features of the BlueSky Prototype is the ability to run modules individually or select between two solve options for the integrated runs. The table below describes the different modes when running the model. More details on these methods can be found in the [Integrator README](src/integrator/README.md).
 
@@ -335,7 +358,7 @@ python main.py --mode standalone
 
 If this reports an objective value, you have successfully run the model in standalone!
 
-The file [```main.py```](main.py) processes user options as directed by the configuration file [```run_config.toml```](src/integrator/run_config.toml) and builds/solves an instance of an integrated (multiple modules) or standalone (single module) model. Any runs initiated from the top level ```main.py``` file will initiate logging and report to output folder. The log file contains (currently very limited) updates on run progress, solver output, etc. The default logging level is INFO. That may be increased by setting the command line argument --debug when running main.py. 
+The file [```main.py```](main.py) processes user options as directed by the configuration file [```run_config.toml```](src/common/run_config.toml) and builds/solves an instance of an integrated (multiple modules) or standalone (single module) model. Any runs initiated from the top level ```main.py``` file will initiate logging and report to output folder. The log file contains (currently very limited) updates on run progress, solver output, etc. The default logging level is INFO. That may be increased by setting the command line argument --debug when running main.py. 
 
 It is also possible to set the option for ```default_mode``` in ```run_config.toml```. Then, run ```main.py``` without specifying a mode: 
 
@@ -354,16 +377,13 @@ Documentation for each of the modules is available using the links below. We als
    - [Model](src/models/electricity/README.md)
 * Hydrogen Module
    - [Model](src/models/hydrogen/README.md)
-   - [Preprocessor](src/models/hydrogen/preprocessor/README.md)
+   - [Preprocessor](src/models/hydrogen/README.md)
 * Residential Module
    - [Model](src/models/residential/README.md)
    - [Preprocessor](src/models/residential/preprocessor/README.md)
-* Sensitivity
-   - Method 1
-   - Method 2
+* [Sensitivity](src/sensitivity/README.md)
 * [Data Workflow](sample/data_pipeline/README.md)
 * [Unit Tests](unit_tests/README.md)
-* [Outputs](output/README.md)
 
 Users can access code documentation following these [instructions for HTML, Markdown, and PDF documentation](docs/README.md). Alternatively, code documentation can be generated by the user within the GUI by clicking the 'code documentation' button, which will run Sphinx locally and generate an html file in your open browser. See the instructions on working with the GUI for more details 
 

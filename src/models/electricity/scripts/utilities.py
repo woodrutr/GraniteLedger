@@ -4,267 +4,159 @@
 # Setup
 
 # Import pacakges
+from collections import defaultdict
 from pathlib import Path
 import sys as sys
-import numpy as np
 import pyomo.environ as pyo
 import pandas as pd
-
-# import scripts
-from definitions import PROJECT_ROOT
-
-# establish paths
-data_root = Path(PROJECT_ROOT, 'src/models/electricity/input')
-
+from src.common.model import Model
 
 ###################################################################################################
-# Declare things functions
+# TODO: Move this class into a new file?
 
 
-def declare_set(self, sname, df):
-    """Assigns the index from the df to be a pyomo set using the name specified.
-    Adds the name and index column names to the column dictionary used for post-processing.
-
-    Parameters
-    ----------
-    sname : string
-        name of the set to be declared
-    df : dataframe
-        dataframe from which the index will be grabbed to generate the set
-
-    Returns
-    -------
-    pyomo set
-        a pyomo set
-    """
-    sset = pyo.Set(initialize=df.index)
-    scols = list(df.reset_index().columns)
-    scols = scols[-1:] + scols[:-1]
-    self.cols_dict[sname] = scols
-
-    return sset
-
-
-def declare_param(self, pname, p_set, data, default=0, mutable=False):
-    """Assigns the df to be a pyomo parameter using the name specified.
-    Adds the name and index column names to the column dictionary used for post-processing.
+class ElectricityMethods(Model):
+    """a collection of functions used within the electricity model that aid in building the model.
 
     Parameters
     ----------
-    pname : string
-        name of the parameter to be declared
-    p_set : pyomo set
-        the pyomo set that cooresponds to the parameter data
-    data : dataframe, series, float, or int
-        dataframe used generate the parameter
-    default : int, optional
-        by default 0
-    mutable : bool, optional
-        by default False
-
-    Returns
-    -------
-    pyomo parameter
-        a pyomo parameter
+    Model : Class
+        generic model class
     """
-    if isinstance(data, pd.DataFrame) or isinstance(data, pd.Series):
-        param = pyo.Param(p_set, initialize=data, default=default, mutable=mutable)
-        pcols = list(data.reset_index().columns)
-        pcols = pcols[-1:] + pcols[:-1]
-        self.cols_dict[pname] = pcols
-    else:
-        param = pyo.Param(initialize=data)
-        self.cols_dict[pname] = [pname, 'None']
 
-    return param
+    def __init__(self, *args, **kwargs):
+        Model.__init__(self, *args, **kwargs)
 
+    # Populate sets functions
+    def populate_by_hour_sets_rule(m):
+        """Creates new reindexed sets for dispatch_cost calculations
 
-def declare_var(self, vname, v_set, bound=(0, 1000000000)):
-    """Assigns the set to be the index for the pyomo variable being declared.
-    Adds the name and index column names to the column dictionary used for post-processing.
-
-    Parameters
-    ----------
-    vname : str
-        name of pyomo variable
-    v_set : pyomo set
-        the pyomo set that the variable data will be indexed by
-    bound : set, optional
-        optional argument for setting variable bounds, default values set to zero to one billion
-
-    Returns
-    -------
-    pyomo variable
-        a pyomo variable
-    """
-    var = pyo.Var(v_set, within=pyo.NonNegativeReals, bounds=bound)
-    sname = v_set.name
-    vcols = [vname] + self.cols_dict[sname][1:]
-    self.cols_dict[vname] = vcols
-    return var
-
-
-###################################################################################################
-# Populate sets functions
-
-
-def populate_sets_rule(m1, sname, set_base_name='', set_base2=[]):
-    """Generic function to create a new re-indexed set for a PowerModel instance which
-    should speed up build time. Must pass non-empty (either) set_base_name or set_base2
-
-    Parameters
-    ----------
-    m1 : PowerModel
-        electricity pyomo model instance
-    sname : str
-        name of input pyomo set to base reindexing
-    set_base_name : str, optional
-        the name of the set to be the base of the reindexing, if left blank, uses set_base2, by default ''
-    set_base2 : list, optional
-        the list of names of set columns to be the base of the reindexing, if left blank, should use set_base_name, by default []
-
-    Returns
-    -------
-    pyomo set
-        reindexed set to be added to electricity model
-    """
-    # TODO: speed up function
-
-    set_in = getattr(m1, sname)
-    scols = m1.cols_dict[sname][1:]
-
-    if set_base_name == '':
-        # passed in list (set_base2) of column names, these will be the new base set
-        scol_base = np.array([s in set_base2 for s in scols], dtype=bool)
-        scols2 = list(np.array(scols)[scol_base])
-        scol_base_order = np.array([scols2.index(s) for s in set_base2])
-        m1.set_out = {}
-    else:
-        set_base = getattr(m1, set_base_name)  # pull single base set name
-        m1.set_out = pyo.Set(set_base)
-        scol_base = np.array([s == set_base_name for s in scols], dtype=bool)
-
-    for i in set_in:  # iterate through set passed in
-        i = np.array(i)
-        rest_i = tuple(i[~scol_base])  # non-base set values
-        if set_base_name == '':
-            base_i = tuple(i[scol_base][scol_base_order])
-            if base_i not in m1.set_out:
-                m1.set_out[base_i] = []
-            m1.set_out[base_i].append(rest_i)
-        else:
-            base_i = int(i[scol_base][0])
-
-            m1.set_out[base_i].add(rest_i)
-    # return the new set instead of adding directly to model
-    set_out = m1.set_out
-    m1.del_component('set_out')
-    return set_out
-
-
-def populate_by_hour_sets_rule(m):
-    """Creates new reindexed sets for dispatch_cost calculations
-
-    Parameters
-    ----------
-    m : PowerModel
-        pyomo electricity model instance
-    """
-    m.StorageHour_index = populate_sets_rule(m, 'Storage_index', set_base_name='hr')
-    m.GenHour_index = populate_sets_rule(m, 'generation_total_index', set_base_name='hr')
-    m.H2GenHour_index = populate_sets_rule(m, 'H2Gen_index', set_base_name='hr')
-
-
-def populate_demand_balance_sets_rule(m):
-    """Creates new reindexed sets for demand balance constraint
-
-    Parameters
-    ----------
-    m : PowerModel
-        pyomo electricity model instance
-    """
-    m.GenSetDemandBalance = populate_sets_rule(
-        m, 'generation_total_index', set_base2=['y', 'r', 'hr']
-    )
-    m.StorageSetDemandBalance = populate_sets_rule(m, 'Storage_index', set_base2=['y', 'r', 'hr'])
-
-    if m.sw_trade == 1:
-        m.TradeSetDemandBalance = populate_sets_rule(
-            m, 'trade_interregional_index', set_base2=['y', 'r', 'hr']
+        Parameters
+        ----------
+        m : PowerModel
+            pyomo electricity model instance
+        """
+        m.StorageHour_index = Model.populate_sets_rule(m, 'Storage_index', set_base_name='hour')
+        m.GenHour_index = Model.populate_sets_rule(
+            m, 'generation_total_index', set_base_name='hour'
         )
-        m.TradeCanSetDemandBalance = populate_sets_rule(
-            m, 'trade_interational_index', set_base2=['y', 'r', 'hr']
+        m.H2GenHour_index = Model.populate_sets_rule(m, 'H2Gen_index', set_base_name='hour')
+
+    def populate_demand_balance_sets_rule(m):
+        """Creates new reindexed sets for demand balance constraint
+
+        Parameters
+        ----------
+        m : PowerModel
+            pyomo electricity model instance
+        """
+        m.GenSetDemandBalance = Model.populate_sets_rule(
+            m, 'generation_total_index', set_base2=['year', 'region', 'hour']
+        )
+        m.StorageSetDemandBalance = Model.populate_sets_rule(
+            m, 'Storage_index', set_base2=['year', 'region', 'hour']
         )
 
+        if m.sw_trade == 1:
+            m.TradeSetDemandBalance = Model.populate_sets_rule(
+                m, 'trade_interregional_index', set_base2=['year', 'region', 'hour']
+            )
+            m.TradeCanSetDemandBalance = Model.populate_sets_rule(
+                m, 'trade_interational_index', set_base2=['year', 'region', 'hour']
+            )
 
-def populate_trade_sets_rule(m):
-    """Creates new reindexed sets for trade constraints
+    def populate_trade_sets_rule(m):
+        """Creates new reindexed sets for trade constraints
 
-    Parameters
-    ----------
-    m : PowerModel
-        pyomo electricity model instance
-    """
-    m.TradeCanLineSetUpper = populate_sets_rule(
-        m, 'trade_interational_index', set_base2=['r', 'r1', 'y', 'hr']
-    )
-    m.TradeCanSetUpper = populate_sets_rule(
-        m, 'trade_interational_index', set_base2=['r1', 'y', 'CSteps', 'hr']
-    )
+        Parameters
+        ----------
+        m : PowerModel
+            pyomo electricity model instance
+        """
+        m.TradeCanLineSetUpper = Model.populate_sets_rule(
+            m, 'trade_interational_index', set_base2=['region', 'region1', 'year', 'hour']
+        )
+        m.TradeCanSetUpper = Model.populate_sets_rule(
+            m, 'trade_interational_index', set_base2=['region1', 'year', 'step', 'hour']
+        )
 
+    def populate_RM_sets_rule(m):
+        """Creates new reindexed sets for reserve margin constraint
 
-def populate_RM_sets_rule(m):
-    """Creates new reindexed sets for reserve margin constraint
+        Parameters
+        ----------
+        m : PowerModel
+            pyomo electricity model instance
+        """
+        m.SupplyCurveRM = Model.populate_sets_rule(
+            m, 'capacity_total_index', set_base2=['year', 'region', 'season']
+        )
 
-    Parameters
-    ----------
-    m : PowerModel
-        pyomo electricity model instance
-    """
-    m.SupplyCurveRM = populate_sets_rule(m, 'capacity_total_index', set_base2=['y', 'r', 's'])
+    def populate_hydro_sets_rule(m):
+        """Creates new reindexed sets for hydroelectric generation seasonal upper bound constraint
 
+        Parameters
+        ----------
+        m : PowerModel
+            pyomo electricity model instance
+        """
+        m.HourSeason_index = pyo.Set(m.season)
+        for hr, season in (m.MapHourSeason.extract_values()).items():
+            m.HourSeason_index[season].add(hr)
 
-def populate_hydro_sets_rule(m):
-    """Creates new reindexed sets for hydroelectric generation seasonal upper bound constraint
+    def populate_reserves_sets_rule(m):
+        """Creates new reindexed sets for operating reserves constraints
 
-    Parameters
-    ----------
-    m : PowerModel
-        pyomo electricity model instance
-    """
-    m.HourSeason_index = pyo.Set(m.s)
-    for hr, s in (m.Map_hr_s.extract_values()).items():
-        m.HourSeason_index[s].add(hr)
+        Parameters
+        ----------
+        m : PowerModel
+            pyomo electricity model instance
+        """
+        m.WindSetReserves = {}
+        m.SolarSetReserves = {}
 
+        m.ProcurementSetReserves = Model.populate_sets_rule(
+            m, 'reserves_procurement_index', set_base2=['restypes', 'region', 'year', 'hour']
+        )
+        for tech, year, r, step, hour in m.generation_vre_ub_index:
+            if (year, r, hour) not in m.WindSetReserves:
+                m.WindSetReserves[(year, r, hour)] = []
+            if (year, r, hour) not in m.SolarSetReserves:
+                m.SolarSetReserves[(year, r, hour)] = []
 
-def populate_reserves_sets_rule(m):
-    """Creates new reindexed sets for operating reserves constraints
-
-    Parameters
-    ----------
-    m : PowerModel
-        pyomo electricity model instance
-    """
-    m.WindSetReserves = {}
-    m.SolarSetReserves = {}
-
-    m.ProcurementSetReserves = populate_sets_rule(
-        m, 'reserves_procurement_index', set_base2=['restypes', 'r', 'y', 'hr']
-    )
-    for pt, year, reg, step, hour in m.generation_vre_ub_index:
-        if (year, reg, hour) not in m.WindSetReserves:
-            m.WindSetReserves[(year, reg, hour)] = []
-        if (year, reg, hour) not in m.SolarSetReserves:
-            m.SolarSetReserves[(year, reg, hour)] = []
-
-        if pt in m.ptw:
-            m.WindSetReserves[(year, reg, hour)].append((pt, step))
-        elif pt in m.ptsol:
-            m.SolarSetReserves[(year, reg, hour)].append((pt, step))
+            if tech in m.T_wind:
+                m.WindSetReserves[(year, r, hour)].append((tech, step))
+            elif tech in m.T_solar:
+                m.SolarSetReserves[(year, r, hour)].append((tech, step))
 
 
 ###################################################################################################
-# Other functionality
+# Utility functions THESE STAY HERE
+
+
+def check_results(results, SolutionStatus, TerminationCondition):
+    """Check results for termination condition and solution status
+
+    Parameters
+    ----------
+    results : str
+        Results from pyomo
+    SolutionStatus : str
+        Solution Status from pyomo
+    TerminationCondition : str
+        Termination Condition from pyomo
+
+    Returns
+    -------
+    results
+    """
+    return (
+        (results is None)
+        or (len(results.solution) == 0)
+        or (results.solution(0).status == SolutionStatus.infeasible)
+        or (results.solver.termination_condition == TerminationCondition.infeasible)
+        or (results.solver.termination_condition == TerminationCondition.unbounded)
+    )
 
 
 def create_obj_df(mod_object):
@@ -322,6 +214,6 @@ def annual_count(hour, m) -> int:
     int
         the aggregate weight (count) of this hour in the rep_year.  NOT the hour weight!
     """
-    day_weight = m.Idaytq[m.Map_hr_d[hour]]
-    hour_weight = m.Hr_weights[hour]
-    return day_weight * hour_weight
+    WeightDay = m.WeightDay[m.MapHourDay[hour]]
+    WeightHour = m.WeightHour[hour]
+    return WeightDay * WeightHour

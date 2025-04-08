@@ -3,17 +3,20 @@ A gathering of functions for running models solo
 
 """
 
+# Import packages
 from logging import getLogger
 from pathlib import Path
 from pyomo.environ import value
 
-from src.integrator.config_setup import Config_settings
+# Import python modules
+from src.common.config_setup import Config_settings
 from src.integrator import utilities
 from src.models.electricity.scripts.runner import run_elec_model
 from src.models.hydrogen.model.actions import run_hydrogen_model
 from src.models.residential.scripts.residential import run_residential
 from src.integrator.progress_plot import plot_price_distro
 
+# Establish logger
 logger = getLogger(__name__)
 
 
@@ -29,13 +32,13 @@ def run_elec_solo(settings: Config_settings | None = None):
     # engage the Electricity Model...
     logger.info('Running Electricity Module')
     instance = run_elec_model(settings)
-    print(f'Objective value: {value(instance.totalCost)}')
+    print(f'Objective value: {value(instance.total_cost)}')
 
     # write out prices and plot them
     elec_price = utilities.get_elec_price(instance)
     price_records = utilities.get_annual_wt_avg(elec_price)
     elec_price.to_csv(Path(settings.OUTPUT_ROOT / 'electricity' / 'prices' / 'elec_price.csv'))
-    # plot_price_distro(list(elec_price.price_wt))
+    # plot_price_distro(settings.OUTPUT_ROOT, list(elec_price.price_wt))
 
 
 def run_h2_solo(settings: Config_settings | None = None):
@@ -56,7 +59,7 @@ def run_h2_solo(settings: Config_settings | None = None):
         empty_settings = object()
         empty_settings.years = None
         empty_settings.regions = None
-        empty_settings.h2_data_folder = 'src/models/hydrogen/inputs/single_region'
+        empty_settings.h2_data_folder = 'input/hydrogen/single_region'
         run_hydrogen_model(empty_settings)
 
 

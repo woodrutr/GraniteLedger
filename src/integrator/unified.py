@@ -3,25 +3,27 @@ Unifying the solve of both H2 and Elec and Res
 
 Dev Notes:
 
+1. The "annual demand" constraint that is present and INACTIVE is omitted here for clarity.
+It may likely be needed - in some form - at a later time. Recall, the key linkages to share the
+electrical demand primary variable are:
 
-(1).  The "annual demand" constraint that is present and INACTIVE
-       is omitted here for clarity.  It may likely be needed--in some form--at a later
-      time.  Recall, the key linkages to share the electrical demand primary variable are:
-          (a).  an annual level demand constraint
-          (b).  an accurate price-pulling function that can consider weighted duals
-                from both constraints [NOT done]
-(2).  This model has a 2-solve update cycle as commented on near the termination check
-      elec_prices gleaned from      cycle[n] results -> solve cycle[n+1]
-      new_load gleaned from         cycle[n+1] results -> solve cycle[n+2]
-      elec_pices gleaned from       cycle[n+2]
+ - an annual level demand constraint
+ - an accurate price-pulling function that can consider weighted duals from both constraints
+
+2. This model has a 2-solve update cycle as commented on near the termination check
+ - elec_prices gleaned from cycle[n] results -> solve cycle[n+1]
+ - new_load gleaned from cycle[n+1] results -> solve cycle[n+2]
+ - elec_pices gleaned from cycle[n+2]
 
 """
 
+# Import packages
 from collections import defaultdict, deque
 from logging import getLogger
 import pyomo.environ as pyo
 
-from src.integrator.config_setup import Config_settings
+# Import python modules
+from src.common.config_setup import Config_settings
 from src.integrator.utilities import (
     HI,
     EI,
@@ -46,6 +48,7 @@ from src.models.hydrogen.model import actions
 from src.models.residential.scripts.residential import residentialModule
 import src.models.electricity.scripts.postprocessor as post_elec
 
+# Establish logger
 logger = getLogger(__name__)
 
 
@@ -129,19 +132,34 @@ def run_unified(settings: Config_settings):
         # iterate over the Generation variable and screen out the H2 "demanders" and build a
         # summary expression for all the demands in the (region, year) index of the H2 model
 
-        # see note in Elec Model function for polling H2 regarding units of H2_heatrate
+        # see note in Elec Model function for polling H2 regarding units of H2Heatrate
         for idx in elec_model.generation_total.index_set():
-            tech, y, reg, _, hr = idx
+            tech, y, r, _, hr = idx
             if tech in h2_consuming_techs:
                 h2_demand_weighted = (
                     elec_model.generation_total[idx]
-                    * elec_model.Idaytq[elec_model.Map_hr_d[hr]]
-                    / elec_model.H2_heatrate
+                    * elec_model.WeightDay[elec_model.MapHourDay[hr]]
+                    / elec_model.H2Heatrate
                 )
-                h2_demand_equations_from_elec[HI(region=reg, year=y)] += h2_demand_weighted
+                h2_demand_equations_from_elec[HI(region=r, year=y)] += h2_demand_weighted
 
-        # Link together with a constraint
         def link_h2_demand(meta, r, y):
+            """Link h2 demand from h2 model and elec together with a constraint
+
+            Parameters
+            ----------
+            meta : pyo.ConcreteModel
+                solved model with h2
+            r : list[int]
+                regions list
+            y : list[int]
+                years list
+
+            Returns
+            -------
+            pyo.expr.relational_expr.InequalityExpression
+                inequality to add to constraint for h2 demand
+            """
             return h2_model.var_demand[r, y] >= h2_demand_equations_from_elec[HI(r, y)]
 
         meta.link_h2_demand = pyo.Constraint(h2_model.regions, h2_model.year, rule=link_h2_demand)
@@ -149,12 +167,12 @@ def run_unified(settings: Config_settings):
     # Setting up meta objective function and duals
     if settings.electricity and settings.hydrogen:
         h2_model.total_cost.deactivate()
-        elec_model.totalCost.deactivate()
-        meta.obj = pyo.Objective(expr=h2_model.total_cost + elec_model.totalCost)
+        elec_model.total_cost.deactivate()
+        meta.obj = pyo.Objective(expr=h2_model.total_cost + elec_model.total_cost)
         meta.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)
     elif settings.electricity:
-        elec_model.totalCost.deactivate()
-        meta.obj = pyo.Objective(expr=elec_model.totalCost)
+        elec_model.total_cost.deactivate()
+        meta.obj = pyo.Objective(expr=elec_model.total_cost)
         meta.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)
 
     #####
@@ -214,10 +232,10 @@ def run_unified(settings: Config_settings):
             # initialize it, but for iter 1, ..., N there will be a res model in the
             # solve above
             prices = get_elec_price(meta, block=meta.elec)
-            prices = prices.set_index(['r', 'y', 'hr'])['raw_price'].to_dict()
+            prices = prices.set_index(['region', 'year', 'hour'])['raw_price'].to_dict()
             prices = [(EI(*k), prices[k]) for k, v in prices.items()]
 
-            # dev note:  we must use this because the Res model needs (reg, yr, hr) not just (reg, yr)!
+            # dev note:  we must use this because the Res model needs (r, yr, hr) not just (r, yr)!
             price_lut = convert_elec_price_to_lut(prices=prices)
 
             # cannot have zero prices, so a quick interim check
@@ -259,7 +277,7 @@ def run_unified(settings: Config_settings):
             tot_h2_demand = sum(poll_h2_demand(elec_model).values())
             h2_demand_records.append((i + 1, tot_h2_demand))
             logger.debug('Tot H2 Demand for iteration %d: %0.2f', i, tot_h2_demand)
-            elec_obj_records.append((i, pyo.value(elec_model.totalCost)))
+            elec_obj_records.append((i, pyo.value(elec_model.total_cost)))
 
         if settings.electricity:
             rap = regional_annual_prices(meta, block=meta.elec)
@@ -290,7 +308,7 @@ def run_unified(settings: Config_settings):
         ### run_unified - TERM: check termination
         #####
         if settings.electricity:
-            elec_obj = round(pyo.value(elec_model.totalCost), 2)
+            elec_obj = round(pyo.value(elec_model.total_cost), 2)
             meta_objs_elec.append(elec_obj)
 
         if settings.hydrogen:
@@ -302,7 +320,13 @@ def run_unified(settings: Config_settings):
             meta_objs_res.append(res_obj)
 
         def under_tolerance() -> bool:
-            # check tolerance for elec, hyd, and res modules
+            """check tolerance for elec, hyd, and res modules
+
+            Returns
+            -------
+            bool
+                is objective change less than tolerance?
+            """
             obj_change = 0
             if settings.electricity:
                 max_recent_elec = max(meta_objs_elec)
@@ -358,6 +382,7 @@ def run_unified(settings: Config_settings):
     # post processing reporting
 
     # plot_it(
+    #     settings.OUTPUT_ROOT,
     #     h2_price_records=h2_price_records,
     #     elec_price_records=elec_price_records,
     #     h2_obj_records=h2_obj_records,

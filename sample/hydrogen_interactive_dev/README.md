@@ -41,7 +41,7 @@ For example, the following table would generate the regionality in the below dia
 
 This would append all the rows after the column labeled data to the rightmost region that appears in that row. You can create any parameters you want; the model can freely be expanded upon. 
 
-![Alt](images/region_sets.png "Set view") ![Alt](images/tree.png "Tree view")
+![Alt](images\region_sets.png "Set view") ![Alt](images\tree.png "Tree view")
 
 A few final notes on the *regions* data formatting:
 * **IMPORTANT NOTE: region names must be *unique***. If this is a problem (for example, where all region types use numeric-naming) you can hyphenate the names or append a prefix depending on which column it is in.
@@ -83,7 +83,7 @@ This takes the name of a region as an argument and makes that region absorb all 
 
 A user who wants to model only some regions in detail and wants a coarser representation of other regions to reduce complexity could use this feature to simplify a grid. For example, see the following grid:
 
-![Alt](images/grid.png "the set as input")
+![Alt](images\grid.png "the set as input")
 
 If the user runs the following method...
 ```python
@@ -92,26 +92,26 @@ grid.collapse('South')
 
 ... they create a grid with the southern region collapsed as visualized in the network.
 
-![Alt](images/south_collapse.png "southern region collapsed")
+![Alt](images\south_collapse.png "southern region collapsed")
 
 
 #### collapse_level(depth: int)
 
 This method takes the desired depth of region nesting, and collapses all regions at that depth. If you have four levels of region-nesting, say Region, Census Region, State, County, and you want to collapse the data to only two levels of depth, you'd use collapse_level. For example, our regionality in the image above:
 
-![Alt](images/grid.png "the set as input")
+![Alt](images\grid.png "the set as input")
 
 would become the following after running ```collapse_level```
 ```python
 grid.collapse_level(2)
 ```
-![Alt](images/collapse_level_2.png "level 2 collapse")
+![Alt](images\collapse_level_2.png "level 2 collapse")
 
 Collapsing further to the highest nesting level results in a more "sparse" grid object.
 ```python
 grid.collapse_level(1)
 ```
-![Alt](images/collapse_level_1.png "level 1 collapse") 
+![Alt](images\collapse_level_1.png "level 1 collapse") 
 
 ## Model Overview
 
@@ -171,7 +171,7 @@ Production cost is a variable cost associated with hydrogen production. In the c
 
 Currently, Production cost uses the below formula.\
 \
-Letting $\Theta = H\times T \times Y$ and $r(h) = $ the region hub $h$ is in, Production Cost is:
+Letting $\Theta = H\times T \times Y$ and $r(h) =$ the region hub $h$ is in, Production Cost is:
 
 
 

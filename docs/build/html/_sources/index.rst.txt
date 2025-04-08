@@ -2,9 +2,9 @@
 BlueSky Prototype model
 =================================================
 
-============
+==============================
 Sphinx Documentation Structure
-============
+==============================
 
 
 Sphinx organizes the documentation into the following sections:
@@ -58,28 +58,16 @@ In the HTML and Markdown outputs, each package and subpackage is represented wit
 
 Use the **Search bar** on the top left to search for a specific function or module.
 
+Model Structure
+---------------
 
 
 
 
+.. autosummary::
+   :toctree:
+   :recursive:
 
 
-
-.. toctree::
-   :maxdepth: 2
-   :caption: Contents:
-
-   modules
-   src.integrator
-   src.models.electricity
-   src
    src.models
-   src.models.residential.scripts
-   src.models.residential
-   src.models.residential.preprocessor
-   src.models.hydrogen.utilities
-   src.models.hydrogen
-   src.models.hydrogen.network
-   src.models.hydrogen.model
-   src.models.electricity.scripts
-   src.models.electricity.scripts.common
+   src

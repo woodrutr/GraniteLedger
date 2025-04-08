@@ -1,4 +1,9 @@
 import pytest
+from pathlib import Path
+from pyomo.environ import value
+
+from definitions import PROJECT_ROOT
+from src.common import config_setup
 from src.integrator.utilities import (
     HI,
     get_elec_price,
@@ -7,10 +12,6 @@ from src.integrator.utilities import (
     update_h2_prices,
 )
 from src.models.electricity.scripts.runner import run_elec_model
-from pyomo.environ import value
-from definitions import PROJECT_ROOT
-from pathlib import Path
-from src.integrator import utilities, config_setup
 
 
 def test_poll_elec_prices():
@@ -18,10 +19,10 @@ def test_poll_elec_prices():
     years = [2030, 2031]
     regions = [7, 8]
 
-    config_path = Path(PROJECT_ROOT, 'src/integrator', 'run_config.toml')
-    settings = config_setup.Config_settings(
-        config_path, test=True, years_ow=years, regions_ow=regions
-    )
+    config_path = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
+    settings = config_setup.Config_settings(config_path, test=True)
+    settings.regions = regions
+    settings.years = years
     elec_model = run_elec_model(settings, solve=True)
     # we are just testing to see if we got *something* back ... this should have hundreds of entries...
     new_prices = get_elec_price(elec_model)
@@ -45,20 +46,18 @@ def test_update_h2_price():
     test the ability to update the h2 prices in the model
     """
     years = [2030, 2031]
-    regions = [
-        2,
-    ]
-    config_path = Path(PROJECT_ROOT, 'src/integrator', 'run_config.toml')
-    settings = config_setup.Config_settings(
-        config_path, test=True, years_ow=years, regions_ow=regions
-    )
+    regions = [2]
+    config_path = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
+    settings = config_setup.Config_settings(config_path, test=True)
+    settings.regions = regions
+    settings.years = years
     # just load the model...
     elec_model = run_elec_model(settings, solve=False)
     new_prices = {HI(2, 2030): 999.0, HI(2, 2031): 101010.10}
     update_h2_prices(elec_model, new_prices)
 
     # sample a couple...
-    #                               r, s, pt, step, yr
+    #                               r, season, tech, step, yr
     assert value(elec_model.H2Price[2, 1, 5, 1, 2030]) == pytest.approx(999.0)
     assert value(elec_model.H2Price[2, 3, 5, 1, 2030]) == pytest.approx(999.0)
     assert value(elec_model.H2Price[2, 2, 5, 1, 2031]) == pytest.approx(101010.10)
@@ -74,10 +73,10 @@ def test_poll_h2_demand():
     years = [2030, 2031]
     regions = [2]
 
-    config_path = Path(PROJECT_ROOT, 'src/integrator', 'run_config.toml')
-    settings = config_setup.Config_settings(
-        config_path, test=True, years_ow=years, regions_ow=regions
-    )
+    config_path = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
+    settings = config_setup.Config_settings(config_path, test=True)
+    settings.regions = regions
+    settings.years = years
     elec_model = run_elec_model(settings, solve=True)
 
     h2_demands = poll_h2_demand(elec_model)

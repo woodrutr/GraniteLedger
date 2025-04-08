@@ -36,6 +36,7 @@ REGISTRY CLASS
 # Import packages and scripts
 import numpy as np
 from pyomo.environ import *
+# TODO: redo pyomo wildcard import to avoid sphinx issues
 import highspy as hp
 import pandas as pd
 import plotly

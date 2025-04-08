@@ -1,0 +1,176 @@
+############################################################################################
+### Snakemake control file for Illustrative Example in Integration Repo
+### Date: 8/7/24
+### Description: This file describes the order of operation for generating the spatial data
+###              and constructing first, a county-level weather data series and then a 
+###              balancing authority (subregion) level dataset describing electricity demand
+###              as reported by the EIA930 survey. One can enter the scripts reported within
+###              each rule to examine the granular details of cleaning/merging/downloading; see
+###              below for a high-level overview of each rule in this file
+#####
+
+configfile: "config.yaml"
+
+YEARS = range(config["noaa"]["year_start"], config["noaa"]["year_end"] + 1)
+YEARS_930 = range(config["eia930"]["BA"]["year_start"], config["eia930"]["BA"]["year_end"] + 1)
+SR_YEARS = range(config["eia930"]["BASR"]["year_start"], config["eia930"]["BASR"]["year_end"] + 1)
+
+rule target:
+    input:
+        "outputs/BaseLoad.csv"
+
+#####
+### R-Spatial Section: Generates Crosswalks Between BAs, Counties, and ISD Stations
+#####
+
+rule make_BA:
+    input:
+        "inputs/EIA930/EIA930_Reference_Tables.xlsx",
+        "inputs/shapefiles/EIA_BalanceAuthority_2023.shp"
+    output:
+        "outputs/shapefiles/EIA_BA.gpkg"
+    script:
+        "scripts/make_BA.R"
+
+rule make_BASR:
+    input:
+        "inputs/EIA930/EIA930_Reference_Tables.xlsx",
+        "inputs/shapefiles/RTO_Regions.shp",
+    output:
+        "outputs/shapefiles/EIA_BASR.gpkg"
+    script:
+        "scripts/make_BASR.R"
+
+rule join_BA_County:
+    input:
+        "outputs/shapefiles/EIA_BA.gpkg",
+    output:
+        "outputs/crosswalks/EIA_BA-County.csv"
+    params:
+        years_sm = YEARS
+    script:
+        "scripts/join_BA-county.R"
+
+rule join_BASR_County:
+    input:
+        "outputs/crosswalks/EIA_BA-County.csv",
+        "outputs/shapefiles/EIA_BASR.gpkg",
+        "inputs/shapefiles/EIA_BA-SubregionToCounty.csv"
+    output:
+        "outputs/crosswalks/EIA_BASR-County.csv"
+    params:
+        years_sm = YEARS
+    script:
+        "scripts/join_BASR-county.R"
+
+rule merge_BA_BASR_County:
+    input:
+        "outputs/crosswalks/EIA_BA-County.csv",
+        "outputs/crosswalks/EIA_BASR-County.csv",
+        "outputs/shapefiles/EIA_BASR.gpkg",
+        "outputs/shapefiles/EIA_BA.gpkg"
+    output:
+        "outputs/crosswalks/EIA_BA-BASR-County.csv",
+        "outputs/shapefiles/BA-BASR_Merge.gpkg"
+    params:
+        years_sm = YEARS
+    script:
+        "scripts/join_BA-BASR.R"
+
+rule join_BA_ISD:
+    input:
+        "outputs/crosswalks/EIA_BA-BASR-County.csv",
+        "inputs/noaa/isd-history_loc.txt"
+    output:
+        "outputs/noaa/NOAA_ISD_Stations.csv",
+        "outputs/crosswalks/EIA_County-ISD.csv"
+    params:
+        years_sm = YEARS,
+        n_stations = config["n_stations"],
+    script:
+        "scripts/join_BA-noaa.R"
+
+# This rule "county_population" generates the County_Population.csv, but this requires a census key 
+# we're provided a copy of the CSV in inputs, in case users are having trouble accessing census keys
+"""
+rule county_population:
+    input:
+    output:
+        "outputs/census/County_Population.csv"
+    params:
+        years_sm = YEARS,
+        cen_key_sm = CENKEY
+    script:
+        "scripts/county.R"
+"""
+
+#####
+### Demand Data Section; download, clean, store, and merge NOAA and EIA930 data for regression
+#####
+
+rule make_noaa:
+    input:
+        "outputs/noaa/NOAA_ISD_Stations.csv",
+        "outputs/crosswalks/EIA_County-ISD.csv",
+        "outputs/crosswalks/EIA_BA-BASR-County.csv",
+        "outputs/census/County_Population.csv"
+    output:
+        expand("{db}/noaa_db.db", db = config["db_directory"])
+    params:
+        db_loc = config["db_directory"],
+        years_sm = YEARS,
+        deletedb = True,
+        delobs = True
+    script:
+        "scripts/make_noaa.py"
+
+rule clean_noaa:
+    input:
+        "outputs/crosswalks/EIA_BA-BASR-County.csv",
+        expand("{db}/noaa_db.db", db = config["db_directory"])
+    output:
+        expand("{db}/BA-NOAA/BA-NOAA_SnakemakeTrack_{year_0}-{year_n}.csv", db = config["db_directory"], year_0 = YEARS[0], year_n = YEARS[-1])
+    params:
+        db_loc = config["db_directory"],
+        years_sm = YEARS,
+    script:
+        "scripts/clean_noaa.py"
+
+rule download_930:
+    output:
+        expand("inputs/EIA930/EIA930_Balance_{y}.csv", y=YEARS_930), 
+        expand("inputs/EIA930/EIA930_Subregion_{y}.csv", y=SR_YEARS),
+    params:
+        years_sm = YEARS_930,
+    script:
+        "scripts/create_inputs.py"
+
+rule clean_930:
+    input:
+        expand("inputs/EIA930/EIA930_Balance_{y}.csv", y = YEARS_930),     
+        expand("inputs/EIA930/EIA930_Subregion_{y}.csv", y = SR_YEARS),
+    output:
+        "outputs/LoadCleaned.csv"
+    params:
+        years_sm = SR_YEARS,
+    script:
+        "scripts/system_shapes.py"
+
+rule load_regression:
+    input:
+        "outputs/LoadCleaned.csv",
+        expand("{db}/BA-NOAA/BA-NOAA_SnakemakeTrack_{year_0}-{year_n}.csv", db = config["db_directory"], year_0 = YEARS[0], year_n = YEARS[-1])
+    output:
+        "outputs/load-predict/LoadShapesData_predict_monthly_ol.csv"
+    script:
+        "scripts/weather.R"
+
+rule create_baseload:
+    input:
+        "outputs/load-predict/LoadShapesData_predict_monthly_ol.csv"
+    output:
+        "outputs/BaseLoad.csv"
+    params:
+        pop_year = config["population_year"],
+    script:
+        "scripts/agg_EMMregions.py"

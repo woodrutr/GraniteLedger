@@ -14,7 +14,6 @@ from definitions import PROJECT_ROOT
 from src.models.hydrogen.model.h2_model import solve, H2Model
 from src.models.hydrogen.network.grid_data import GridData
 from src.models.hydrogen.network.grid import Grid
-from src.integrator.utilities import get_output_root
 
 from pyomo.opt import SolverResults, check_optimal_termination
 
@@ -124,7 +123,7 @@ def quick_summary(solved_hm: H2Model) -> None:
     return res
 
 
-def make_h2_outputs(model):
+def make_h2_outputs(output_path, model):
     """save model outputs
 
     Parameters
@@ -132,7 +131,7 @@ def make_h2_outputs(model):
     model : obj
         Solved H2Model
     """
-    OUTPUT_ROOT = get_output_root()
+    OUTPUT_ROOT = output_path
     h2dir = Path(OUTPUT_ROOT / 'hydrogen')
     if not os.path.exists(h2dir):
         os.makedirs(h2dir)
@@ -154,9 +153,10 @@ def run_hydrogen_model(settings):
     """
     h2_data_folder = settings.h2_data_folder
     data_path = PROJECT_ROOT / h2_data_folder
+    output_path = settings.OUTPUT_ROOT
     grid_data = load_data(data_path, regions_of_interest=settings.regions)
     grid = build_grid(grid_data=grid_data)
     model = build_model(grid=grid, years=settings.years)
     sol = solve_it(model)
     logger.info(quick_summary(model))
-    make_h2_outputs(model)
+    make_h2_outputs(output_path, model)

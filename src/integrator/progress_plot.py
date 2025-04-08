@@ -3,12 +3,10 @@ A plotter that can be used for combined solves
 
 """
 
+# Import packages
 from matplotlib import pyplot as plt, ticker
 from pathlib import Path
 from datetime import datetime
-
-from src.integrator.utilities import get_output_root
-
 
 # some defaults
 
@@ -22,6 +20,7 @@ styles = {
 
 
 def plot_it(
+    OUTPUT_ROOT,
     h2_price_records=[],
     elec_price_records=[],
     h2_obj_records=[],
@@ -97,8 +96,6 @@ def plot_it(
     ax3.grid(True)
     ax4.grid(True)
 
-    OUTPUT_ROOT = get_output_root()
-
     plt.savefig(
         Path(OUTPUT_ROOT / 'iteration_check.png'),
         format='png',
@@ -107,12 +104,11 @@ def plot_it(
     # plt.show()
 
 
-def plot_price_distro(price_records: list[float]):
+def plot_price_distro(OUTPUT_ROOT, price_records: list[float]):
     """cheap/quick analyisis and plot of the price records"""
     # convert $/GWh to $/MWh
     plt.hist(list(t / 1000 for t in price_records), bins=100, label='Price')
     plt.xlabel('Electricity price ($/MWh)')
     plt.ylabel('Number of representative hours')
-    OUTPUT_ROOT = get_output_root()
     plt.savefig(Path(OUTPUT_ROOT / 'histogram.png'), format='png')
     # plt.show()

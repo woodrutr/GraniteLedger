@@ -1,10 +1,9 @@
 """
-Region class:
+REGION CLASS
 ~~~~~~~~~~~~
 
-    Class objects are regions, which have a natural tree-structure. Each region
-    can have a parent region and child regions (subregions), a data object, and
-    a set of hubs.
+Class objects are regions, which have a natural tree-structure. Each region can have a parent region
+and child regions (subregions), a data object, and a set of hubs.
 """
 
 ###################################################################################################
@@ -51,7 +50,7 @@ class Region:
         self.hubs = {}
         self.data = data
 
-        if self.parent != None:
+        if self.parent is not None:
             self.depth = self.parent.depth + 1
             self.grid = parent.grid
 
@@ -78,7 +77,7 @@ class Region:
         new_parent : Region
             new parent region
         """
-        if self.parent != None:
+        if self.parent is not None:
             del self.parent.children[self.name]
             self.parent = new_parent
             self.parent.add_subregion(self)

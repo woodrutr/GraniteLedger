@@ -1,5 +1,6 @@
-"""GRID CLASS
-~~~~~~~~~~~
+"""
+GRID CLASS
+~~~~~~~~~~
 
     This is the central class that binds all the other classes together. No class
     instance exists in a reference that isn't fundamentally contained in a grid.
@@ -46,7 +47,7 @@ class Grid:
 
     def build_grid(self, vis=True):
         """builds a grid fom the GridData by recursively adding regions starting at top-level region
-            'world'.
+        'world'.
 
         Parameters
         ----------
@@ -179,8 +180,10 @@ class Grid:
             self.registry.remove(thing)
 
     def recursive_region_generation(self, df, parent):
-        """cycle through a region dataframe, left column to right until it hits data column, adding new regions and subregions according to how it is hierarchically structured.
-            Future versions should implement this with a graph structure for the data instead of a dataframe, which would be more natural.
+        """cycle through a region dataframe, left column to right until it hits data column, adding
+        new regions and subregions according to how it is hierarchically structured. Future versions
+        should implement this with a graph structure for the data instead of a dataframe, which
+        would be more natural.
 
         Parameters
         ----------
@@ -225,7 +228,8 @@ class Grid:
             )
 
     def connect_subregions(self):
-        """create an arc for all hubs in bottom-level regions to whatever hub is located in their parent region"""
+        """create an arc for all hubs in bottom-level regions to whatever hub is located in their
+        parent region"""
         for hub in self.registry.hubs.values():
             if hub.region.children == {}:
                 for parent_hub in hub.region.parent.hubs.values():
@@ -241,8 +245,9 @@ class Grid:
             )
 
     def aggregate_hubs(self, hublist, region):
-        """combine all hubs in hublist into a single hub, and place them in region. Arcs that connect to any of these hubs also get aggegated into arcs that connect to the new hub
-            and their original origin / destination that's not in hublist.
+        """combine all hubs in hublist into a single hub, and place them in region. Arcs that
+        connect to any of these hubs also get aggegated into arcs that connect to the new hub and
+        their original origin / destination that's not in hublist.
 
         Parameters
         ----------

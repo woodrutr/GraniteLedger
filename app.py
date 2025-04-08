@@ -6,6 +6,7 @@ Built using Dash - https://dash.plotly.com/.
 Created on Wed Sept 19 2024 by Adam Heisey
 """
 
+# Import packages
 import dash
 from dash import dcc, html, Input, Output, State
 import dash_bootstrap_components as dbc
@@ -16,12 +17,16 @@ import ast
 import subprocess
 from pathlib import Path
 from datetime import datetime
-from definitions import PROJECT_ROOT
 import os
 import tomli
 import tomlkit
 import sys
 import shlex
+
+# Import python modules
+from definitions import PROJECT_ROOT
+from main import app_main
+
 
 # Initialize the Dash app
 app = dash.Dash(
@@ -96,7 +101,18 @@ app.layout = dbc.Container(
     prevent_initial_call=False,
 )
 def auto_load_toml(selected_mode):
-    config_file_path = os.path.join('src/integrator', 'run_config_template.toml')
+    """reads in the configuration settings into the app that are saved in the config template.
+
+    Parameters
+    ----------
+    selected_mode :
+        user selected run mode option, current options are 'unified-combo', 'gs-combo', 'standalone'
+
+    Returns
+    -------
+        config default settings
+    """
+    config_file_path = os.path.join('src/common', 'run_config_template.toml')
 
     if os.path.exists(config_file_path):
         # read run config with comments
@@ -134,8 +150,23 @@ def auto_load_toml(selected_mode):
     prevent_initial_call=True,
 )
 def save_toml(n_clicks, input_values, input_ids):
-    config_template = os.path.join('src/integrator', 'run_config_template.toml')
-    config_file_path = os.path.join('src/integrator', 'run_config.toml')
+    """saves the configuration settings in the app to the config file.
+
+    Parameters
+    ----------
+    n_clicks :
+        click to save toml button
+    input_values :
+        config values associated with components specified in the web app
+    input_ids :
+        config components associated with values specified in the web app
+
+    Returns
+    -------
+        empty string
+    """
+    config_template = os.path.join('src/common', 'run_config_template.toml')
+    config_file_path = os.path.join('src/common', 'run_config.toml')
 
     if n_clicks:
         # Load the original file to preserve its structure and comments
@@ -179,6 +210,19 @@ def convert_value(value):
     prevent_initial_call=True,
 )
 def run_mode(n_clicks, selected_mode):
+    """passes the selected mode to main.py and runs the script.
+
+    Parameters
+    ----------
+    n_clicks :
+        click to the run button
+    selected_mode :
+        user selected run mode option, current options are 'unified-combo', 'gs-combo', 'standalone'
+
+    Returns
+    -------
+        message stating either: model has finished or there was an error and it wasn't able to run
+    """
     # define modes allowed - sanitize user input
     modes_available = {'unified-combo', 'gs-combo', 'standalone'}
 
@@ -188,18 +232,20 @@ def run_mode(n_clicks, selected_mode):
     try:
         selected_mode = shlex.quote(selected_mode)
 
-        subprocess.run(['python', 'main.py', '--mode', selected_mode], check=True)
+        # run selected mode
+        app_main(selected_mode)
+
         return (
             f"{selected_mode.capitalize()} mode has finished running. See results in output/'{selected_mode}'.",
             100,
         )
-    except subprocess.CalledProcessError as e:
+    except Exception as e:
         error_msg = f'Error, not able to run {selected_mode}. Please check the log script/terminal, exit out of browser, and restart.'
         return error_msg, 0
 
 
 if __name__ == '__main__':
     try:
-        app.run_server(debug=True, port=8080)
+        app.run_server(debug=True, host='localhost', port=8080)
     finally:
         http_server_process.terminate()

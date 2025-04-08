@@ -1,21 +1,13 @@
-src.models.residential.scripts package
-======================================
-
-Submodules
-----------
-
-src.models.residential.scripts.residential module
--------------------------------------------------
-
-.. automodule:: src.models.residential.scripts.residential
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-Module contents
----------------
+src.models.residential.scripts
+==============================
 
 .. automodule:: src.models.residential.scripts
-   :members:
-   :undoc-members:
-   :show-inheritance:
+
+   
+.. rubric:: Modules
+
+.. autosummary::
+   :toctree:
+   :recursive:
+
+   residential

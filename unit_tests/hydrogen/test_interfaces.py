@@ -2,6 +2,7 @@
 
 import pyomo.environ as pyo
 from logging import getLogger
+from pathlib import Path
 
 import pytest
 
@@ -20,9 +21,7 @@ def test_price_drop():
     logger.info('Starting test of price drop')
 
     # run the model
-    HYDROGEN_ROOT = PROJECT_ROOT / 'src/models/hydrogen'
-    data_path = HYDROGEN_ROOT / 'inputs/single_region'
-
+    data_path = Path(PROJECT_ROOT / 'input/hydrogen/single_region')
     grid_data = actions.load_data(data_path)
     grid = actions.build_grid(grid_data=grid_data)
     model = actions.build_model(grid=grid)
@@ -45,9 +44,7 @@ def test_poll_h2_price():
     logger.info('Starting test of polling H2 price')
 
     # run the model
-    HYDROGEN_ROOT = PROJECT_ROOT / 'src/models/hydrogen'
-    data_path = HYDROGEN_ROOT / 'inputs/single_region'
-
+    data_path = Path(PROJECT_ROOT / 'input/hydrogen/single_region')
     grid_data = actions.load_data(data_path)
     grid = actions.build_grid(grid_data=grid_data)
     model = actions.build_model(grid=grid)
@@ -66,9 +63,7 @@ def test_poll_elec_demand():
     Test the retrieval of the electricity demand request from a solved H2 model
     """
 
-    HYDROGEN_ROOT = PROJECT_ROOT / 'src/models/hydrogen'
-    data_path = HYDROGEN_ROOT / 'inputs/single_region'
-
+    data_path = Path(PROJECT_ROOT / 'input/hydrogen/single_region')
     grid_data = actions.load_data(data_path)
     grid = actions.build_grid(grid_data=grid_data)
     model = actions.build_model(grid=grid)

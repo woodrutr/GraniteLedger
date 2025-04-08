@@ -5,14 +5,14 @@
 import pandas as pd
 import pyomo.environ as pyo
 import os
+from pathlib import Path
 
 from dash import Dash, html, dcc, html, Input, Output
 import plotly.express as px
 import plotly as plotly
 
 # setting up directories
-dir_output = os.path.join(os.path.dirname(__file__))
-# dir_inputs = os.path.join(dir_output, '..', 'src\\models\\electricity\\input')
+dir_output = Path(__file__).parent
 
 
 # add a new index using a mapping dataframe and return a dataframe with the input index
@@ -34,12 +34,12 @@ def read_run_csv(csv, run, df_list):
 
 
 # get all the electricity run names from the output file
-os.chdir(dir_output)
+os.chdir(Path(dir_output))
 all_runs = []
 for root, dirs, files in os.walk(dir_output):
     if 'electricity' in dirs:
-        all_runs.append(os.path.relpath(os.path.join(root, 'electricity')))
-all_runs = [item for item in all_runs if 'test' not in item]
+        all_runs.append(Path(root, 'electricity').relative_to(Path.cwd()))
+all_runs = [item for item in all_runs if 'test' not in str(item)]
 
 # check to see if there are any electrcity outputs to view
 try:
@@ -63,10 +63,10 @@ df_unmetload = []
 
 # a loop for reading each .csv of each run folder and appending them into the dataframe and adding the a column for their run name
 for i in range(len(all_runs)):
-    run_output = os.path.join(dir_output, all_runs[i])
+    run_output = Path(dir_output, all_runs[i])
 
     # switches to the variables folder
-    run_variables = run_output + '\\variables'
+    run_variables = Path(run_output, 'variables')
     os.chdir(run_variables)
 
     # grabs the run name
@@ -165,134 +165,171 @@ try:
 except ValueError:
     print('Unmet load dataframe is empty.')
 
-# swithcing directory to inmport the pt mapping to tech and color
+# swithcing directory to inmport the tech mapping to tech_type and color
 os.chdir(dir_output)
-df_ptcolor = pd.read_csv('pt_colors.csv')
+df_color = pd.read_csv('tech_colors.csv')
 
 # loop to create a dictionary for inputting into dash plotly
 colorsetting = {}
-for i in range(len(df_ptcolor)):
-    tech = df_ptcolor['tech'][i]
-    color = df_ptcolor['hex'][i]
-    colorsetting[tech] = color
+for i in range(len(df_color)):
+    tech_type = df_color['tech_type'][i]
+    color = df_color['hex'][i]
+    colorsetting[tech_type] = color
 
 # sum the steps in the generation table
 try:
-    df_generation = df_generation[['run', 'pt', 'r', 'y', 'hr', 'generation_total']]
+    df_generation = df_generation[['run', 'tech', 'region', 'year', 'hour', 'generation_total']]
     df_generation = (
-        df_generation.groupby(['run', 'pt', 'r', 'y', 'hr']).generation_total.sum().reset_index()
+        df_generation.groupby(['run', 'tech', 'region', 'year', 'hour'])
+        .generation_total.sum()
+        .reset_index()
     )
     df_generation = mapping(
-        df_generation, df_ptcolor, 'pt', ['run', 'tech', 'r', 'y', 'hr', 'generation_total']
+        df_generation,
+        df_color,
+        'tech',
+        ['run', 'tech_type', 'region', 'year', 'hour', 'generation_total'],
     )
 except TypeError:
     print('generation_total dataframe is empty.')
 
 # sum the steps in the storage tables
 try:
-    df_storagelevel = df_storagelevel[['run', 'pt', 'r', 'y', 'hr', 'storage_level']]
+    df_storagelevel = df_storagelevel[['run', 'tech', 'region', 'year', 'hour', 'storage_level']]
     df_storagelevel = (
-        df_storagelevel.groupby(['run', 'pt', 'r', 'y', 'hr']).storage_level.sum().reset_index()
+        df_storagelevel.groupby(['run', 'tech', 'region', 'year', 'hour'])
+        .storage_level.sum()
+        .reset_index()
     )
     df_storagelevel = mapping(
-        df_storagelevel, df_ptcolor, 'pt', ['run', 'tech', 'r', 'y', 'hr', 'storage_level']
+        df_storagelevel,
+        df_color,
+        'tech',
+        ['run', 'tech_type', 'region', 'year', 'hour', 'storage_level'],
     )
 except TypeError:
     print('Storage level dataframe is empty.')
 
 try:
-    df_storageinflow = df_storageinflow[['run', 'pt', 'r', 'y', 'hr', 'storage_inflow']]
+    df_storageinflow = df_storageinflow[['run', 'tech', 'region', 'year', 'hour', 'storage_inflow']]
     df_storageinflow = (
-        df_storageinflow.groupby(['run', 'pt', 'r', 'y', 'hr']).storage_inflow.sum().reset_index()
+        df_storageinflow.groupby(['run', 'tech', 'region', 'year', 'hour'])
+        .storage_inflow.sum()
+        .reset_index()
     )
     df_storageinflow = mapping(
-        df_storageinflow, df_ptcolor, 'pt', ['run', 'tech', 'r', 'y', 'hr', 'storage_inflow']
+        df_storageinflow,
+        df_color,
+        'tech',
+        ['run', 'tech_type', 'region', 'year', 'hour', 'storage_inflow'],
     )
     df_storageinflow['Storage_flow'] = df_storageinflow['storage_inflow'] * -1
 except TypeError:
     print('Storage inflow dataframe is empty.')
 
 try:
-    df_storageoutflow = df_storageoutflow[['run', 'pt', 'r', 'y', 'hr', 'storage_outflow']]
+    df_storageoutflow = df_storageoutflow[
+        ['run', 'tech', 'region', 'year', 'hour', 'storage_outflow']
+    ]
     df_storageoutflow = (
-        df_storageoutflow.groupby(['run', 'pt', 'r', 'y', 'hr']).storage_outflow.sum().reset_index()
+        df_storageoutflow.groupby(['run', 'tech', 'region', 'year', 'hour'])
+        .storage_outflow.sum()
+        .reset_index()
     )
     df_storageoutflow = mapping(
-        df_storageoutflow, df_ptcolor, 'pt', ['run', 'tech', 'r', 'y', 'hr', 'storage_outflow']
+        df_storageoutflow,
+        df_color,
+        'tech',
+        ['run', 'tech_type', 'region', 'year', 'hour', 'storage_outflow'],
     )
     df_storageoutflow['Storage_flow'] = df_storageoutflow['storage_outflow']
 except TypeError:
     print('Storage outflow dataframe is empty.')
 
 df_storagecharge = pd.concat([df_storageinflow, df_storageoutflow])
-df_storagecharge = df_storagecharge[['run', 'tech', 'r', 'y', 'hr', 'Storage_flow']]
+df_storagecharge = df_storagecharge[['run', 'tech_type', 'region', 'year', 'hour', 'Storage_flow']]
 df_storagecharge = (
-    df_storagecharge.groupby(['run', 'tech', 'r', 'y', 'hr']).Storage_flow.sum().reset_index()
+    df_storagecharge.groupby(['run', 'tech_type', 'region', 'year', 'hour'])
+    .Storage_flow.sum()
+    .reset_index()
 )
 
 # sum the steps in capacity tables
 try:
-    df_capacitybuilds = df_capacitybuilds[['run', 'pt', 'r', 'y', 'CapacityBuilds']]
+    df_capacitybuilds = df_capacitybuilds[['run', 'tech', 'region', 'year', 'CapacityBuilds']]
     df_capacitybuilds = (
-        df_capacitybuilds.groupby(['run', 'pt', 'r', 'y']).CapacityBuilds.sum().reset_index()
+        df_capacitybuilds.groupby(['run', 'tech', 'region', 'year'])
+        .CapacityBuilds.sum()
+        .reset_index()
     )
     df_capacitybuilds = mapping(
-        df_capacitybuilds, df_ptcolor, 'pt', ['run', 'tech', 'r', 'y', 'CapacityBuilds']
+        df_capacitybuilds,
+        df_color,
+        'tech',
+        ['run', 'tech_type', 'region', 'year', 'CapacityBuilds'],
     )
 except TypeError:
     print('Capacity build dataframe is empty.')
 
 try:
-    df_capacityretire = df_capacityretire[['run', 'pt', 'r', 'y', 'capacity_retirements']]
+    df_capacityretire = df_capacityretire[['run', 'tech', 'region', 'year', 'capacity_retirements']]
     df_capacityretire = (
-        df_capacityretire.groupby(['run', 'pt', 'r', 'y']).capacity_retirements.sum().reset_index()
+        df_capacityretire.groupby(['run', 'tech', 'region', 'year'])
+        .capacity_retirements.sum()
+        .reset_index()
     )
     df_capacityretire = mapping(
-        df_capacityretire, df_ptcolor, 'pt', ['run', 'tech', 'r', 'y', 'capacity_retirements']
+        df_capacityretire,
+        df_color,
+        'tech',
+        ['run', 'tech_type', 'region', 'year', 'capacity_retirements'],
     )
 except TypeError:
     print('Capacity retirement dataframe is empty.')
 
 # assume that all season have the same capacity, do the max, then sum the steps
 try:
-    df_capacitytotal = df_capacitytotal[['run', 'pt', 'r', 'y', 'steps', 'capacity_total']]
+    df_capacitytotal = df_capacitytotal[['run', 'tech', 'region', 'year', 'step', 'capacity_total']]
     df_capacitytotal = (
-        df_capacitytotal.groupby(['run', 'pt', 'r', 'y', 'steps'])
+        df_capacitytotal.groupby(['run', 'tech', 'region', 'year', 'step'])
         .capacity_total.max()
         .reset_index()
     )
-    df_capacitytotal = df_capacitytotal[['run', 'pt', 'r', 'y', 'capacity_total']]
+    df_capacitytotal = df_capacitytotal[['run', 'tech', 'region', 'year', 'capacity_total']]
     df_capacitytotal = (
-        df_capacitytotal.groupby(['run', 'pt', 'r', 'y']).capacity_total.sum().reset_index()
+        df_capacitytotal.groupby(['run', 'tech', 'region', 'year'])
+        .capacity_total.sum()
+        .reset_index()
     )
     df_capacitytotal = mapping(
-        df_capacitytotal, df_ptcolor, 'pt', ['run', 'tech', 'r', 'y', 'capacity_total']
+        df_capacitytotal, df_color, 'tech', ['run', 'tech_type', 'region', 'year', 'capacity_total']
     )
 except TypeError:
     print('Capacity total dataframe is empty.')
 
 # sum th steps in the trade to Canada
 try:
-    df_tradecan = df_tradecan[['run', 'r', 'r1', 'y', 'hr', 'trade_international']]
+    df_tradecan = df_tradecan[['run', 'region', 'region1', 'year', 'hour', 'trade_international']]
     df_tradecan = (
-        df_tradecan.groupby(['run', 'r', 'r1', 'y', 'hr']).trade_international.sum().reset_index()
+        df_tradecan.groupby(['run', 'region', 'region1', 'year', 'hour'])
+        .trade_international.sum()
+        .reset_index()
     )
 except TypeError:
     print('Canada trade dataframe is empty.')
 
 # create unique list of indexes
-s_regions = pd.unique(df_generation['r'])
+s_regions = pd.unique(df_generation['region'])
 s_regions.sort()
-s_technologies = pd.unique(df_capacitytotal['tech'])
-s_years = pd.unique(df_generation['y'])
+s_technologies = pd.unique(df_capacitytotal['tech_type'])
+s_years = pd.unique(df_generation['year'])
 s_years.sort()
-s_canregions = pd.unique(df_tradecan['r1'])
+s_canregions = pd.unique(df_tradecan['region1'])
 s_canregions.sort()
 s_runs = pd.unique(df_generation['run'])
 s_runs.sort()
 
 # change directory back to the scripts folder (This is for the batch file to work.)
-# os.chdir(dir_output)
 
 app = Dash(__name__)
 
@@ -591,31 +628,35 @@ app.layout = html.Div(
     Input('gentech', 'value'),
 )
 def update_figure(region, genyear, run, gentech):
-    filtered_df_gen = df_generation[(df_generation.y == genyear)]
+    filtered_df_gen = df_generation[(df_generation.year == genyear)]
 
     if region:
-        filtered_df_gen = filtered_df_gen[filtered_df_gen['r'].isin(region)]
-        filtered_df_gen = filtered_df_gen[['run', 'tech', 'y', 'hr', 'generation_total']]
+        filtered_df_gen = filtered_df_gen[filtered_df_gen['region'].isin(region)]
+        filtered_df_gen = filtered_df_gen[['run', 'tech_type', 'year', 'hour', 'generation_total']]
         filtered_df_gen = (
-            filtered_df_gen.groupby(['run', 'tech', 'y', 'hr']).generation_total.sum().reset_index()
+            filtered_df_gen.groupby(['run', 'tech_type', 'year', 'hour'])
+            .generation_total.sum()
+            .reset_index()
         )
     else:
-        filtered_df_gen = filtered_df_gen[['run', 'tech', 'y', 'hr', 'generation_total']]
+        filtered_df_gen = filtered_df_gen[['run', 'tech_type', 'year', 'hour', 'generation_total']]
         filtered_df_gen = (
-            filtered_df_gen.groupby(['run', 'tech', 'y', 'hr']).generation_total.sum().reset_index()
+            filtered_df_gen.groupby(['run', 'tech_type', 'year', 'hour'])
+            .generation_total.sum()
+            .reset_index()
         )
 
     if gentech:
-        filtered_df_gen = filtered_df_gen[filtered_df_gen['tech'].isin(gentech)]
+        filtered_df_gen = filtered_df_gen[filtered_df_gen['tech_type'].isin(gentech)]
 
     if run:
         filtered_df_gen = filtered_df_gen[filtered_df_gen['run'].isin(run)]
 
     fig_gen = px.area(
         filtered_df_gen,
-        x='hr',
+        x='hour',
         y='generation_total',
-        color='tech',
+        color='tech_type',
         facet_col='run',
         color_discrete_map=colorsetting,
         width=1600,
@@ -631,26 +672,26 @@ def update_figure(region, genyear, run, gentech):
     Input('run', 'value'),
 )
 def update_figure(region, genyear, run):
-    filtered_df_storagelevel = df_storagelevel[(df_storagelevel.y == genyear)]
+    filtered_df_storagelevel = df_storagelevel[(df_storagelevel.year == genyear)]
 
     if region:
         filtered_df_storagelevel = filtered_df_storagelevel[
-            filtered_df_storagelevel['r'].isin(region)
+            filtered_df_storagelevel['region'].isin(region)
         ]
         filtered_df_storagelevel = filtered_df_storagelevel[
-            ['run', 'tech', 'y', 'hr', 'storage_level']
+            ['run', 'tech_type', 'year', 'hour', 'storage_level']
         ]
         filtered_df_storagelevel = (
-            filtered_df_storagelevel.groupby(['run', 'tech', 'y', 'hr'])
+            filtered_df_storagelevel.groupby(['run', 'tech_type', 'year', 'hour'])
             .storage_level.sum()
             .reset_index()
         )
     else:
         filtered_df_storagelevel = filtered_df_storagelevel[
-            ['run', 'tech', 'y', 'hr', 'storage_level']
+            ['run', 'tech_type', 'year', 'hour', 'storage_level']
         ]
         filtered_df_storagelevel = (
-            filtered_df_storagelevel.groupby(['run', 'tech', 'y', 'hr'])
+            filtered_df_storagelevel.groupby(['run', 'tech_type', 'year', 'hour'])
             .storage_level.sum()
             .reset_index()
         )
@@ -662,9 +703,9 @@ def update_figure(region, genyear, run):
 
     fig_storagelevel = px.area(
         filtered_df_storagelevel,
-        x='hr',
+        x='hour',
         y='storage_level',
-        color='tech',
+        color='tech_type',
         facet_col='run',
         color_discrete_map=colorsetting,
         width=1600,
@@ -680,26 +721,26 @@ def update_figure(region, genyear, run):
     Input('run', 'value'),
 )
 def update_figure(region, genyear, run):
-    filtered_df_storagecharge = df_storagecharge[(df_storagecharge.y == genyear)]
+    filtered_df_storagecharge = df_storagecharge[(df_storagecharge.year == genyear)]
 
     if region:
         filtered_df_storagecharge = filtered_df_storagecharge[
-            filtered_df_storagecharge['r'].isin(region)
+            filtered_df_storagecharge['region'].isin(region)
         ]
         filtered_df_storagecharge = filtered_df_storagecharge[
-            ['run', 'tech', 'y', 'hr', 'Storage_flow']
+            ['run', 'tech_type', 'year', 'hour', 'Storage_flow']
         ]
         filtered_df_storagecharge = (
-            filtered_df_storagecharge.groupby(['run', 'tech', 'y', 'hr'])
+            filtered_df_storagecharge.groupby(['run', 'tech_type', 'year', 'hour'])
             .Storage_flow.sum()
             .reset_index()
         )
     else:
         filtered_df_storagecharge = filtered_df_storagecharge[
-            ['run', 'tech', 'y', 'hr', 'Storage_flow']
+            ['run', 'tech_type', 'year', 'hour', 'Storage_flow']
         ]
         filtered_df_storagecharge = (
-            filtered_df_storagecharge.groupby(['run', 'tech', 'y', 'hr'])
+            filtered_df_storagecharge.groupby(['run', 'tech_type', 'year', 'hour'])
             .Storage_flow.sum()
             .reset_index()
         )
@@ -711,9 +752,9 @@ def update_figure(region, genyear, run):
 
     fig_storagecharge = px.area(
         filtered_df_storagecharge,
-        x='hr',
+        x='hour',
         y='Storage_flow',
-        color='tech',
+        color='tech_type',
         facet_col='run',
         color_discrete_map=colorsetting,
         width=1600,
@@ -729,25 +770,25 @@ def update_figure(region, genyear, run):
     Input('run', 'value'),
 )
 def update_figure(region, genyear, run):
-    filtered_df_unmetload = df_unmetload[(df_unmetload.y == genyear)]
+    filtered_df_unmetload = df_unmetload[(df_unmetload.year == genyear)]
 
     if region:
-        filtered_df_unmetload = filtered_df_unmetload[filtered_df_unmetload['r'].isin(region)]
-        filtered_df_unmetload = filtered_df_unmetload[['run', 'y', 'hr', 'unmet_load']]
+        filtered_df_unmetload = filtered_df_unmetload[filtered_df_unmetload['region'].isin(region)]
+        filtered_df_unmetload = filtered_df_unmetload[['run', 'year', 'hour', 'unmet_load']]
         filtered_df_unmetload = (
-            filtered_df_unmetload.groupby(['run', 'y', 'hr']).unmet_load.sum().reset_index()
+            filtered_df_unmetload.groupby(['run', 'year', 'hour']).unmet_load.sum().reset_index()
         )
     else:
-        filtered_df_unmetload = filtered_df_unmetload[['run', 'y', 'hr', 'unmet_load']]
+        filtered_df_unmetload = filtered_df_unmetload[['run', 'year', 'hour', 'unmet_load']]
         filtered_df_unmetload = (
-            filtered_df_unmetload.groupby(['run', 'y', 'hr']).unmet_load.sum().reset_index()
+            filtered_df_unmetload.groupby(['run', 'year', 'hour']).unmet_load.sum().reset_index()
         )
 
     if run:
         filtered_df_unmetload = filtered_df_unmetload[filtered_df_unmetload['run'].isin(run)]
 
     fig_unmetload = px.area(
-        filtered_df_unmetload, x='hr', y='unmet_load', facet_col='run', width=1600, height=500
+        filtered_df_unmetload, x='hour', y='unmet_load', facet_col='run', width=1600, height=500
     )
     return fig_unmetload
 
@@ -760,19 +801,21 @@ def update_figure(region, genyear, run):
     Input('gentech2', 'value'),
 )
 def update_figure(region, genyear, run, gentech2):
-    filtered_df_gen = df_generation[(df_generation.y == genyear) & (df_generation.tech == gentech2)]
+    filtered_df_gen = df_generation[
+        (df_generation.year == genyear) & (df_generation.tech_type == gentech2)
+    ]
 
     if region:
-        filtered_df_gen = filtered_df_gen[filtered_df_gen['r'].isin(region)]
+        filtered_df_gen = filtered_df_gen[filtered_df_gen['region'].isin(region)]
 
     if run:
         filtered_df_gen = filtered_df_gen[filtered_df_gen['run'].isin(run)]
 
     fig_gen = px.line(
         filtered_df_gen,
-        x='hr',
+        x='hour',
         y='generation_total',
-        color='r',
+        color='region',
         facet_col='run',
         color_discrete_map=colorsetting,
         width=1600,
@@ -790,12 +833,12 @@ def update_figure(region, genyear, run, gentech2):
 )
 def update_figure(region, genyear, run, gentech2):
     filtered_df_storagelevel = df_storagelevel[
-        (df_storagelevel.y == genyear) & (df_storagelevel.tech == gentech2)
+        (df_storagelevel.year == genyear) & (df_storagelevel.tech_type == gentech2)
     ]
 
     if region:
         filtered_df_storagelevel = filtered_df_storagelevel[
-            filtered_df_storagelevel['r'].isin(region)
+            filtered_df_storagelevel['region'].isin(region)
         ]
 
     if run:
@@ -805,9 +848,9 @@ def update_figure(region, genyear, run, gentech2):
 
     fig_storagelevel = px.line(
         filtered_df_storagelevel,
-        x='hr',
+        x='hour',
         y='storage_level',
-        color='r',
+        color='region',
         facet_col='run',
         color_discrete_map=colorsetting,
         width=1600,
@@ -825,12 +868,12 @@ def update_figure(region, genyear, run, gentech2):
 )
 def update_figure(region, genyear, run, gentech2):
     filtered_df_storagecharge = df_storagecharge[
-        (df_storagecharge.y == genyear) & (df_storagecharge.tech == gentech2)
+        (df_storagecharge.year == genyear) & (df_storagecharge.tech_type == gentech2)
     ]
 
     if region:
         filtered_df_storagecharge = filtered_df_storagecharge[
-            filtered_df_storagecharge['r'].isin(region)
+            filtered_df_storagecharge['region'].isin(region)
         ]
 
     if run:
@@ -840,9 +883,9 @@ def update_figure(region, genyear, run, gentech2):
 
     fig_storagecharge = px.line(
         filtered_df_storagecharge,
-        x='hr',
+        x='hour',
         y='Storage_flow',
-        color='r',
+        color='region',
         facet_col='run',
         color_discrete_map=colorsetting,
         width=1600,
@@ -858,19 +901,19 @@ def update_figure(region, genyear, run, gentech2):
     Input('run', 'value'),
 )
 def update_figure(region, genyear, run):
-    filtered_df_unmetload = df_unmetload[(df_unmetload.y == genyear)]
+    filtered_df_unmetload = df_unmetload[(df_unmetload.year == genyear)]
 
     if region:
-        filtered_df_unmetload = filtered_df_unmetload[filtered_df_unmetload['r'].isin(region)]
+        filtered_df_unmetload = filtered_df_unmetload[filtered_df_unmetload['region'].isin(region)]
 
     if run:
         filtered_df_unmetload = filtered_df_unmetload[filtered_df_unmetload['run'].isin(run)]
 
     fig_unmetload = px.line(
         filtered_df_unmetload,
-        x='hr',
+        x='hour',
         y='unmet_load',
-        color='r',
+        color='region',
         facet_col='run',
         width=1600,
         height=500,
@@ -888,28 +931,28 @@ def update_figure(region, run, captech):
     filtered_df_capacitytotal = df_capacitytotal
 
     if region:
-        filtered_df_capacitytotal = df_capacitytotal[df_capacitytotal['r'].isin(region)]
+        filtered_df_capacitytotal = df_capacitytotal[df_capacitytotal['region'].isin(region)]
         filtered_df_capacitytotal = filtered_df_capacitytotal[
-            ['run', 'tech', 'y', 'capacity_total']
+            ['run', 'tech_type', 'year', 'capacity_total']
         ]
         filtered_df_capacitytotal = (
-            filtered_df_capacitytotal.groupby(['run', 'tech', 'y'])
+            filtered_df_capacitytotal.groupby(['run', 'tech_type', 'year'])
             .capacity_total.sum()
             .reset_index()
         )
     else:
         filtered_df_capacitytotal = filtered_df_capacitytotal[
-            ['run', 'tech', 'y', 'capacity_total']
+            ['run', 'tech_type', 'year', 'capacity_total']
         ]
         filtered_df_capacitytotal = (
-            filtered_df_capacitytotal.groupby(['run', 'tech', 'y'])
+            filtered_df_capacitytotal.groupby(['run', 'tech_type', 'year'])
             .capacity_total.sum()
             .reset_index()
         )
 
     if captech:
         filtered_df_capacitytotal = filtered_df_capacitytotal[
-            filtered_df_capacitytotal['tech'].isin(captech)
+            filtered_df_capacitytotal['tech_type'].isin(captech)
         ]
 
     if run:
@@ -919,9 +962,9 @@ def update_figure(region, run, captech):
 
     fig_capacitytotal = px.bar(
         filtered_df_capacitytotal,
-        x='y',
+        x='year',
         y='capacity_total',
-        color='tech',
+        color='tech_type',
         facet_col='run',
         color_discrete_map=colorsetting,
         width=1600,
@@ -940,28 +983,28 @@ def update_figure(region, run, captech):
     filtered_df_capacitybuilds = df_capacitybuilds
 
     if region:
-        filtered_df_capacitybuilds = df_capacitybuilds[df_capacitybuilds['r'].isin(region)]
+        filtered_df_capacitybuilds = df_capacitybuilds[df_capacitybuilds['region'].isin(region)]
         filtered_df_capacitybuilds = filtered_df_capacitybuilds[
-            ['run', 'tech', 'y', 'CapacityBuilds']
+            ['run', 'tech_type', 'year', 'CapacityBuilds']
         ]
         filtered_df_capacitybuilds = (
-            filtered_df_capacitybuilds.groupby(['run', 'tech', 'y'])
+            filtered_df_capacitybuilds.groupby(['run', 'tech_type', 'year'])
             .CapacityBuilds.sum()
             .reset_index()
         )
     else:
         filtered_df_capacitybuilds = filtered_df_capacitybuilds[
-            ['run', 'tech', 'y', 'CapacityBuilds']
+            ['run', 'tech_type', 'year', 'CapacityBuilds']
         ]
         filtered_df_capacitybuilds = (
-            filtered_df_capacitybuilds.groupby(['run', 'tech', 'y'])
+            filtered_df_capacitybuilds.groupby(['run', 'tech_type', 'year'])
             .CapacityBuilds.sum()
             .reset_index()
         )
 
     if captech:
         filtered_df_capacitybuilds = filtered_df_capacitybuilds[
-            filtered_df_capacitybuilds['tech'].isin(captech)
+            filtered_df_capacitybuilds['tech_type'].isin(captech)
         ]
 
     if run:
@@ -971,9 +1014,9 @@ def update_figure(region, run, captech):
 
     fig_capacitybuilds = px.bar(
         filtered_df_capacitybuilds,
-        x='y',
+        x='year',
         y='CapacityBuilds',
-        color='tech',
+        color='tech_type',
         facet_col='run',
         color_discrete_map=colorsetting,
         width=1600,
@@ -992,28 +1035,28 @@ def update_figure(region, run, captech):
     filtered_df_capacityretire = df_capacityretire
 
     if region:
-        filtered_df_capacityretire = df_capacityretire[df_capacityretire['r'].isin(region)]
+        filtered_df_capacityretire = df_capacityretire[df_capacityretire['region'].isin(region)]
         filtered_df_capacityretire = filtered_df_capacityretire[
-            ['run', 'tech', 'y', 'capacity_retirements']
+            ['run', 'tech_type', 'year', 'capacity_retirements']
         ]
         filtered_df_capacityretire = (
-            filtered_df_capacityretire.groupby(['run', 'tech', 'y'])
+            filtered_df_capacityretire.groupby(['run', 'tech_type', 'year'])
             .capacity_retirements.sum()
             .reset_index()
         )
     else:
         filtered_df_capacityretire = filtered_df_capacityretire[
-            ['run', 'tech', 'y', 'capacity_retirements']
+            ['run', 'tech_type', 'year', 'capacity_retirements']
         ]
         filtered_df_capacityretire = (
-            filtered_df_capacityretire.groupby(['run', 'tech', 'y'])
+            filtered_df_capacityretire.groupby(['run', 'tech_type', 'year'])
             .capacity_retirements.sum()
             .reset_index()
         )
 
     if captech:
         filtered_df_capacityretire = filtered_df_capacityretire[
-            filtered_df_capacityretire['tech'].isin(captech)
+            filtered_df_capacityretire['tech_type'].isin(captech)
         ]
 
     if run:
@@ -1023,9 +1066,9 @@ def update_figure(region, run, captech):
 
     fig_capacityretire = px.bar(
         filtered_df_capacityretire,
-        x='y',
+        x='year',
         y='capacity_retirements',
-        color='tech',
+        color='tech_type',
         facet_col='run',
         color_discrete_map=colorsetting,
         width=1600,
@@ -1041,20 +1084,24 @@ def update_figure(region, run, captech):
     Input('run', 'value'),
 )
 def update_figure(region, trdyear, run):
-    filtered_df_trade = df_trade[(df_trade.y == trdyear)]
+    filtered_df_trade = df_trade[(df_trade.year == trdyear)]
 
     if region:
-        filtered_df_trade = filtered_df_trade[filtered_df_trade['r'].isin(region)]
-        filtered_df_trade = filtered_df_trade[['run', 'r1', 'y', 'hr', 'trade_interregional']]
+        filtered_df_trade = filtered_df_trade[filtered_df_trade['region'].isin(region)]
+        filtered_df_trade = filtered_df_trade[
+            ['run', 'region1', 'year', 'hour', 'trade_interregional']
+        ]
         filtered_df_trade = (
-            filtered_df_trade.groupby(['run', 'r1', 'y', 'hr'])
+            filtered_df_trade.groupby(['run', 'region1', 'year', 'hour'])
             .trade_interregional.sum()
             .reset_index()
         )
     else:
-        filtered_df_trade = filtered_df_trade[['run', 'r1', 'y', 'hr', 'trade_interregional']]
+        filtered_df_trade = filtered_df_trade[
+            ['run', 'region1', 'year', 'hour', 'trade_interregional']
+        ]
         filtered_df_trade = (
-            filtered_df_trade.groupby(['run', 'r1', 'y', 'hr'])
+            filtered_df_trade.groupby(['run', 'region1', 'year', 'hour'])
             .trade_interregional.sum()
             .reset_index()
         )
@@ -1064,9 +1111,9 @@ def update_figure(region, trdyear, run):
 
     fig_trade = px.area(
         filtered_df_trade,
-        x='hr',
+        x='hour',
         y='trade_interregional',
-        color='r1',
+        color='region1',
         facet_col='run',
         width=1600,
         height=500,
@@ -1081,20 +1128,24 @@ def update_figure(region, trdyear, run):
     Input('run', 'value'),
 )
 def update_figure(region, trdyear, run):
-    filtered_df_tradecan = df_tradecan[(df_tradecan.y == trdyear)]
+    filtered_df_tradecan = df_tradecan[(df_tradecan.year == trdyear)]
 
     if region:
-        filtered_df_tradecan = filtered_df_tradecan[filtered_df_tradecan['r'].isin(region)]
-        filtered_df_tradecan = filtered_df_tradecan[['run', 'r1', 'y', 'hr', 'trade_international']]
+        filtered_df_tradecan = filtered_df_tradecan[filtered_df_tradecan['region'].isin(region)]
+        filtered_df_tradecan = filtered_df_tradecan[
+            ['run', 'region1', 'year', 'hour', 'trade_international']
+        ]
         filtered_df_tradecan = (
-            filtered_df_tradecan.groupby(['run', 'r1', 'y', 'hr'])
+            filtered_df_tradecan.groupby(['run', 'region1', 'year', 'hour'])
             .trade_international.sum()
             .reset_index()
         )
     else:
-        filtered_df_tradecan = filtered_df_tradecan[['run', 'r1', 'y', 'hr', 'trade_international']]
+        filtered_df_tradecan = filtered_df_tradecan[
+            ['run', 'region1', 'year', 'hour', 'trade_international']
+        ]
         filtered_df_tradecan = (
-            filtered_df_tradecan.groupby(['run', 'r1', 'y', 'hr'])
+            filtered_df_tradecan.groupby(['run', 'region1', 'year', 'hour'])
             .trade_international.sum()
             .reset_index()
         )
@@ -1104,9 +1155,9 @@ def update_figure(region, trdyear, run):
 
     fig_tradecan = px.area(
         filtered_df_tradecan,
-        x='hr',
+        x='hour',
         y='trade_international',
-        color='r1',
+        color='region1',
         facet_col='run',
         width=1600,
         height=500,

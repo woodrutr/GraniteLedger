@@ -1,7 +1,9 @@
 """
-The Hydrogen Model takes an a Grid object and uses it to populate a Pyomo model that solves for the least cost to produce and distribute Hydrogen by electrolysis
-across the grid to satisfy a given demand, returning the duals as shadow prices. It can be run in stand-alone or integrated runs. If stand-alone, a function
-for generated temporally varying data must be supplied. By default it simply projects geometric growth for electricity price and demand.
+The Hydrogen Model takes in a Grid object and uses it to populate a Pyomo model that solves for the
+least cost to produce and distribute Hydrogen by electrolysis across the grid to satisfy a given
+demand, returning the duals as shadow prices. It can be run in stand-alone or integrated runs. If
+stand-alone, a function for generated temporally varying data must be supplied. By default it simply
+projects geometric growth for electricity price and demand.
 """
 ###################################################################################################
 # Setup
@@ -47,7 +49,7 @@ class H2Model(ConcreteModel):
         electricity_price=None,
         start_year=2025,  # TODO:  These year references will need to move after this is breathing
         end_year=2026,
-        years=None,  # a set of years that will match the elec model and supercede the start/stop years
+        years=None,  # a set of years that will match the elec model and supercede start/stop years
         *args,
         **kwargs,
     ):
@@ -112,6 +114,11 @@ class H2Model(ConcreteModel):
         # ===========
         #   PARAMS
         # ===========
+
+        hm.trans_cost_rate = Param(initialize=0.00)
+        hm.trans_capex_rate = Param(initialize=3.0)
+        hm.prod_capex_rate = Param(initialize=2.0)
+
         def get_capacity(hm, hub, tech):
             """fetch base capacity for hub and technology type
 
@@ -188,8 +195,8 @@ class H2Model(ConcreteModel):
         )
 
         # A small minimal production constant to ensure that some H2 is produced
-        # dev note:  This is required to ensure that pricing from duals behaves consistently even when
-        #            there is no actual demand and only induces a trivial cost
+        # dev note:  This is required to ensure that pricing from duals behaves consistently even
+        #            when there is no actual demand and only induces a trivial cost
         hm.minimum_production = 1.0  # [kg/h2]
 
         # mutables:
@@ -199,7 +206,8 @@ class H2Model(ConcreteModel):
             mutable=True,
             initialize=h2f.get_demand,
         )
-        # TODO: per discussion, RN cost is *just* the cost of electricity used for the process, which is very large portion of O&M
+        # TODO: per discussion, RN cost is *just* the cost of electricity used for the process,
+        # which is very large portion of O&M
         # so the production cost = vol[h2] * elec_consumption_rate[tech] * electricity_price
         hm.electricity_price = Param(
             hm.regions,
@@ -250,7 +258,7 @@ class H2Model(ConcreteModel):
             boolean
                 production <= capacity + sum of capacity expansion up to current year
             """
-            earlier_years = {yr for yr in hm.year if year <= year}
+            earlier_years = {yr for yr in hm.year if yr <= year}
             return hm.h2_volume[hub, tech, year] <= hm.capacity[hub, tech] + sum(
                 hm.capacity_expansion[hub, tech, earlier_year] for earlier_year in earlier_years
             )
@@ -278,7 +286,7 @@ class H2Model(ConcreteModel):
             boolean
                 transportation <= transportation capacity + capacity expansion up to current year
             """
-            earlier_years = {yr for yr in hm.year if year <= year}
+            earlier_years = {yr for yr in hm.year if yr <= year}
             return hm.transportation_volume[(origin, destination), year] <= hm.grid.registry.arcs[
                 (origin, destination)
             ].capacity + sum(
@@ -360,7 +368,8 @@ class H2Model(ConcreteModel):
         region_for_hub = {hub: hm.grid.registry.hubs[hub].region.name for hub in hm.hubs}
         # some convenience expressions...
         hm.production_cost = sum(
-            # hm.h2_volume[hub, tech, year] * hm.cost[hub, tech, year]  # see note above:  using elec cost only RN.
+            # hm.h2_volume[hub, tech, year] * hm.cost[hub, tech, year]
+            # # see note above:  using elec cost only RN.
             hm.h2_volume[hub, tech, year]
             * hm.electricity_consumption_rate[tech]
             * hm.electricity_price[region_for_hub[hub], year]
@@ -370,18 +379,22 @@ class H2Model(ConcreteModel):
         )
 
         hm.transportation_cost = sum(
-            hm.transportation_volume[arc, year] * 0.12 for arc in hm.arcs for year in hm.year
+            hm.transportation_volume[arc, year] * hm.trans_cost_rate
+            for arc in hm.arcs
+            for year in hm.year
         )
 
         hm.prod_capacity_expansion_cost = sum(
-            hm.capacity_expansion[hub, tech, year] * 2
+            hm.capacity_expansion[hub, tech, year] * hm.prod_capex_rate
             for hub in hm.hubs
             for tech in hm.technology
             for year in hm.year
         )
 
         hm.trans_capacity_expansion_cost = sum(
-            hm.trans_capacity_expansion[arc, year] * 3 for arc in hm.arcs for year in hm.year
+            hm.trans_capacity_expansion[arc, year] * hm.trans_capex_rate
+            for arc in hm.arcs
+            for year in hm.year
         )
 
         hm.cost_expression = (
@@ -593,7 +606,7 @@ def solve(hm: H2Model):
 def resolve(hm: H2Model, new_demand=None, new_electricity_price=None, test=False):
     """For convenience: After building and solving the model initially:
 
-        if you want to solve without annual data by applying a geometric growth rate to exhcange parameters
+    if you want to solve without annual data by applying a geometric growth rate to exhcange params
 
     Parameters
     ----------

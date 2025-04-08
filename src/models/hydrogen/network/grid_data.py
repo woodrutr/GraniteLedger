@@ -1,4 +1,8 @@
 """
+GRIDDATA CLASS
+~~~~~~~~~~~~~~
+
+grid_data is the the data object that grids are generated from. It reads in raw data with a region
 grid_data is the the data object that grids are generated from. It reads in raw data with a region
 filter, and holds it in one structure for easy access
 """
@@ -15,14 +19,10 @@ class GridData:
     def __init__(self, data_folder: Path, regions_of_interest: list[str] | None = None):
         """build data object for grid
 
-        Parameters
-        ----------
-        data_folder : Path
-            path to data
-        regions_of_interest : list[str] | None, optional
-            list of regions to consider, by default None
+        Args:
+            data_folder (Path): path to data
+            regions_of_interest (list[str] | None, optional): list of regions to consider. Defaults to None.
         """
-
         region_file = data_folder / 'regions.csv'
         hubs_file = data_folder / 'hubs.csv'
         arcs_file = data_folder / 'transportation_arcs.csv'
@@ -36,8 +36,8 @@ class GridData:
             self.hubs = self.hubs[self.hubs['region'].isin(regions_of_interest)]
             if not self.arcs.empty:
                 self.arcs = self.arcs[
-                    self.hubs['origin'].isin(regions_of_interest)
-                    & self.hubs['destination'].isin(regions_of_interest)
+                    self.arcs['origin'].isin(self.hubs['region'])
+                    & self.arcs['destination'].isin(self.hubs['region'])
                 ]
             self.regions = self.regions[self.regions['Region'].isin(regions_of_interest)]
 

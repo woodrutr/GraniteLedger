@@ -1,19 +1,16 @@
-src package
-===========
-
-Subpackages
------------
-
-.. toctree::
-   :maxdepth: 4
-
-   src.integrator
-   src.models
-
-Module contents
----------------
+﻿src
+===
 
 .. automodule:: src
-   :members:
-   :undoc-members:
-   :show-inheritance:
+
+   
+.. rubric:: Modules
+
+.. autosummary::
+   :toctree:
+   :recursive:
+
+   common
+   integrator
+   models
+   sensitivity

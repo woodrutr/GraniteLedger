@@ -1,5 +1,6 @@
-"""This file is the main preprocessor for the electricity model. It established the parameters
-and sets that will be used in the model. It contains:
+"""This file is the main preprocessor for the electricity model.
+
+It established the parameters and sets that will be used in the model. It contains:
  - A class that contains all sets used in the model
  - A collection of support functions to read in and setup parameter data
  - The preprocessor function, which produces an instance of the Set class and a dict of params
@@ -15,10 +16,9 @@ from pathlib import Path
 import pandas as pd
 import os
 
-# Import scripts
+# Import python modules
 from definitions import PROJECT_ROOT
-from src.models.electricity.scripts.utilities import annual_count
-from src.integrator.utilities import get_output_root
+from src.common.utilities import scale_load, scale_load_with_enduses
 
 # switch to load data from csvs(0) or from db(1)
 # note: this is a future feature, currently not available
@@ -29,22 +29,26 @@ if db_switch == 1:
     from sqlalchemy.ext.automap import automap_base
     from sqlalchemy.orm import sessionmaker
 
-# establish paths
-data_root = Path(PROJECT_ROOT, 'src/models/electricity/input')
+# Establish paths
+data_root = Path(PROJECT_ROOT, 'input', 'electricity')
 
 
 ###################################################################################################
 class Sets:
-    """Generates an initial batch of sets that are used to solve electricity model. Sets include:
-    - Scenario descriptor and model switches
-    - Regional sets
-    - Temporal sets
-    - Technology type sets
-    - Supply curve step sets
+    """Generates an initial batch of sets that are used to solve electricity model. Sets include: \n
+    - Scenario descriptor and model switches \n
+    - Regional sets \n
+    - Temporal sets \n
+    - Technology type sets \n
+    - Supply curve step sets \n
     - Other
+
     """
 
     def __init__(self, settings):
+        # Output root
+        self.OUTPUT_ROOT = settings.OUTPUT_ROOT
+
         # Switches
         self.sw_trade = settings.sw_trade
         self.sw_expansion = settings.sw_expansion
@@ -54,12 +58,19 @@ class Sets:
         self.sw_learning = settings.sw_learning
         self.sw_reserves = settings.sw_reserves
 
-        self.restypes = [1, 2, 3]  # reserve types, 1=spinning, 2=regulation, 3=flex
-        self.sw_ptbuilds = pd.read_csv(data_root / 'sw_ptbuilds.csv')
-        self.sw_ptretires = pd.read_csv(data_root / 'sw_ptretires.csv')
+        self.restypes = [
+            'spinning',
+            'regulation',
+            'flex',
+        ]  # old vals: 1=spinning, 2=regulation, 3=flex
+        self.sw_builds = pd.read_csv(data_root / 'sw_builds.csv')
+        self.sw_retires = pd.read_csv(data_root / 'sw_retires.csv')
+
+        # Load Setting
+        self.load_scalar = settings.scale_load
 
         # Regional Sets
-        self.r = settings.regions
+        self.region = settings.regions
 
         # Temporal Sets
         self.sw_temporal = settings.sw_temporal
@@ -70,29 +81,45 @@ class Sets:
         self.y = settings.years
         self.start_year = settings.start_year
         self.year_map = settings.year_map
-        self.year_weights = settings.year_weights
+        self.WeightYear = settings.WeightYear
 
         # Temporal Sets - Seasons and Days
-        self.s = range(1, self.cw_temporal['Map_s'].max() + 1)
+        self.season = range(1, self.cw_temporal['Map_s'].max() + 1)
         self.num_days = self.cw_temporal['Map_day'].max()
         self.day = range(1, self.num_days + 1)
 
         # Temporal Sets - Hours
         # number of time periods in a day
-        self.num_hr_day = int(self.cw_temporal['Map_hr'].max() / self.cw_temporal['Map_day'].max())
+        self.num_hr_day = int(
+            self.cw_temporal['Map_hour'].max() / self.cw_temporal['Map_day'].max()
+        )
         self.h = range(1, self.num_hr_day + 1)
         # Number of time periods the model solves for: days x number of periods per day
         self.num_hr = self.num_hr_day * self.num_days
-        self.hr = range(1, self.num_days * len(self.h) + 1)
+        self.hour = range(1, self.num_days * len(self.h) + 1)
         # First time period of the day and all time periods that are not the first hour
-        self.hr1 = range(1, self.num_days * len(self.h) + 1, len(self.h))
-        self.hr23 = list(set(self.hr) - set(self.hr1))
+        self.hour1 = range(1, self.num_days * len(self.h) + 1, len(self.h))
+        self.hour23 = list(set(self.hour) - set(self.hour1))
 
         # Technology Sets
         def load_and_assign_subsets(df, col):
-            # set attributes for the master list
-            master = list(df.columns)[0]
-            df = df.set_index(df[master])
+            """create list based on tech subset assignment
+
+            Parameters
+            ----------
+            df : pd.DataFrame
+                data frame containing tech subsets
+            col : str
+                name of tech subset
+
+            Returns
+            -------
+            list
+                list of techs in subset
+            """
+            # set attributes for the main list
+            main = list(df.columns)[0]
+            df = df.set_index(df[main])
 
             # return subset of list based on col assignments
             subset_list = list(df[df[col].notna()].index)
@@ -101,20 +128,17 @@ class Sets:
             return subset_list
 
         # read in subset dataframe from inputs
-        pt_subsets = pd.read_csv(data_root / 'pt_subsets.csv')
-        self.pt_subset_names = pt_subsets.columns
+        tech_subsets = pd.read_csv(data_root / 'tech_subsets.csv')
+        self.tech_subset_names = tech_subsets.columns
 
-        for tss in self.pt_subset_names:
-            # create the technology subsets based on the pt_subsets input
-            setattr(self, tss, load_and_assign_subsets(pt_subsets, tss))
-
-        # Step Sets - supply curve and int'l trade
-        self.steps = range(1, 4)
-        self.CSteps = range(1, 5)
+        for tss in self.tech_subset_names:
+            # create the technology subsets based on the tech_subsets input
+            setattr(self, tss, load_and_assign_subsets(tech_subsets, tss))
 
         # Misc Inputs
+        self.step = range(1, 5)
         self.TransLoss = 0.02  # Transmission losses %
-        self.H2_heatrate = (
+        self.H2Heatrate = (
             13.84 / 1000000
         )  # 13.84 kwh/kg, for kwh/kg H2 -> 54.3, #conversion kwh/kg to GWh/kg
 
@@ -318,17 +342,311 @@ def add_season_index(cw_temporal, df, pos):
     dataframe
         modified parameter data now indexed by season
     """
-    df_s = cw_temporal[['Map_s']].copy().rename(columns={'Map_s': 's'}).drop_duplicates()
+    df_s = cw_temporal[['Map_s']].copy().rename(columns={'Map_s': 'season'}).drop_duplicates()
     df = pd.merge(df, df_s, how='cross')
-    s_col = df.pop('s')
-    df.insert(pos, 's', s_col)
+    s_col = df.pop('season')
+    df.insert(pos, 'season', s_col)
 
     return df
 
 
+def time_map(cw_temporal, rename_cols):
+    """create temporal mapping parameters
+
+    Parameters
+    ----------
+    cw_temporal : pd.DataFrame
+        temporal crosswalks
+    rename_cols : dict
+        columns to rename from/to
+
+    Returns
+    -------
+    pd.DataFrame
+        data frame with temporal mapping parameters
+    """
+    df = cw_temporal[list(rename_cols.keys())].rename(columns=rename_cols).drop_duplicates()
+    return df
+
+
+def capacitycredit_df(all_frames, setin):
+    """builds the capacity credit dataframe
+
+    Parameters
+    ----------
+    all_frames : dict of pd.DataFrame
+        dictionary of dataframes where the key is the file name and the value is the table data
+    setin : Sets
+        an initial batch of sets that are used to solve electricity model
+
+    Returns
+    -------
+    pd.DataFrame
+        formatted capacity credit data frame
+    """
+    df = pd.merge(
+        all_frames['SupplyCurve'], all_frames['MapHourSeason'], on=['season'], how='left'
+    ).drop(columns=['season'])
+
+    # capacity credit is hourly capacity factor for vre technologies
+    df = pd.merge(
+        df, all_frames['CapFactorVRE'], how='left', on=['tech', 'year', 'region', 'step', 'hour']
+    ).rename(columns={'CapFactorVRE': 'CapacityCredit'})
+
+    # capacity credit = 1 for dispatchable technologies
+    df['CapacityCredit'] = df['CapacityCredit'].fillna(1)
+
+    # capacity credit is seasonal limit for hydro
+    df2 = pd.merge(
+        all_frames['HydroCapFactor'],
+        all_frames['MapHourSeason'],
+        on=['season'],
+        how='left',
+    ).drop(columns=['season'])
+    df2['tech'] = setin.T_hydro[0]
+    df = pd.merge(df, df2, how='left', on=['tech', 'region', 'hour'])
+    df.loc[df['tech'].isin(setin.T_hydro), 'CapacityCredit'] = df['HydroCapFactor']
+    df = df.drop(columns=['SupplyCurve', 'HydroCapFactor'])
+    df = df[['tech', 'year', 'region', 'step', 'hour', 'CapacityCredit']]
+    return df
+
+
+def create_hourly_params(all_frames, key, cols):
+    """Expands params that are indexed by season to be indexed by hour
+
+    Parameters
+    ----------
+    all_frames : dict of pd.DataFrame
+        dictionary of dataframes where the key is the file name and the value is the table data
+    key : str
+        name of data frame to access
+    cols : list[str]
+        column names to keep in data frame
+
+    Returns
+    -------
+    pd.DataFrame
+        data frame with name key with new hourly index
+    """
+    df = pd.merge(all_frames[key], all_frames['MapHourSeason'], on=['season'], how='left').drop(
+        columns=['season']
+    )
+    df = df[cols]
+    return df
+
+
+def create_subsets(df, col, subset):
+    """Create subsets off of full sets
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        data frame of full data
+    col : str
+        column name
+    subset : list[str]
+        names of values to subset
+
+    Returns
+    -------
+    pd.DataFrame
+        data frame containing subset of full data
+    """
+    df = df[df[col].isin(subset)].dropna()
+    return df
+
+
+def create_hourly_sets(all_frames, df):
+    """expands sets that are indexed by season to be indexed by hour
+
+    Parameters
+    ----------
+    all_frames : dict of pd.DataFrame
+        dictionary of dataframes where the key is the file name and the value is the table data
+    df : pd.DataFrame
+        data frame containing seasonal data
+
+    Returns
+    -------
+    pd.DataFrame
+        data frame containing updated hourly set
+    """
+    df = pd.merge(df, all_frames['MapHourSeason'].reset_index(), on=['season'], how='left').drop(
+        columns=['season']
+    )
+    return df
+
+
+def hourly_sc_subset(all_frames, subset):
+    """Creates sets/subsets that are related to the supply curve
+
+    Parameters
+    ----------
+    all_frames : dict of pd.DataFrame
+        dictionary of dataframes where the key is the file name and the value is the table data
+    subset : list
+        list of technologies to subset
+
+    Returns
+    -------
+    pd.DataFrame
+        data frame containing sets/subsets related to supply curve
+    """
+    df = create_hourly_sets(
+        all_frames, create_subsets(all_frames['SupplyCurve'].reset_index(), 'tech', subset)
+    )
+    return df
+
+
+def hr_sub_sc_subset(all_frames, T_subset, hr_subset):
+    """creates supply curve subsets by hour
+
+    Parameters
+    ----------
+    all_frames : dict of pd.DataFrame
+        dictionary of dataframes where the key is the file name and the value is the table data
+    T_subset : list
+        list of technologies to subset
+    hr_subset : list
+        list of hours to subset
+
+    Returns
+    -------
+    pd.DataFrame
+        data frame containing supply curve related hourly subset
+    """
+    il = ['tech', 'year', 'region', 'step', 'hour']
+    df_index = create_subsets(hourly_sc_subset(all_frames, T_subset), 'hour', hr_subset).set_index(
+        il
+    )
+    return df_index
+
+
+def step_sub_sc_subset(all_frames, T_subset, step_subset):
+    """creates supply curve subsets by step
+
+    Parameters
+    ----------
+    all_frames : dict of pd.DataFrame
+        dictionary of dataframes where the key is the file name and the value is the table data
+    T_subset : list
+       technologies to subset
+    step_subset : list
+        step numbers to subset
+
+    Returns
+    -------
+    pd.DataFrame
+        data frame containing supply curve subsets by step
+    """
+    df = create_subsets(
+        create_subsets(all_frames['SupplyCurve'].reset_index(), 'tech', T_subset),
+        'step',
+        step_subset,
+    )
+    return df
+
+
+def create_sc_sets(all_frames, setin):
+    """creates supply curve sets
+
+    Parameters
+    ----------
+    all_frames : dict of pd.DataFrame
+        dictionary of dataframes where the key is the file name and the value is the table data
+    setin : Sets
+        an initial batch of sets that are used to solve electricity model
+
+    Returns
+    -------
+    Sets
+       updated Set containing all sets related to supply curve
+    """
+    # sets that are related to the supply curve
+    index_list = ['tech', 'year', 'region', 'step', 'hour']
+
+    setin.generation_total_index = hourly_sc_subset(all_frames, setin.T_gen).set_index(index_list)
+    setin.Storage_index = hourly_sc_subset(all_frames, setin.T_stor).set_index(index_list)
+    setin.H2Gen_index = hourly_sc_subset(all_frames, setin.T_h2).set_index(index_list)
+    setin.generation_ramp_index = hourly_sc_subset(all_frames, setin.T_conv).set_index(index_list)
+    setin.generation_dispatchable_ub_index = hourly_sc_subset(all_frames, setin.T_disp).set_index(
+        index_list
+    )
+
+    setin.ramp_most_hours_balance_index = hr_sub_sc_subset(all_frames, setin.T_conv, setin.hour23)
+    setin.ramp_first_hour_balance_index = hr_sub_sc_subset(all_frames, setin.T_conv, setin.hour1)
+    setin.storage_most_hours_balance_index = hr_sub_sc_subset(
+        all_frames, setin.T_stor, setin.hour23
+    )
+    setin.storage_first_hour_balance_index = hr_sub_sc_subset(all_frames, setin.T_stor, setin.hour1)
+
+    setin.generation_hydro_ub_index = create_hourly_sets(
+        all_frames, step_sub_sc_subset(all_frames, setin.T_hydro, [2])
+    ).set_index(index_list)
+
+    setin.capacity_hydro_ub_index = (
+        step_sub_sc_subset(all_frames, setin.T_hydro, [1])
+        .drop(columns=['step'])
+        .set_index(['tech', 'year', 'region', 'season'])
+    )
+
+    setin.reserves_procurement_index = pd.merge(
+        create_hourly_sets(all_frames, all_frames['SupplyCurve'].reset_index()),
+        pd.DataFrame({'restypes': setin.restypes}),
+        how='cross',
+    ).set_index(['restypes'] + index_list)
+
+    return setin
+
+
+def create_other_sets(all_frames, setin):
+    """creates other (non-supply curve) sets
+
+    Parameters
+    ----------
+    all_frames : dict of pd.DataFrame
+        dictionary of dataframes where the key is the file name and the value is the table data
+    setin : Sets
+        an initial batch of sets that are used to solve electricity model
+
+    Returns
+    -------
+    Sets
+        updated Sets which has non-supply curve-related sets updated
+    """
+    # other sets
+    setin.Build_index = setin.sw_builds[setin.sw_builds['builds'] == 1].set_index(['tech', 'step'])
+
+    setin.capacity_retirements_index = pd.merge(
+        all_frames['SupplyCurve']
+        .reset_index()
+        .drop(columns=['season', 'SupplyCurve'])
+        .drop_duplicates(),
+        setin.sw_retires[setin.sw_retires['retires'] == 1],
+        on=['tech', 'step'],
+        how='right',
+    ).set_index(['tech', 'year', 'region', 'step'])
+
+    setin.trade_interational_index = (
+        pd.merge(
+            all_frames['TranLimitGenInt'].reset_index(),
+            all_frames['TranLimitCapInt'].reset_index(),
+            how='inner',
+        )
+        .drop(columns=['TranLimitGenInt'])
+        .set_index(['region', 'region1', 'year', 'step', 'hour'])
+    )
+
+    setin.trade_interregional_index = create_hourly_sets(
+        all_frames, all_frames['TranLimit'].reset_index()
+    ).set_index(['region', 'region1', 'year', 'hour'])
+
+    return setin
+
+
 ###################################################################################################
 def preprocessor(setin):
-    """master preprocessor function that generates the final dataframes and sets sent over to the
+    """main preprocessor function that generates the final dataframes and sets sent over to the
     electricity model. This function reads in the input data, modifies it based on the temporal
     and regional mapping specified in the inputs, and gets it into the final formatting needed.
     Also adds some additional regional sets to the set class based on parameter inputs.
@@ -346,6 +664,8 @@ def preprocessor(setin):
         an initial batch of sets that are used to solve electricity model
     """
 
+    # READ IN INPUT DATA
+
     # read in raw data
     all_frames = {}
     if db_switch == 0:
@@ -355,95 +675,109 @@ def preprocessor(setin):
         # add sql db tables to all frames
         all_frames = readin_sql(all_frames)
 
-    # read in load data from residential model
-    y = 2023
-    load_file = Path(PROJECT_ROOT, 'src/models/residential/input/load/Load_'+str(y)+'.csv')
-    all_frames['Load'] = pd.read_csv(load_file)
-    for y in range(2024,2050):
-        load_file = Path(PROJECT_ROOT, 'src/models/residential/input/load/Load_'+str(y)+'.csv')
-        tmp = pd.read_csv(load_file)
-        all_frames['Load'] = pd.concat([all_frames['Load'],tmp]).reset_index(drop=True)
+    # read in load data from residential input directory
+    res_dir = Path(PROJECT_ROOT, 'input', 'residential')
+    if setin.load_scalar == 'annual':
+        all_frames['Load'] = scale_load(res_dir).reset_index(drop=True)
+    elif setin.load_scalar == 'enduse':
+        all_frames['Load'] = scale_load_with_enduses(res_dir).reset_index(drop=True)
+    else:
+        raise ValueError('load_scalar in TOML must be set to "annual" or "enduse"')
+
+    # REGIONALIZE DATA
 
     # international trade sets
-    r_file = all_frames['TranLimitCapInt'][['r', 'r1']].drop_duplicates()
-    r_file = r_file[r_file['r'].isin(setin.r)]
-    setin.r_int_conn = list(r_file['r'].unique())
-    setin.r_int = list(r_file['r1'].unique())
-    setin.r1 = setin.r + setin.r_int
+    r_file = all_frames['TranLimitCapInt'][['region', 'region1']].drop_duplicates()
+    r_file = r_file[r_file['region'].isin(setin.region)]
+    setin.region_int_trade = list(r_file['region'].unique())
+    setin.region_int = list(r_file['region1'].unique())
+    setin.region1 = setin.region + setin.region_int
+
+    # subset df by region
+    all_frames = subset_dfs(all_frames, setin, 'region')
+    all_frames = subset_dfs(all_frames, setin, 'region1')
+
+    setin.region_trade = all_frames['TranLimit']['region'].unique()
+
+    # TEMPORALIZE DATA
 
     # create temporal mapping df
     cw_temporal = setin.cw_temporal
 
     # year weights
-    all_frames['year_weights'] = setin.year_weights
-
-    # subset df by region
-    all_frames = subset_dfs(all_frames, setin, 'r')
-    all_frames = subset_dfs(all_frames, setin, 'r1')
-
-    setin.trade_regs = all_frames['TranLimit']['r'].unique()
+    all_frames['WeightYear'] = setin.WeightYear
 
     # last year values used
     filter_list = ['CapCost']
     for key in filter_list:
-        all_frames[key] = all_frames[key].loc[all_frames[key]['y'].isin(getattr(setin, 'years'))]
+        all_frames[key] = all_frames[key].loc[all_frames[key]['year'].isin(getattr(setin, 'years'))]
 
     # average values in years/hours used
     for key in all_frames.keys():
-        if 'y' in all_frames[key].columns:
-            all_frames[key] = avg_by_group(all_frames[key], 'y', setin.year_map)
-        if 'hr' in all_frames[key].columns:
-            all_frames[key] = avg_by_group(all_frames[key], 'hr', cw_temporal[['hr', 'Map_hr']])
+        if 'year' in all_frames[key].columns:
+            all_frames[key] = avg_by_group(all_frames[key], 'year', setin.year_map)
+        if 'hour' in all_frames[key].columns:
+            all_frames[key] = avg_by_group(
+                all_frames[key], 'hour', cw_temporal[['hour', 'Map_hour']]
+            )
 
-    # create temporal mapping parameters
-    def temporal_map(cols, rename_cols):
-        df = cw_temporal[cols].rename(columns=rename_cols).drop_duplicates()
-        return df
-
-    all_frames['Map_day_s'] = temporal_map(['Map_day', 'Map_s'], {'Map_day': 'day', 'Map_s': 's'})
-    all_frames['Map_hr_d'] = temporal_map(['Map_hr', 'Map_day'], {'Map_day': 'day', 'Map_hr': 'hr'})
-    all_frames['Map_hr_s'] = temporal_map(['Map_hr', 'Map_s'], {'Map_hr': 'hr', 'Map_s': 's'})
-    all_frames['Hr_weights'] = temporal_map(['Map_hr', 'Hr_weights'], {'Map_hr': 'hr'})
-    all_frames['Idaytq'] = temporal_map(
-        ['Map_day', 'Dayweights'], {'Map_day': 'day', 'Dayweights': 'Idaytq'}
+    all_frames['MapDaySeason'] = time_map(cw_temporal, {'Map_day': 'day', 'Map_s': 'season'})
+    all_frames['MapHourDay'] = time_map(cw_temporal, {'Map_hour': 'hour', 'Map_day': 'day'})
+    all_frames['MapHourSeason'] = time_map(cw_temporal, {'Map_hour': 'hour', 'Map_s': 'season'})
+    all_frames['WeightHour'] = time_map(
+        cw_temporal, {'Map_hour': 'hour', 'WeightHour': 'WeightHour'}
     )
+    all_frames['WeightDay'] = time_map(cw_temporal, {'Map_day': 'day', 'WeightDay': 'WeightDay'})
 
     # weights per season
     all_frames['WeightSeason'] = cw_temporal[
-        ['Map_s', 'Map_hr', 'Dayweights', 'Hr_weights']
+        ['Map_s', 'Map_hour', 'WeightDay', 'WeightHour']
     ].drop_duplicates()
     all_frames['WeightSeason'].loc[:, 'WeightSeason'] = (
-        all_frames['WeightSeason']['Dayweights'] * all_frames['WeightSeason']['Hr_weights']
+        all_frames['WeightSeason']['WeightDay'] * all_frames['WeightSeason']['WeightHour']
     )
     all_frames['WeightSeason'] = (
         all_frames['WeightSeason']
-        .drop(columns=['Dayweights', 'Hr_weights', 'Map_hr'])
+        .drop(columns=['WeightDay', 'WeightHour', 'Map_hour'])
         .groupby(['Map_s'])
         .agg('sum')
         .reset_index()
-        .rename(columns={'Map_s': 's'})
+        .rename(columns={'Map_s': 'season'})
     )
 
-    # using same pti capacity factor for all model years and reordering columns
-    all_frames['SolWindCapFactor'] = pd.merge(
-        all_frames['CapFactorVRE'], pd.DataFrame({'y': setin.years}), how='cross'
+    # using same T_vre capacity factor for all model years and reordering columns
+    all_frames['CapFactorVRE'] = pd.merge(
+        all_frames['CapFactorVRE'], pd.DataFrame({'year': setin.years}), how='cross'
     )
-    all_frames['SolWindCapFactor'] = all_frames['SolWindCapFactor'][
-        ['pt', 'y', 'r', 'steps', 'hr', 'SolWindCapFactor']
+    all_frames['CapFactorVRE'] = all_frames['CapFactorVRE'][
+        ['tech', 'year', 'region', 'step', 'hour', 'CapFactorVRE']
     ]
 
     # Update load to be the total demand in each time segment rather than the average
     all_frames['Load'] = pd.merge(
-        all_frames['Load'], all_frames['Hr_weights'], how='left', on=['hr']
+        all_frames['Load'], all_frames['WeightHour'], how='left', on=['hour']
     )
-    all_frames['Load']['Load'] = all_frames['Load']['Load'] * all_frames['Load']['Hr_weights']
-    all_frames['Load'] = all_frames['Load'].drop(columns=['Hr_weights'])
+    all_frames['Load']['Load'] = all_frames['Load']['Load'] * all_frames['Load']['WeightHour']
+    all_frames['Load'] = all_frames['Load'].drop(columns=['WeightHour'])
 
     # add seasons to data without seasons
     all_frames['SupplyCurve'] = add_season_index(cw_temporal, all_frames['SupplyCurve'], 1)
 
-    # changing units of prices to all be in $/GWh so obj is $
     def price_MWh_to_GWh(dic, names: list[str]):
+        """changing units of prices to all be in $/GWh so obj is $
+
+        Parameters
+        ----------
+        dic : dict of pd.DataFrames
+            all_frames, main dictionary containing all inputs
+        names : list[str]
+            names of price tables
+
+        Returns
+        -------
+        dict of pd.DataFrames
+            the original dict of data frames with updated price units
+        """
         for name in names:
             dic[name].loc[:, name] = dic[name][name] * 1000
         return dic
@@ -466,15 +800,16 @@ def preprocessor(setin):
 
     # save first year of supply curve summer capacity for learning
     all_frames['SupplyCurveLearning'] = all_frames['SupplyCurve'][
-        (all_frames['SupplyCurve']['y'] == setin.start_year) & (all_frames['SupplyCurve']['s'] == 2)
+        (all_frames['SupplyCurve']['year'] == setin.start_year)
+        & (all_frames['SupplyCurve']['season'] == 2)
     ]
 
     # set up first year capacity for learning.
     all_frames['SupplyCurveLearning'] = (
         pd.merge(all_frames['SupplyCurveLearning'], all_frames['CapCost'], how='outer')
-        .drop(columns=['s', 'y', 'CapCost', 'r', 'steps'])
+        .drop(columns=['season', 'year', 'CapCost', 'region', 'step'])
         .rename(columns={'SupplyCurve': 'SupplyCurveLearning'})
-        .groupby(['pt'])
+        .groupby(['tech'])
         .agg('sum')
         .reset_index()
     )
@@ -484,180 +819,22 @@ def preprocessor(setin):
         all_frames['SupplyCurveLearning']['SupplyCurveLearning'] == 0.0, 'SupplyCurveLearning'
     ] = 0.01
 
-    # builds the capacity credit dataframe
-    def capacitycredit_df():
-        df = pd.merge(all_frames['SupplyCurve'], all_frames['Map_hr_s'], on=['s'], how='left').drop(
-            columns=['s']
-        )
-
-        # capacity credit is hourly capacity factor for vre technologies
-        df = pd.merge(
-            df, all_frames['SolWindCapFactor'], how='left', on=['pt', 'y', 'r', 'steps', 'hr']
-        ).rename(columns={'SolWindCapFactor': 'CapacityCredit'})
-
-        # capacity credit = 1 for dispatchable technologies
-        df['CapacityCredit'] = df['CapacityCredit'].fillna(1)
-
-        # capacity credit is seasonal limit for hydro
-        df2 = pd.merge(
-            all_frames['HydroCapFactor'],
-            all_frames['Map_hr_s'],
-            on=['s'],
-            how='left',
-        ).drop(columns=['s'])
-        df2['pt'] = setin.pth[0]
-        df = pd.merge(df, df2, how='left', on=['pt', 'r', 'hr'])
-        df.loc[df['pt'].isin(setin.pth), 'CapacityCredit'] = df['HydroCapFactor']
-        df = df.drop(columns=['SupplyCurve', 'HydroCapFactor'])
-        df = df[['pt', 'y', 'r', 'steps', 'hr', 'CapacityCredit']]
-        return df
-
-    all_frames['CapacityCredit'] = capacitycredit_df()
-
-    # Expands params that are indexed by season to be indexed by hour
-    def create_hourly_params(df, cols):
-        df = pd.merge(df, all_frames['Map_hr_s'], on=['s'], how='left').drop(columns=['s'])
-        df = df[cols]
-        return df
+    all_frames['CapacityCredit'] = capacitycredit_df(all_frames, setin)
 
     # expand a few parameters to be hourly
-
-    all_frames['TranLimitCapInt'] = create_hourly_params(
-        all_frames['TranLimitCapInt'], ['r', 'r1', 'y', 'hr', 'TranLimitCapInt']
-    )
-
-    all_frames['TranLimitGenInt'] = create_hourly_params(
-        all_frames['TranLimitGenInt'], ['r1', 'CSteps', 'y', 'hr', 'TranLimitGenInt']
-    )
+    TLCI_cols = ['region', 'region1', 'year', 'hour', 'TranLimitCapInt']
+    TLGI_cols = ['region1', 'step', 'year', 'hour', 'TranLimitGenInt']
+    all_frames['TranLimitCapInt'] = create_hourly_params(all_frames, 'TranLimitCapInt', TLCI_cols)
+    all_frames['TranLimitGenInt'] = create_hourly_params(all_frames, 'TranLimitGenInt', TLGI_cols)
 
     # sets the index for all df in dict
     for key in all_frames:
         index = list(all_frames[key].columns[:-1])
         all_frames[key] = all_frames[key].set_index(index)
 
-    ###############################################################################################
-    # creates sets
-
-    # Create subsets off of full sets
-    def create_subsets(df, col, subset):
-        df = df[df[col].isin(subset)].dropna()
-        return df
-
-    # Expands sets that are indexed by season to be indexed by hour
-    def create_hourly_sets(df):
-        df = pd.merge(df, all_frames['Map_hr_s'].reset_index(), on=['s'], how='left').drop(
-            columns=['s']
-        )
-        return df
-
-    index_list = ['pt', 'y', 'r', 'steps', 'hr']
-
-    # sets that are related to the supply curve
-    setin.generation_total_index = create_hourly_sets(
-        create_subsets(all_frames['SupplyCurve'].reset_index(), 'pt', setin.ptg)
-    ).set_index(index_list)
-
-    setin.generation_dispatchable_ub_index = create_hourly_sets(
-        create_subsets(all_frames['SupplyCurve'].reset_index(), 'pt', setin.ptd)
-    ).set_index(index_list)
-
-    setin.Storage_index = create_hourly_sets(
-        create_subsets(all_frames['SupplyCurve'].reset_index(), 'pt', setin.pts)
-    ).set_index(index_list)
-
-    setin.H2Gen_index = create_hourly_sets(
-        create_subsets(all_frames['SupplyCurve'].reset_index(), 'pt', setin.pth2)
-    ).set_index(index_list)
-
-    setin.generation_ramp_index = create_hourly_sets(
-        create_subsets(all_frames['SupplyCurve'].reset_index(), 'pt', setin.ptc)
-    ).set_index(index_list)
-
-    setin.generation_hydro_ub_index = create_hourly_sets(
-        create_subsets(
-            create_subsets(all_frames['SupplyCurve'].reset_index(), 'pt', setin.pth),
-            'steps',
-            [2],
-        )
-    ).set_index(index_list)
-
-    setin.ramp_most_hours_balance_index = create_subsets(
-        create_hourly_sets(
-            create_subsets(all_frames['SupplyCurve'].reset_index(), 'pt', setin.ptc)
-        ),
-        'hr',
-        setin.hr23,
-    ).set_index(index_list)
-
-    setin.ramp_first_hour_balance_index = create_subsets(
-        create_hourly_sets(
-            create_subsets(all_frames['SupplyCurve'].reset_index(), 'pt', setin.ptc)
-        ),
-        'hr',
-        setin.hr1,
-    ).set_index(index_list)
-
-    setin.storage_most_hours_balance_index = create_subsets(
-        create_hourly_sets(
-            create_subsets(all_frames['SupplyCurve'].reset_index(), 'pt', setin.pts)
-        ),
-        'hr',
-        setin.hr23,
-    ).set_index(index_list)
-
-    setin.storage_first_hour_balance_index = create_subsets(
-        create_hourly_sets(
-            create_subsets(all_frames['SupplyCurve'].reset_index(), 'pt', setin.pts)
-        ),
-        'hr',
-        setin.hr1,
-    ).set_index(index_list)
-
-    setin.capacity_hydro_ub_index = (
-        create_subsets(
-            create_subsets(all_frames['SupplyCurve'].reset_index(), 'pt', setin.pth),
-            'steps',
-            [1],
-        )
-        .drop(columns=['steps'])
-        .set_index(['pt', 'y', 'r', 's'])
-    )
-
-    setin.Build_index = setin.sw_ptbuilds[setin.sw_ptbuilds['builds'] == 1].set_index(
-        ['pt', 'steps']
-    )
-
-    setin.capacity_retirements_index = pd.merge(
-        all_frames['SupplyCurve']
-        .reset_index()
-        .drop(columns=['s', 'SupplyCurve'])
-        .drop_duplicates(),
-        setin.sw_ptretires[setin.sw_ptretires['retires'] == 1],
-        on=['pt', 'steps'],
-        how='right',
-    ).set_index(['pt', 'y', 'r', 'steps'])
-
-    # other sets
-
-    setin.trade_interational_index = (
-        pd.merge(
-            all_frames['TranLimitGenInt'].reset_index(),
-            all_frames['TranLimitCapInt'].reset_index(),
-            how='inner',
-        )
-        .drop(columns=['TranLimitGenInt'])
-        .set_index(['r', 'r1', 'y', 'CSteps', 'hr'])
-    )
-
-    setin.trade_interregional_index = create_hourly_sets(
-        all_frames['TranLimit'].reset_index()
-    ).set_index(['r', 'r1', 'y', 'hr'])
-
-    setin.reserves_procurement_index = pd.merge(
-        create_hourly_sets(all_frames['SupplyCurve'].reset_index()),
-        pd.DataFrame({'restypes': setin.restypes}),
-        how='cross',
-    ).set_index(['restypes'] + index_list)
+    # create more indices for the model
+    setin = create_sc_sets(all_frames, setin)
+    setin = create_other_sets(all_frames, setin)
 
     return all_frames, setin
 
@@ -678,9 +855,14 @@ def makedir(dir_out):
         os.makedirs(dir_out)
 
 
-def output_inputs():
+def output_inputs(OUTPUT_ROOT):
     """function developed initial for QA purposes, writes out to csv all of the dfs and sets passed
     to the electricity model to an output directory.
+
+    Parameters
+    ----------
+    OUTPUT_ROOT : str
+        path of output directory
 
     Returns
     -------
@@ -689,7 +871,6 @@ def output_inputs():
     setin : Sets
         an initial batch of sets that are used to solve electricity model
     """
-    OUTPUT_ROOT = get_output_root()
     output_path = Path(OUTPUT_ROOT, 'electricity_inputs/')
     makedir(output_path)
 
@@ -728,5 +909,5 @@ def print_sets(setin):
             print(item, ':', getattr(setin, item))
 
 
-# all_frames, setB = output_inputs()
+# all_frames, setB = output_inputs(PROJECT_ROOT)
 # print_sets(setB)

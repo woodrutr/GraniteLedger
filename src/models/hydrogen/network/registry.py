@@ -2,11 +2,10 @@
 REGISTRY CLASS
 ~~~~~~~~~~~~~~
 
-    This class is the central registry of all objects in a grid. It preserves them
-    in dicts of object-name:object so that they can be looked up by name.
-    it also should serve as a place to save data in different configurations for
-    faster parsing - for example, depth is a dict that organizes regions according to
-    their depth in the region nesting tree.
+This class is the central registry of all objects in a grid. It preserves them in dicts of
+object-name:object so that they can be looked up by name. it also should serve as a place to save
+data in different configurations for faster parsing - for example, depth is a dict that organizes
+regions according to their depth in the region nesting tree.
 
 """
 

@@ -7,7 +7,7 @@ models after it is decided if it is a utility job to do .... or a class method.
 Additionally, there is probably some renaming due here for consistency
 """
 
-# for easier/accurate indexing
+# Import packages
 from collections import defaultdict, namedtuple
 from logging import getLogger
 import typing
@@ -15,48 +15,18 @@ import pyomo.opt as pyo
 from pyomo.environ import ConcreteModel, value
 import pandas as pd
 from pathlib import Path
-from definitions import PROJECT_ROOT
 import logging
 import os
+
+# Import python modules
+from definitions import PROJECT_ROOT
 
 if typing.TYPE_CHECKING:
     from src.models.electricity.scripts.electricity_model import PowerModel
     from src.models.hydrogen.model.h2_model import H2Model
 
+# Establish logger
 logger = getLogger(__name__)
-
-
-def get_output_root():
-    """get the name of the output dir, which includes the name of the mode type and a timestamp
-
-    Returns
-    -------
-    path
-        output directory path
-    """
-
-    if os.path.isfile('output_root.txt'):
-        with open('output_root.txt', 'r') as file:
-            OUTPUT_ROOT = file.read()
-            OUTPUT_ROOT = Path(OUTPUT_ROOT)
-    else:
-        OUTPUT_ROOT = Path(PROJECT_ROOT / 'output' / 'test')
-    return OUTPUT_ROOT
-
-
-def make_dir(dir_name):
-    """generates an output directory to write model results, output directory is the date/time
-    at the time this function executes. It includes subdirs for vars, params, constraints.
-
-    Returns
-    -------
-    string
-        the name of the output directory
-    """
-    if not os.path.exists(dir_name):
-        os.makedirs(dir_name)
-    else:
-        logger.info('Asked to make dir that already exists:' + str(dir_name))
 
 
 # TODO:  This might be a good use case for a persistent solver (1-each) for both the elec & hyd...  hmm
@@ -133,33 +103,6 @@ def select_solver(instance: ConcreteModel):
     return opt
 
 
-# Logger Setup
-def setup_logger(output_dir):
-    """initiates logging, sets up logger in the output directory specified
-
-    Parameters
-    ----------
-    output_dir : path
-        output directory path
-    """
-    # set up root logger
-    log_path = Path(output_dir)
-    if not Path.is_dir(log_path):
-        Path.mkdir(log_path)
-    logging.basicConfig(
-        filename=f'{output_dir}/run.log',
-        encoding='utf-8',
-        filemode='w',
-        # format='[%(asctime)s][%(name)s]' + '[%(funcName)s][%(levelname)s]  :: |%(message)s|',
-        format='%(asctime)s | %(name)s | %(levelname)s :: %(message)s',
-        datefmt='%d-%b-%y %H:%M:%S',
-        level=logging.DEBUG,
-    )
-    logging.getLogger('pyomo').setLevel(logging.WARNING)
-    logging.getLogger('pandas').setLevel(logging.WARNING)
-    logging.getLogger('matplotlib').setLevel(logging.WARNING)
-
-
 # a named tuple for common electric model index structure (EI=Electrical Index)
 EI = namedtuple('EI', ['region', 'year', 'hour'])
 """(region, year, hour)"""
@@ -168,7 +111,7 @@ HI = namedtuple('HI', ['region', 'year'])
 
 
 def get_elec_price(instance: typing.Union['PowerModel', ConcreteModel], block=None) -> pd.DataFrame:
-    """pulls hourly electricity prices from completed PowerModel and de-weights them
+    """pulls hourly electricity prices from completed PowerModel and de-weights them.
 
     Prices from the duals are weighted by the day and year weights applied in the OBJ function
     This function retrieves the prices for all hours and removes the day and annual weights to
@@ -204,16 +147,16 @@ def get_elec_price(instance: typing.Union['PowerModel', ConcreteModel], block=No
         weighted_value = float(instance.dual[c[index]])
 
         # gather the weights for this hour
-        day = model.Map_hr_d[ei.hour]
-        day_wt = model.Idaytq[day]
-        year_wt = model.year_weights[ei.year]
+        day = model.MapHourDay[ei.hour]
+        day_wt = model.WeightDay[day]
+        year_wt = model.WeightYear[ei.year]
 
         # remove the weighting & record
         unweighted_cost = weighted_value / day_wt / year_wt
         records.append((*ei, day_wt, unweighted_cost))
 
     res = pd.DataFrame.from_records(
-        data=records, columns=['r', 'y', 'hr', 'day_weight', 'raw_price']
+        data=records, columns=['region', 'year', 'hour', 'day_weight', 'raw_price']
     )
     return res
 
@@ -233,13 +176,25 @@ def get_annual_wt_avg(elec_price: pd.DataFrame) -> dict[HI, float]:
     """
 
     def my_agg(x):
+        """aggregate average price based on day weights
+
+        Parameters
+        ----------
+        x : pd.DataFrame.groupby
+            original price frame
+
+        Returns
+        -------
+        pd.Series
+            series containing average price based on day weights
+        """
         names = {
             'weighted_ave_price': (x['day_weight'] * x['raw_price']).sum() / x['day_weight'].sum()
         }
         return pd.Series(names, index=['weighted_ave_price'])
 
     # find annual weighted average, weight by day weights
-    elec_price_ann = elec_price.groupby(['r', 'y']).apply(my_agg)
+    elec_price_ann = elec_price.groupby(['region', 'year']).apply(my_agg)
 
     return elec_price_ann
 
@@ -372,12 +327,26 @@ def poll_year_avg_elec_price(price_list: list[tuple[EI, float]]) -> dict[HI, flo
 def poll_h2_prices_from_elec(
     model: 'PowerModel', tech, regions: typing.Iterable
 ) -> dict[typing.Any, float]:
-    """poll the step-1 H2 price currently in the model for region/year, averaged over any steps"""
+    """poll the step-1 H2 price currently in the model for region/year, averaged over any steps
+
+    Parameters
+    ----------
+    model : PowerModel
+        solved PowerModel
+    tech : str
+        h2 tech
+    regions : typing.Iterable
+
+    Returns
+    -------
+    dict[typing.Any, float]
+        a dictionary of (region, seasons, year): price
+    """
     res = {}
     for idx in model.H2Price:
-        reg, s, t, step, y = idx
-        if t == tech and reg in regions and step == 1:  # TODO:  remove hard coding
-            res[reg, s, y] = value(model.H2Price[idx])
+        r, season, t, step, y = idx
+        if t == tech and r in regions and step == 1:  # TODO:  remove hard coding
+            res[r, season, y] = value(model.H2Price[idx])
 
     return res
 
@@ -397,10 +366,12 @@ def update_h2_prices(model: 'PowerModel', h2_prices: dict[HI, float]) -> None:
     update_count = 0
     no_update = set()
     good_updates = set()
-    for region, season, pt, step, yr in model.H2Price:  # type: ignore
-        if pt in h2_techs:
+    for region, season, tech, step, yr in model.H2Price:  # type: ignore
+        if tech in h2_techs:
             if (region, yr) in h2_prices:
-                model.H2Price[region, season, pt, step, yr] = h2_prices[HI(region=region, year=yr)]
+                model.H2Price[region, season, tech, step, yr] = h2_prices[
+                    HI(region=region, year=yr)
+                ]
                 update_count += 1
                 good_updates.add((region, yr))
             else:
@@ -452,14 +423,14 @@ def poll_h2_demand(model: 'PowerModel') -> dict[HI, float]:
     # Gwh * kg/Gwh = kg
     # so we need 1/heat_rate for kg/Gwh
     for idx in model.generation_total.index_set():
-        tech, y, reg, step, hr = idx
+        tech, y, r, step, hr = idx
         if tech in h2_consuming_techs:
             h2_demand_weighted = (
                 value(model.generation_total[idx])
-                * model.Idaytq[model.Map_hr_d[hr]]
-                / model.H2_heatrate
+                * model.WeightDay[model.MapHourDay[hr]]
+                / model.H2Heatrate
             )
-            res[HI(region=reg, year=y)] += h2_demand_weighted
+            res[HI(region=r, year=y)] += h2_demand_weighted
             tot_by_rep_year[y] += h2_demand_weighted
 
     logger.debug('Calculated cumulative H2 demand by year as: %s', tot_by_rep_year)
@@ -482,7 +453,7 @@ def create_temporal_mapping(sw_temporal):
 
     # Temporal Sets - read data
     # SD = season/day; hr = hour
-    data_root = Path(PROJECT_ROOT, 'src/integrator/input')
+    data_root = Path(PROJECT_ROOT, 'input/integrator')
     if sw_temporal == 'default':
         sd_file = pd.read_csv(data_root / 'cw_s_day.csv')
         hr_file = pd.read_csv(data_root / 'cw_hr.csv')
@@ -495,20 +466,20 @@ def create_temporal_mapping(sw_temporal):
     # set up mapping for seasons and days
     df1 = sd_file
     df4 = df1.groupby(by=['Map_day'], as_index=False).count()
-    df4 = df4.rename(columns={'Index_day': 'Dayweights'}).drop(columns=['Map_s'])
+    df4 = df4.rename(columns={'Index_day': 'WeightDay'}).drop(columns=['Map_s'])
     df1 = pd.merge(df1, df4, how='left', on=['Map_day'])
 
     # set up mapping for hours
     df2 = hr_file
-    df3 = df2.groupby(by=['Map_hr'], as_index=False).count()
-    df3 = df3.rename(columns={'Index_hr': 'Hr_weights'})
-    df2 = pd.merge(df2, df3, how='left', on=['Map_hr'])
+    df3 = df2.groupby(by=['Map_hour'], as_index=False).count()
+    df3 = df3.rename(columns={'Index_hour': 'WeightHour'})
+    df2 = pd.merge(df2, df3, how='left', on=['Map_hour'])
 
     # combine season, day, and hour mapping
     df = pd.merge(df1, df2, how='cross')
-    df['hr'] = df.index
-    df['hr'] = df['hr'] + 1
-    df['Map_hr'] = (df['Map_day'] - 1) * df['Map_hr'].max() + df['Map_hr']
+    df['hour'] = df.index
+    df['hour'] = df['hour'] + 1
+    df['Map_hour'] = (df['Map_day'] - 1) * df['Map_hour'].max() + df['Map_hour']
     # df.to_csv(data_root/'temporal_map.csv',index=False)
 
     return df

@@ -1,6 +1,6 @@
 [tool.ruff]
 line-length = 100
-exclude = ['sample']
+exclude = ['sample/hydrogen_interactive_dev','sample/integration_rebuild']
 
 [tool.ruff.format]
 quote-style = 'single'

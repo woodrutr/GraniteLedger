@@ -1,20 +1,15 @@
-src.models package
-==================
-
-Subpackages
------------
-
-.. toctree::
-   :maxdepth: 4
-
-   src.models.electricity
-   src.models.hydrogen
-   src.models.residential
-
-Module contents
----------------
+src.models
+==========
 
 .. automodule:: src.models
-   :members:
-   :undoc-members:
-   :show-inheritance:
+
+   
+.. rubric:: Modules
+
+.. autosummary::
+   :toctree:
+   :recursive:
+
+   electricity
+   hydrogen
+   residential
