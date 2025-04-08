@@ -1,6 +1,7 @@
 from logging import getLogger
 import pytest
 from pyomo.environ import value
+from pathlib import Path
 
 from definitions import PROJECT_ROOT
 from src.models.hydrogen.model import actions
@@ -14,9 +15,7 @@ def test_solve():
     logger.info('Starting the single region test')
 
     # run the model
-    HYDROGEN_ROOT = PROJECT_ROOT / 'src/models/hydrogen'
-    data_path = HYDROGEN_ROOT / 'inputs/single_region'
-
+    data_path = Path(PROJECT_ROOT / 'input/hydrogen/single_region')
     grid_data = actions.load_data(data_path)
     grid = actions.build_grid(grid_data=grid_data)
     model = actions.build_model(grid=grid)

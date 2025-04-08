@@ -1,22 +1,20 @@
+
+
 <!DOCTYPE html>
 <html class="writer-html5" lang="en" data-content_root="../../../../../">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>src.models.hydrogen.network.grid &mdash; BlueSky Prototype Model v1 documentation</title>
-      <link rel="stylesheet" type="text/css" href="../../../../../_static/pygments.css?v=80d5e7a1" />
-      <link rel="stylesheet" type="text/css" href="../../../../../_static/css/theme.css?v=19f00094" />
+  <title>src.models.hydrogen.network.grid &mdash; BlueSky Prototype Model v1.1 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../../../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../../../../_static/css/theme.css?v=e59714d7" />
 
   
-  <!--[if lt IE 9]>
-    <script src="../../../../../_static/js/html5shiv.min.js"></script>
-  <![endif]-->
-  
-        <script src="../../../../../_static/jquery.js?v=5d32c60e"></script>
-        <script src="../../../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
-        <script src="../../../../../_static/documentation_options.js?v=5cb08e4e"></script>
-        <script src="../../../../../_static/doctools.js?v=888ff710"></script>
-        <script src="../../../../../_static/sphinx_highlight.js?v=dc90522c"></script>
+      <script src="../../../../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../../../../_static/documentation_options.js?v=45183d27"></script>
+      <script src="../../../../../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../../../../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../../../../../_static/js/theme.js"></script>
     <link rel="index" title="Index" href="../../../../../genindex.html" />
     <link rel="search" title="Search" href="../../../../../search.html" /> 
@@ -41,22 +39,9 @@
   </form>
 </div>
         </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
-              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../../../modules.html">src</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../../../src.integrator.html">src.integrator package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../../../src.models.electricity.html">src.models.electricity package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../../../src.html">src package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../../../src.models.html">src.models package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../../../src.models.residential.scripts.html">src.models.residential.scripts package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../../../src.models.residential.html">src.models.residential package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../../../src.models.residential.preprocessor.html">src.models.residential.preprocessor package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../../../src.models.hydrogen.utilities.html">src.models.hydrogen.utilities package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../../../src.models.hydrogen.html">src.models.hydrogen package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../../../src.models.hydrogen.network.html">src.models.hydrogen.network package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../../../src.models.hydrogen.model.html">src.models.hydrogen.model package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../../../src.models.electricity.scripts.html">src.models.electricity.scripts package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../../../src.models.electricity.scripts.common.html">src.models.electricity.scripts.common package</a></li>
+              <ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../../../src.models.html">src.models</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../../src.html">src</a></li>
 </ul>
 
         </div>
@@ -84,8 +69,9 @@
            <div itemprop="articleBody">
              
   <h1>Source code for src.models.hydrogen.network.grid</h1><div class="highlight"><pre>
-<span></span><span class="sd">&quot;&quot;&quot;GRID CLASS</span>
-<span class="sd">~~~~~~~~~~~</span>
+<span></span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">GRID CLASS</span>
+<span class="sd">~~~~~~~~~~</span>
 
 <span class="sd">    This is the central class that binds all the other classes together. No class</span>
 <span class="sd">    instance exists in a reference that isn&#39;t fundamentally contained in a grid.</span>
@@ -101,24 +87,24 @@
 <span class="c1"># Setup</span>
 
 <span class="c1"># Import packages and scripts</span>
-<span class="kn">import</span> <span class="nn">time</span>
-<span class="kn">from</span> <span class="nn">matplotlib</span> <span class="kn">import</span> <span class="n">pyplot</span> <span class="k">as</span> <span class="n">plt</span>
-<span class="kn">import</span> <span class="nn">networkx</span> <span class="k">as</span> <span class="nn">nx</span>
-<span class="kn">import</span> <span class="nn">pandas</span> <span class="k">as</span> <span class="nn">pd</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">matplotlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">pyplot</span> <span class="k">as</span> <span class="n">plt</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">networkx</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nx</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">pandas</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pd</span>
 
-<span class="kn">from</span> <span class="nn">src.models.hydrogen.network.grid_data</span> <span class="kn">import</span> <span class="n">GridData</span>
-<span class="kn">from</span> <span class="nn">src.models.hydrogen.network.registry</span> <span class="kn">import</span> <span class="n">Registry</span>
-<span class="kn">from</span> <span class="nn">src.models.hydrogen.network.hub</span> <span class="kn">import</span> <span class="n">Hub</span>
-<span class="kn">from</span> <span class="nn">src.models.hydrogen.network.region</span> <span class="kn">import</span> <span class="n">Region</span>
-<span class="kn">from</span> <span class="nn">src.models.hydrogen.network.transportation_arc</span> <span class="kn">import</span> <span class="n">TransportationArc</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">src.models.hydrogen.network.grid_data</span><span class="w"> </span><span class="kn">import</span> <span class="n">GridData</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">src.models.hydrogen.network.registry</span><span class="w"> </span><span class="kn">import</span> <span class="n">Registry</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">src.models.hydrogen.network.hub</span><span class="w"> </span><span class="kn">import</span> <span class="n">Hub</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">src.models.hydrogen.network.region</span><span class="w"> </span><span class="kn">import</span> <span class="n">Region</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">src.models.hydrogen.network.transportation_arc</span><span class="w"> </span><span class="kn">import</span> <span class="n">TransportationArc</span>
 
 <span class="c1">###################################################################################################</span>
 
 
 <div class="viewcode-block" id="Grid">
-<a class="viewcode-back" href="../../../../../src.models.hydrogen.network.html#src.models.hydrogen.network.grid.Grid">[docs]</a>
-<span class="k">class</span> <span class="nc">Grid</span><span class="p">:</span>
-    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">data</span><span class="p">:</span> <span class="n">GridData</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">):</span>
+<a class="viewcode-back" href="../../../../../src.models.hydrogen.network.grid.html#src.models.hydrogen.network.grid.Grid">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">Grid</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">data</span><span class="p">:</span> <span class="n">GridData</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Initializes Grid instance with GridData to generate regions, hubs, arcs, and registry from.</span>
 
 <span class="sd">        Parameters</span>
@@ -133,10 +119,10 @@
         <span class="p">)</span>
 
 <div class="viewcode-block" id="Grid.build_grid">
-<a class="viewcode-back" href="../../../../../src.models.hydrogen.network.html#src.models.hydrogen.network.grid.Grid.build_grid">[docs]</a>
-    <span class="k">def</span> <span class="nf">build_grid</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">vis</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
+<a class="viewcode-back" href="../../../../../src.models.hydrogen.network.grid.html#src.models.hydrogen.network.grid.Grid.build_grid">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">build_grid</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">vis</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;builds a grid fom the GridData by recursively adding regions starting at top-level region</span>
-<span class="sd">            &#39;world&#39;.</span>
+<span class="sd">        &#39;world&#39;.</span>
 
 <span class="sd">        Parameters</span>
 <span class="sd">        ----------</span>
@@ -154,8 +140,8 @@
 
 
 <div class="viewcode-block" id="Grid.visualize">
-<a class="viewcode-back" href="../../../../../src.models.hydrogen.network.html#src.models.hydrogen.network.grid.Grid.visualize">[docs]</a>
-    <span class="k">def</span> <span class="nf">visualize</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a class="viewcode-back" href="../../../../../src.models.hydrogen.network.grid.html#src.models.hydrogen.network.grid.Grid.visualize">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">visualize</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        visualize the grid network using graphx</span>
 <span class="sd">        &quot;&quot;&quot;</span>
@@ -195,8 +181,8 @@
 <span class="sd">    &quot;&quot;&quot;</span>
 
 <div class="viewcode-block" id="Grid.create_region">
-<a class="viewcode-back" href="../../../../../src.models.hydrogen.network.html#src.models.hydrogen.network.grid.Grid.create_region">[docs]</a>
-    <span class="k">def</span> <span class="nf">create_region</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">parent</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">data</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<a class="viewcode-back" href="../../../../../src.models.hydrogen.network.grid.html#src.models.hydrogen.network.grid.Grid.create_region">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">create_region</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">parent</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">data</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;creates a region with a given name, parent region, and data</span>
 
 <span class="sd">        Parameters</span>
@@ -217,8 +203,8 @@
 
 
 <div class="viewcode-block" id="Grid.create_arc">
-<a class="viewcode-back" href="../../../../../src.models.hydrogen.network.html#src.models.hydrogen.network.grid.Grid.create_arc">[docs]</a>
-    <span class="k">def</span> <span class="nf">create_arc</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">origin</span><span class="p">,</span> <span class="n">destination</span><span class="p">,</span> <span class="n">capacity</span><span class="p">,</span> <span class="n">cost</span><span class="o">=</span><span class="mf">0.0</span><span class="p">):</span>
+<a class="viewcode-back" href="../../../../../src.models.hydrogen.network.grid.html#src.models.hydrogen.network.grid.Grid.create_arc">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">create_arc</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">origin</span><span class="p">,</span> <span class="n">destination</span><span class="p">,</span> <span class="n">capacity</span><span class="p">,</span> <span class="n">cost</span><span class="o">=</span><span class="mf">0.0</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Creates and arc from origin to destination with given capacity and cost</span>
 
 <span class="sd">        Parameters</span>
@@ -238,8 +224,8 @@
 
 
 <div class="viewcode-block" id="Grid.create_hub">
-<a class="viewcode-back" href="../../../../../src.models.hydrogen.network.html#src.models.hydrogen.network.grid.Grid.create_hub">[docs]</a>
-    <span class="k">def</span> <span class="nf">create_hub</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">region</span><span class="p">,</span> <span class="n">data</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<a class="viewcode-back" href="../../../../../src.models.hydrogen.network.grid.html#src.models.hydrogen.network.grid.Grid.create_hub">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">create_hub</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">region</span><span class="p">,</span> <span class="n">data</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;creates a hub in a given region</span>
 
 <span class="sd">        Parameters</span>
@@ -257,8 +243,8 @@
     <span class="c1"># delete function (works on arcs, hubs, and regions)</span>
 
 <div class="viewcode-block" id="Grid.delete">
-<a class="viewcode-back" href="../../../../../src.models.hydrogen.network.html#src.models.hydrogen.network.grid.Grid.delete">[docs]</a>
-    <span class="k">def</span> <span class="nf">delete</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">thing</span><span class="p">):</span>
+<a class="viewcode-back" href="../../../../../src.models.hydrogen.network.grid.html#src.models.hydrogen.network.grid.Grid.delete">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">delete</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">thing</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;deletes a hub, arc, or region</span>
 
 <span class="sd">        Parameters</span>
@@ -285,10 +271,12 @@
 
 
 <div class="viewcode-block" id="Grid.recursive_region_generation">
-<a class="viewcode-back" href="../../../../../src.models.hydrogen.network.html#src.models.hydrogen.network.grid.Grid.recursive_region_generation">[docs]</a>
-    <span class="k">def</span> <span class="nf">recursive_region_generation</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">df</span><span class="p">,</span> <span class="n">parent</span><span class="p">):</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;cycle through a region dataframe, left column to right until it hits data column, adding new regions and subregions according to how it is hierarchically structured.</span>
-<span class="sd">            Future versions should implement this with a graph structure for the data instead of a dataframe, which would be more natural.</span>
+<a class="viewcode-back" href="../../../../../src.models.hydrogen.network.grid.html#src.models.hydrogen.network.grid.Grid.recursive_region_generation">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">recursive_region_generation</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">df</span><span class="p">,</span> <span class="n">parent</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;cycle through a region dataframe, left column to right until it hits data column, adding</span>
+<span class="sd">        new regions and subregions according to how it is hierarchically structured. Future versions</span>
+<span class="sd">        should implement this with a graph structure for the data instead of a dataframe, which</span>
+<span class="sd">        would be more natural.</span>
 
 <span class="sd">        Parameters</span>
 <span class="sd">        ----------</span>
@@ -321,8 +309,8 @@
 
 
 <div class="viewcode-block" id="Grid.arc_generation">
-<a class="viewcode-back" href="../../../../../src.models.hydrogen.network.html#src.models.hydrogen.network.grid.Grid.arc_generation">[docs]</a>
-    <span class="k">def</span> <span class="nf">arc_generation</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">df</span><span class="p">):</span>
+<a class="viewcode-back" href="../../../../../src.models.hydrogen.network.grid.html#src.models.hydrogen.network.grid.Grid.arc_generation">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">arc_generation</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">df</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;generate arcs from the arc data</span>
 
 <span class="sd">        Parameters</span>
@@ -337,9 +325,10 @@
 
 
 <div class="viewcode-block" id="Grid.connect_subregions">
-<a class="viewcode-back" href="../../../../../src.models.hydrogen.network.html#src.models.hydrogen.network.grid.Grid.connect_subregions">[docs]</a>
-    <span class="k">def</span> <span class="nf">connect_subregions</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;create an arc for all hubs in bottom-level regions to whatever hub is located in their parent region&quot;&quot;&quot;</span>
+<a class="viewcode-back" href="../../../../../src.models.hydrogen.network.grid.html#src.models.hydrogen.network.grid.Grid.connect_subregions">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">connect_subregions</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;create an arc for all hubs in bottom-level regions to whatever hub is located in their</span>
+<span class="sd">        parent region&quot;&quot;&quot;</span>
         <span class="k">for</span> <span class="n">hub</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">registry</span><span class="o">.</span><span class="n">hubs</span><span class="o">.</span><span class="n">values</span><span class="p">():</span>
             <span class="k">if</span> <span class="n">hub</span><span class="o">.</span><span class="n">region</span><span class="o">.</span><span class="n">children</span> <span class="o">==</span> <span class="p">{}:</span>
                 <span class="k">for</span> <span class="n">parent_hub</span> <span class="ow">in</span> <span class="n">hub</span><span class="o">.</span><span class="n">region</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">hubs</span><span class="o">.</span><span class="n">values</span><span class="p">():</span>
@@ -347,8 +336,8 @@
 
 
 <div class="viewcode-block" id="Grid.load_hubs">
-<a class="viewcode-back" href="../../../../../src.models.hydrogen.network.html#src.models.hydrogen.network.grid.Grid.load_hubs">[docs]</a>
-    <span class="k">def</span> <span class="nf">load_hubs</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a class="viewcode-back" href="../../../../../src.models.hydrogen.network.grid.html#src.models.hydrogen.network.grid.Grid.load_hubs">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">load_hubs</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;load hubs from data&quot;&quot;&quot;</span>
         <span class="k">for</span> <span class="n">index</span><span class="p">,</span> <span class="n">row</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">data</span><span class="o">.</span><span class="n">hubs</span><span class="o">.</span><span class="n">iterrows</span><span class="p">():</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">create_hub</span><span class="p">(</span>
@@ -359,10 +348,11 @@
 
 
 <div class="viewcode-block" id="Grid.aggregate_hubs">
-<a class="viewcode-back" href="../../../../../src.models.hydrogen.network.html#src.models.hydrogen.network.grid.Grid.aggregate_hubs">[docs]</a>
-    <span class="k">def</span> <span class="nf">aggregate_hubs</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">hublist</span><span class="p">,</span> <span class="n">region</span><span class="p">):</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;combine all hubs in hublist into a single hub, and place them in region. Arcs that connect to any of these hubs also get aggegated into arcs that connect to the new hub</span>
-<span class="sd">            and their original origin / destination that&#39;s not in hublist.</span>
+<a class="viewcode-back" href="../../../../../src.models.hydrogen.network.grid.html#src.models.hydrogen.network.grid.Grid.aggregate_hubs">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">aggregate_hubs</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">hublist</span><span class="p">,</span> <span class="n">region</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;combine all hubs in hublist into a single hub, and place them in region. Arcs that</span>
+<span class="sd">        connect to any of these hubs also get aggegated into arcs that connect to the new hub and</span>
+<span class="sd">        their original origin / destination that&#39;s not in hublist.</span>
 
 <span class="sd">        Parameters</span>
 <span class="sd">        ----------</span>
@@ -417,8 +407,8 @@
 
 
 <div class="viewcode-block" id="Grid.combine_arcs">
-<a class="viewcode-back" href="../../../../../src.models.hydrogen.network.html#src.models.hydrogen.network.grid.Grid.combine_arcs">[docs]</a>
-    <span class="k">def</span> <span class="nf">combine_arcs</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">arclist</span><span class="p">,</span> <span class="n">origin</span><span class="p">,</span> <span class="n">destination</span><span class="p">):</span>
+<a class="viewcode-back" href="../../../../../src.models.hydrogen.network.grid.html#src.models.hydrogen.network.grid.Grid.combine_arcs">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">combine_arcs</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">arclist</span><span class="p">,</span> <span class="n">origin</span><span class="p">,</span> <span class="n">destination</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;combine a set of arcs into a single arc with given origin and destination</span>
 
 <span class="sd">        Parameters</span>
@@ -440,8 +430,8 @@
 
 
 <div class="viewcode-block" id="Grid.write_data">
-<a class="viewcode-back" href="../../../../../src.models.hydrogen.network.html#src.models.hydrogen.network.grid.Grid.write_data">[docs]</a>
-    <span class="k">def</span> <span class="nf">write_data</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a class="viewcode-back" href="../../../../../src.models.hydrogen.network.grid.html#src.models.hydrogen.network.grid.Grid.write_data">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">write_data</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;_write data to file&quot;&quot;&quot;</span>
         <span class="n">hublist</span> <span class="o">=</span> <span class="p">[</span><span class="n">hub</span> <span class="k">for</span> <span class="n">hub</span> <span class="ow">in</span> <span class="nb">list</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">registry</span><span class="o">.</span><span class="n">hubs</span><span class="o">.</span><span class="n">values</span><span class="p">())]</span>
         <span class="n">hubdata</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">concat</span><span class="p">(</span>
@@ -481,8 +471,8 @@
 
 
 <div class="viewcode-block" id="Grid.collapse">
-<a class="viewcode-back" href="../../../../../src.models.hydrogen.network.html#src.models.hydrogen.network.grid.Grid.collapse">[docs]</a>
-    <span class="k">def</span> <span class="nf">collapse</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">region_name</span><span class="p">):</span>
+<a class="viewcode-back" href="../../../../../src.models.hydrogen.network.grid.html#src.models.hydrogen.network.grid.Grid.collapse">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">collapse</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">region_name</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;make a region absorb all it&#39;s sub-regions and combine all its and its childrens hubs into one</span>
 
 <span class="sd">        Parameters</span>
@@ -500,8 +490,8 @@
 
 
 <div class="viewcode-block" id="Grid.test">
-<a class="viewcode-back" href="../../../../../src.models.hydrogen.network.html#src.models.hydrogen.network.grid.Grid.test">[docs]</a>
-    <span class="k">def</span> <span class="nf">test</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a class="viewcode-back" href="../../../../../src.models.hydrogen.network.grid.html#src.models.hydrogen.network.grid.Grid.test">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">test</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;test run&quot;&quot;&quot;</span>
         <span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
 
@@ -515,8 +505,8 @@
 
 
 <div class="viewcode-block" id="Grid.collapse_level">
-<a class="viewcode-back" href="../../../../../src.models.hydrogen.network.html#src.models.hydrogen.network.grid.Grid.collapse_level">[docs]</a>
-    <span class="k">def</span> <span class="nf">collapse_level</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">level</span><span class="p">):</span>
+<a class="viewcode-back" href="../../../../../src.models.hydrogen.network.grid.html#src.models.hydrogen.network.grid.Grid.collapse_level">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">collapse_level</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">level</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;collapse all regions at a specific level of depth in the regional hierarchy, with world = 0</span>
 
 <span class="sd">        Parameters</span>

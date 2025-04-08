@@ -5,12 +5,14 @@ see README for process explanation
 
 """
 
+# Import packages
 from logging import getLogger
 from pathlib import Path
 import pyomo.environ as pyo
 import pandas as pd
 from collections import namedtuple
 
+# Import python modules
 from definitions import PROJECT_ROOT
 from src.integrator.progress_plot import plot_it
 from src.integrator.utilities import (
@@ -37,6 +39,7 @@ from src.models.hydrogen.model import actions
 from src.models.residential.scripts.residential import residentialModule
 import src.models.electricity.scripts.postprocessor as post_elec
 
+# Establish logger
 logger = getLogger(__name__)
 
 
@@ -138,7 +141,7 @@ def run_gs(settings):
             simple_solve_no_opt(m=elec_model, opt=opt_elec)
 
             # run_gs - GS_LOOP-Elec: Pull objective function and append to records
-            e_obj = pyo.value(elec_model.totalCost)
+            e_obj = pyo.value(elec_model.total_cost)
             logger.info('i %d Elec Obj: %0.2f', i, e_obj)
             elec_obj_records.append((i, e_obj))
 
@@ -200,11 +203,11 @@ def run_gs(settings):
 
             # run_GS - RES: Pull prices (duals) from electricity model
             prices = get_elec_price(elec_model)
-            prices = prices.set_index(['r', 'y', 'hr'])['raw_price'].to_dict()
+            prices = prices.set_index(['region', 'year', 'hour'])['raw_price'].to_dict()
             prices = [(EI(*k), prices[k]) for k, v in prices.items()]
 
             # run_GS - RES:  we must use this because the Res model needs
-            # (reg, yr, hr) not just (reg, yr)!
+            # (r, yr, hr) not just (r, yr)!
             price_lut = convert_elec_price_to_lut(prices=prices)
 
             # run_GS - RES: cannot have zero prices, so a quick interim check
@@ -346,6 +349,7 @@ def run_gs(settings):
 
     # post processing reporting
     # plot_it(
+    #     settings.OUTPUT_ROOT,
     #     h2_price_records=h2_price_records,
     #     elec_price_records=elec_price_records,
     #     h2_obj_records=h2_obj_records,

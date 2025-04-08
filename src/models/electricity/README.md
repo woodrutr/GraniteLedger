@@ -22,11 +22,11 @@ The data needed for the electricity model is stored within the input directory i
 
 The data is prepared within the preprocessor.py file within the scripts directory. The preprocessor script creates an initial sets class for the model, based on the setting data provided by the integrator code. Sets are organized into regional sets, temporal sets, and technology-based sets. Next the preprocessor reads in all of the input data within the cem_inputs directory and processes it into the format needed for the PowerModel based on the spatial and temporal settings specified. When the preprocessor is finished, it passes a dictionary of input data as well as the sets class to the PowerModel for further processing.  
 
-There are several files where features can be switched (sw) on/off and different crosswalks (cw) can be selected. All of these options exist in [run_config.toml](/src/integrator/run_config.toml) file the integrator directory. 
+There are several files where features can be switched (sw) on/off and different crosswalks (cw) can be selected. All of these options exist in [run_config.toml](/src/common/run_config.toml) file the integrator directory. 
 
 ### Feature Settings
 
-The [run_config.toml](/src/integrator/run_config.toml) file contains the main switches through which features for the electricity module can be toggled. The setup column names various constraint settings: 
+The [run_config.toml](/src/common/run_config.toml) file contains the main switches through which features for the electricity module can be toggled. The setup column names various constraint settings: 
 
 |Switch    | Description   | Values | Notes |
 |:----- | :------ | :--------- | :---: |
@@ -40,7 +40,7 @@ The [run_config.toml](/src/integrator/run_config.toml) file contains the main sw
 
 ### Technology Settings
 
-The model contains 14 power technologies (pt) in its initial layout. Users could change the technology assignments and add more technology types or remove technology types, but any changes to the code would require updates to the cooresponding input data. The technologies represented include:
+The model contains 14 technologies (tech) in its initial layout. Users could change the technology assignments and add more technology types or remove technology types, but any changes to the code would require updates to the cooresponding input data. The technologies represented include:
 <br> 1.)	Coal Steam 
 <br> 2.)	Oil Steam
 <br> 3.)	Natural Gas Single-Cycle Combustion Turbine
@@ -57,24 +57,24 @@ The model contains 14 power technologies (pt) in its initial layout. Users could
 <br> 14.)	Wind, Onshore
 <br> 15.)	Solar  (step 1 = utility-scale; step 2 = end-use)
 
-The power technologies (pt) are also combined into group based on the applicability of different constraints. These groups are defined in pt_subsets.csv within the electricity/input directory and includes: 
-* ptc: conventional 
-* ptr: renewable 
-* pth: hydroelectric 
-* pts: storage 
-* pti: intermittent 
-* ptw: wind 
-* ptsol: solar 
-* pth2: hydrogen 
-* ptd: dispatchable 
-* ptg: generating
+The technologies (tech) are also combined into group based on the applicability of different constraints. These groups are defined in tech_subsets.csv within the electricity/input directory and includes: 
+* T_conv: conventional 
+* T_re: renewable energy
+* T_hydro: hydroelectric 
+* T_stor: storage 
+* T_vre: variable renewable energy
+* T_wind: wind 
+* T_solar: solar 
+* T_h2: hydrogen 
+* T_disp: dispatchable 
+* T_gen: generating
 
 When the capacity expansion switch is turned on, a user can select which technologies they want to have expansion and retirement capabilities. Turning these switches on allows for builds and/or retirements of a given technology and supply curve step. These files are located in the electricity/input directory.
 
 |Switch    | Description   | Values | Notes |
 |:----- | :------: | :--------- | :---: |
-|sw_ptbuilds | Contains switches for technologies and supply curve steps where capacity is allowed to build | **0** = Not Allowed to Build <br> **1** = Allowed to Build | Switches contained in Sw_ptbuilds.csv |
-|sw_ptretires | Contains switches for technologies and supply curve steps where capacity is allowed to retire | **0** = Not Allowed to Retire <br> **1** = Allowed to Retire | Switches contained in Sw_ptbuilds.csv |
+|sw_builds | Contains switches for technologies and supply curve steps where capacity is allowed to build | **0** = Not Allowed to Build <br> **1** = Allowed to Build | Switches contained in Sw_ptbuilds.csv |
+|sw_retires | Contains switches for technologies and supply curve steps where capacity is allowed to retire | **0** = Not Allowed to Retire <br> **1** = Allowed to Retire | Switches contained in Sw_ptbuilds.csv |
 
 
 ## Model Overview
@@ -82,12 +82,12 @@ When the capacity expansion switch is turned on, a user can select which technol
 ### Sets
 |Set    | Code    | Data Type  | Short Description |
 |:----- | :------ | :--------- | :---------------- |
-|$$H$$ | hr | Set | All representative hours|
-|$$Y$$ | y | Sparse set | All selected model years|
-|$$SEA$$ | s | Set | All seasons|
+|$$H$$ | hour | Set | All representative hours|
+|$$Y$$ | year | Sparse set | All selected model years|
+|$$SEA$$ | season | Set | All seasons|
 |$$D$$ | day | Set | All representative days|
-|$$R$$ | r | Set | All selected model domestic regions|
-|$$R^{int}$$ | r | Set | All selected model international regions|
+|$$R$$ | region | Set | All selected model domestic regions|
+|$$R^{int}$$ | region_int | Set | All selected model international regions|
 |$$\Theta_{load}$$ |demand_balance_index | Sparse set | All load sparse set|
 |$$\Theta_{gen}$$ |generation_total_index | Sparse set | All non-storage generation sparse set|
 |$$\Theta_{H2gen}$$ |H2GenSet | Sparse set | All hydrogen generation sparse set|
@@ -140,18 +140,18 @@ Note: the existing code shows cost units in MW/MWh instead of GW/GWh; we are awa
 |$$LOAD_{r,y,h}$$ | Load | $$\mathbb{R}^+_0$$ | Electricity demand | instantaneous GW |
 |$$CAP^{exist}_{r,seas,t,s,y}$$ | SupplyCurve | $$\mathbb{R}^+_0$$ | Existing capacity (prescribed or initial) | GW |
 |$$SPR_{r,seas,t,s,y}$$ | SupplyPrice | $$\mathbb{R}^+_0$$ | Fuel + variable O&M price | $/GWh |
-|$$ICF_{t,y,r,s,h}$$ | SolWindCapFactor | $$\mathbb{R}^+_0$$ | Intermittent technology maximum capacity factor | fraction |
+|$$ICF_{t,y,r,s,h}$$ | CapFactorVRE | $$\mathbb{R}^+_0$$ | Intermittent technology maximum capacity factor | fraction |
 |$$HCF_{t,y,r,s,h}$$ | HydroCapFactor | $$\mathbb{R}^+_0$$ | Hydroelectric technology maximum capacity factor | fraction |
 |$$STORLC$$ | StorageLevelCost |$$\mathbb{R}^+_0$$  | Cost to hold storage (mimics losses) | $/GWh |
 |$$EFF_t$$ | StorageEfficiency | $$\mathbb{R}^+_0$$ | Roundtrip efficiency of storage | fraction |
 |$$STOR^{dur}_t$$ | HourstoBuy | $$\mathbb{R}^+_0$$ | Storage duration | hours |
 |$$UMLPEN$$ | UnmetLoadPenalty | $$\mathbb{R}^+_0$$ | Unmet load penalty | $/GWh |
-|$$WY_y$$ | year_weights | $$\mathbb{I}$$ | number of years represented by a representative year (weight) | years/representative years |
-|$$HW_h$$ | Hr_weights | $$\mathbb{I}$$ | number of hours represented by a representative hours(weight) | hours/representative hours |
-|$$Idaytq_d$$ | Idaytq | $$\mathbb{I}$$ | number of days representated by a representative day (weight) | days/representative day |
-|$$MHD_h$$ | Map_hr_d | $$\mathbb{I}$$ | map representative hour to representative day | unitless |
+|$$WY_y$$ | WeightYear | $$\mathbb{I}$$ | number of years represented by a representative year (weight) | years/representative years |
+|$$HW_h$$ | WeightHour | $$\mathbb{I}$$ | number of hours represented by a representative hours(weight) | hours/representative hours |
+|$$WeightDay_d$$ | WeightDay | $$\mathbb{I}$$ | number of days representated by a representative day (weight) | days/representative day |
+|$$MHD_h$$ | MapHourDay | $$\mathbb{I}$$ | map representative hour to representative day | unitless |
 |$$WHS_{seas}$$ | WeightSeason | $$\mathbb{I}$$ | number of hours (per year) in a season (weight) | unitless |
-|$$MHS_h$$ | Map_hr_s |$$\mathbb{I}$$  | map representative hour to season | unitless |
+|$$MHS_h$$ | MapHourSeason |$$\mathbb{I}$$  | map representative hour to season | unitless |
 |$$FOMC_{r,t,s}$$ | FOMCost | $$\mathbb{R}^+_0$$ | Fixed O&M cost | $/GW-year |
 |$$CC_{t,y,r,s,h}$$ | CapacityCredit | $$\mathbb{R}^+_0$$ | Capacity credit | fraction |
 |$$RM_r$$ | ReserveMargin | $$\mathbb{R}^+_0$$ | Reserve margin requirement | fraction |
@@ -166,7 +166,7 @@ Note: the existing code shows cost units in MW/MWh instead of GW/GWh; we are awa
 |$$LL$$ | TransLoss | $$\mathbb{R}^+_0$$ | Transmission line losses from 1 region to another  | fraction |
 |$$OPRP_t$$ | RegReservesCost | $$\mathbb{R}^+_0$$ | Cost of operating reserve procurement (TODO: update this in code so it contains all optypes) | $/GWh |
 |$$RTUB_{o,t}$$ | ResTechUpperBound | $$\mathbb{R}^+_0$$ | Maximum amount of capacity which can be used to procure operating reserves | fraction |
-|$$H2HR$$ | H2_heatrate | $$\mathbb{R}^+_0$$ | Hydrogen heatrate | kg/GWh |
+|$$H2HR$$ | H2Heatrate | $$\mathbb{R}^+_0$$ | Hydrogen heatrate | kg/GWh |
 |$$H2PR_{r,seas,t,s,y} $$ | H2Price | $$\mathbb{R}^+_0$$ | Hydrogen fuel price. Mutable parameter. | $/kg |
 |$$CAPCL_{r,t,y,s} $$ | CapCostLearning | $$\mathbb{R}^+_0$$ | Cost of capacity based on technology learning. Mutable parameter. | $/GW |
 |$$CAPC0_{r,t,s} $$ |CapCostInitial | $$\mathbb{R}^+_0$$ | Initial year's capacity cost to build | $/GW |
@@ -385,7 +385,7 @@ Hydroelectric generation seasonal upper bound:
 
 $$
 \begin{aligned}
-        \sum\_{h \in \theta^{HSH}\_{seas}}{\mathbf{GEN}\_{t,y,r,1,h} \times Idaytq\_{MHD\_{h}}} \leq \mathbf{CAP^{tot}}\_{r,seas,t,1,y} \times HCF\_{r,seas}
+        \sum\_{h \in \theta^{HSH}\_{seas}}{\mathbf{GEN}\_{t,y,r,1,h} \times WeightDay\_{MHD\_{h}}} \leq \mathbf{CAP^{tot}}\_{r,seas,t,1,y} \times HCF\_{r,seas}
         \times WHS\_{seas}\\
             \forall {t,y,r,seas} \in \Theta\_{hs}
 \end{aligned}

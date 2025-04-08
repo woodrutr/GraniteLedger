@@ -1,28 +1,26 @@
+
+
 <!DOCTYPE html>
 <html class="writer-html5" lang="en" data-content_root="./">
 <head>
   <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>src package &mdash; BlueSky Prototype Model v1 documentation</title>
-      <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=80d5e7a1" />
-      <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=19f00094" />
+  <title>src &mdash; BlueSky Prototype Model v1.1 documentation</title>
+      <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=e59714d7" />
 
   
-  <!--[if lt IE 9]>
-    <script src="_static/js/html5shiv.min.js"></script>
-  <![endif]-->
-  
-        <script src="_static/jquery.js?v=5d32c60e"></script>
-        <script src="_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
-        <script src="_static/documentation_options.js?v=5cb08e4e"></script>
-        <script src="_static/doctools.js?v=888ff710"></script>
-        <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+      <script src="_static/jquery.js?v=5d32c60e"></script>
+      <script src="_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="_static/documentation_options.js?v=45183d27"></script>
+      <script src="_static/doctools.js?v=9bcbadda"></script>
+      <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="_static/js/theme.js"></script>
     <link rel="index" title="Index" href="genindex.html" />
     <link rel="search" title="Search" href="search.html" />
-    <link rel="next" title="src.integrator package" href="src.integrator.html" />
-    <link rel="prev" title="src" href="modules.html" /> 
+    <link rel="next" title="src.common" href="src.common.html" />
+    <link rel="prev" title="src.models.residential.scripts.residential" href="src.models.residential.scripts.residential.html" /> 
 </head>
 
 <body class="wy-body-for-nav"> 
@@ -44,26 +42,15 @@
   </form>
 </div>
         </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
-              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
-<ul class="current">
-<li class="toctree-l1"><a class="reference internal" href="modules.html">src</a></li>
-<li class="toctree-l1"><a class="reference internal" href="src.integrator.html">src.integrator package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="src.models.electricity.html">src.models.electricity package</a></li>
-<li class="toctree-l1 current"><a class="current reference internal" href="#">src package</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="src.integrator.html">src.integrator package</a></li>
-<li class="toctree-l2"><a class="reference internal" href="src.models.html">src.models package</a></li>
+              <ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="src.models.html">src.models</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">src</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="src.common.html">src.common</a></li>
+<li class="toctree-l2"><a class="reference internal" href="src.integrator.html">src.integrator</a></li>
+<li class="toctree-l2"><a class="reference internal" href="src.models.html">src.models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="src.sensitivity.html">src.sensitivity</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="src.models.html">src.models package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="src.models.residential.scripts.html">src.models.residential.scripts package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="src.models.residential.html">src.models.residential package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="src.models.residential.preprocessor.html">src.models.residential.preprocessor package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="src.models.hydrogen.utilities.html">src.models.hydrogen.utilities package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="src.models.hydrogen.html">src.models.hydrogen package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="src.models.hydrogen.network.html">src.models.hydrogen.network package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="src.models.hydrogen.model.html">src.models.hydrogen.model package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="src.models.electricity.scripts.html">src.models.electricity.scripts package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="src.models.electricity.scripts.common.html">src.models.electricity.scripts.common package</a></li>
 </ul>
 
         </div>
@@ -80,8 +67,7 @@
           <div role="navigation" aria-label="Page navigation">
   <ul class="wy-breadcrumbs">
       <li><a href="index.html" class="icon icon-home" aria-label="Home"></a></li>
-          <li class="breadcrumb-item"><a href="modules.html">src</a></li>
-      <li class="breadcrumb-item active">src package</li>
+      <li class="breadcrumb-item active">src</li>
       <li class="wy-breadcrumbs-aside">
             <a href="_sources/src.rst.txt" rel="nofollow"> View page source</a>
       </li>
@@ -91,101 +77,26 @@
           <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
            <div itemprop="articleBody">
              
-  <section id="src-package">
-<h1>src package<a class="headerlink" href="#src-package" title="Link to this heading"></a></h1>
-<section id="subpackages">
-<h2>Subpackages<a class="headerlink" href="#subpackages" title="Link to this heading"></a></h2>
-<div class="toctree-wrapper compound">
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="src.integrator.html">src.integrator package</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="src.integrator.html#submodules">Submodules</a></li>
-<li class="toctree-l2"><a class="reference internal" href="src.integrator.html#module-src.integrator.config_setup">src.integrator.config_setup module</a><ul>
-<li class="toctree-l3"><a class="reference internal" href="src.integrator.html#src.integrator.config_setup.Config_settings"><code class="docutils literal notranslate"><span class="pre">Config_settings</span></code></a></li>
-</ul>
-</li>
-<li class="toctree-l2"><a class="reference internal" href="src.integrator.html#module-src.integrator.gaussseidel">src.integrator.gaussseidel module</a><ul>
-<li class="toctree-l3"><a class="reference internal" href="src.integrator.html#src.integrator.gaussseidel.run_gs"><code class="docutils literal notranslate"><span class="pre">run_gs()</span></code></a></li>
-</ul>
-</li>
-<li class="toctree-l2"><a class="reference internal" href="src.integrator.html#module-src.integrator.progress_plot">src.integrator.progress_plot module</a><ul>
-<li class="toctree-l3"><a class="reference internal" href="src.integrator.html#src.integrator.progress_plot.plot_it"><code class="docutils literal notranslate"><span class="pre">plot_it()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="src.integrator.html#src.integrator.progress_plot.plot_price_distro"><code class="docutils literal notranslate"><span class="pre">plot_price_distro()</span></code></a></li>
-</ul>
-</li>
-<li class="toctree-l2"><a class="reference internal" href="src.integrator.html#module-src.integrator.runner">src.integrator.runner module</a><ul>
-<li class="toctree-l3"><a class="reference internal" href="src.integrator.html#src.integrator.runner.run_elec_solo"><code class="docutils literal notranslate"><span class="pre">run_elec_solo()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="src.integrator.html#src.integrator.runner.run_h2_solo"><code class="docutils literal notranslate"><span class="pre">run_h2_solo()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="src.integrator.html#src.integrator.runner.run_residential_solo"><code class="docutils literal notranslate"><span class="pre">run_residential_solo()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="src.integrator.html#src.integrator.runner.run_standalone"><code class="docutils literal notranslate"><span class="pre">run_standalone()</span></code></a></li>
-</ul>
-</li>
-<li class="toctree-l2"><a class="reference internal" href="src.integrator.html#module-src.integrator.unified">src.integrator.unified module</a><ul>
-<li class="toctree-l3"><a class="reference internal" href="src.integrator.html#src.integrator.unified.run_unified"><code class="docutils literal notranslate"><span class="pre">run_unified()</span></code></a></li>
-</ul>
-</li>
-<li class="toctree-l2"><a class="reference internal" href="src.integrator.html#module-src.integrator.utilities">src.integrator.utilities module</a><ul>
-<li class="toctree-l3"><a class="reference internal" href="src.integrator.html#src.integrator.utilities.EI"><code class="docutils literal notranslate"><span class="pre">EI</span></code></a><ul>
-<li class="toctree-l4"><a class="reference internal" href="src.integrator.html#src.integrator.utilities.EI.hour"><code class="docutils literal notranslate"><span class="pre">EI.hour</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="src.integrator.html#src.integrator.utilities.EI.region"><code class="docutils literal notranslate"><span class="pre">EI.region</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="src.integrator.html#src.integrator.utilities.EI.year"><code class="docutils literal notranslate"><span class="pre">EI.year</span></code></a></li>
-</ul>
-</li>
-<li class="toctree-l3"><a class="reference internal" href="src.integrator.html#src.integrator.utilities.HI"><code class="docutils literal notranslate"><span class="pre">HI</span></code></a><ul>
-<li class="toctree-l4"><a class="reference internal" href="src.integrator.html#src.integrator.utilities.HI.region"><code class="docutils literal notranslate"><span class="pre">HI.region</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="src.integrator.html#src.integrator.utilities.HI.year"><code class="docutils literal notranslate"><span class="pre">HI.year</span></code></a></li>
-</ul>
-</li>
-<li class="toctree-l3"><a class="reference internal" href="src.integrator.html#src.integrator.utilities.convert_elec_price_to_lut"><code class="docutils literal notranslate"><span class="pre">convert_elec_price_to_lut()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="src.integrator.html#src.integrator.utilities.convert_h2_price_records"><code class="docutils literal notranslate"><span class="pre">convert_h2_price_records()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="src.integrator.html#src.integrator.utilities.create_temporal_mapping"><code class="docutils literal notranslate"><span class="pre">create_temporal_mapping()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="src.integrator.html#src.integrator.utilities.get_annual_wt_avg"><code class="docutils literal notranslate"><span class="pre">get_annual_wt_avg()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="src.integrator.html#src.integrator.utilities.get_elec_price"><code class="docutils literal notranslate"><span class="pre">get_elec_price()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="src.integrator.html#src.integrator.utilities.get_output_root"><code class="docutils literal notranslate"><span class="pre">get_output_root()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="src.integrator.html#src.integrator.utilities.make_dir"><code class="docutils literal notranslate"><span class="pre">make_dir()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="src.integrator.html#src.integrator.utilities.poll_h2_demand"><code class="docutils literal notranslate"><span class="pre">poll_h2_demand()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="src.integrator.html#src.integrator.utilities.poll_h2_prices_from_elec"><code class="docutils literal notranslate"><span class="pre">poll_h2_prices_from_elec()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="src.integrator.html#src.integrator.utilities.poll_hydrogen_price"><code class="docutils literal notranslate"><span class="pre">poll_hydrogen_price()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="src.integrator.html#src.integrator.utilities.poll_year_avg_elec_price"><code class="docutils literal notranslate"><span class="pre">poll_year_avg_elec_price()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="src.integrator.html#src.integrator.utilities.regional_annual_prices"><code class="docutils literal notranslate"><span class="pre">regional_annual_prices()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="src.integrator.html#src.integrator.utilities.select_solver"><code class="docutils literal notranslate"><span class="pre">select_solver()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="src.integrator.html#src.integrator.utilities.setup_logger"><code class="docutils literal notranslate"><span class="pre">setup_logger()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="src.integrator.html#src.integrator.utilities.simple_solve"><code class="docutils literal notranslate"><span class="pre">simple_solve()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="src.integrator.html#src.integrator.utilities.simple_solve_no_opt"><code class="docutils literal notranslate"><span class="pre">simple_solve_no_opt()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="src.integrator.html#src.integrator.utilities.update_elec_demand"><code class="docutils literal notranslate"><span class="pre">update_elec_demand()</span></code></a></li>
-<li class="toctree-l3"><a class="reference internal" href="src.integrator.html#src.integrator.utilities.update_h2_prices"><code class="docutils literal notranslate"><span class="pre">update_h2_prices()</span></code></a></li>
-</ul>
-</li>
-<li class="toctree-l2"><a class="reference internal" href="src.integrator.html#module-src.integrator">Module contents</a></li>
-</ul>
-</li>
-<li class="toctree-l1"><a class="reference internal" href="src.models.html">src.models package</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="src.models.html#subpackages">Subpackages</a><ul>
-<li class="toctree-l3"><a class="reference internal" href="src.models.electricity.html">src.models.electricity package</a><ul>
-<li class="toctree-l4"><a class="reference internal" href="src.models.electricity.html#subpackages">Subpackages</a></li>
-<li class="toctree-l4"><a class="reference internal" href="src.models.electricity.html#module-src.models.electricity">Module contents</a></li>
-</ul>
-</li>
-<li class="toctree-l3"><a class="reference internal" href="src.models.hydrogen.html">src.models.hydrogen package</a><ul>
-<li class="toctree-l4"><a class="reference internal" href="src.models.hydrogen.html#subpackages">Subpackages</a></li>
-<li class="toctree-l4"><a class="reference internal" href="src.models.hydrogen.html#module-src.models.hydrogen">Module contents</a></li>
-</ul>
-</li>
-<li class="toctree-l3"><a class="reference internal" href="src.models.residential.html">src.models.residential package</a><ul>
-<li class="toctree-l4"><a class="reference internal" href="src.models.residential.html#subpackages">Subpackages</a></li>
-<li class="toctree-l4"><a class="reference internal" href="src.models.residential.html#module-src.models.residential">Module contents</a></li>
-</ul>
-</li>
-</ul>
-</li>
-<li class="toctree-l2"><a class="reference internal" href="src.models.html#module-src.models">Module contents</a></li>
-</ul>
-</li>
-</ul>
-</div>
-</section>
-<section id="module-src">
-<span id="module-contents"></span><h2>Module contents<a class="headerlink" href="#module-src" title="Link to this heading"></a></h2>
-</section>
+  <section id="module-src">
+<span id="src"></span><h1>src<a class="headerlink" href="#module-src" title="Link to this heading"></a></h1>
+<p>This directory contains the subdirectory for the integrator module and the subdirectories for the sectoral modules. The integrator module contains code for the different solve methods (standalone, iterative, or unified). The sectoral modules currently represented in this prototype include the electricity model, hydrogen model, and residential model. For more details on each of these, please see the READMEs located within each subdirectory.</p>
+<p class="rubric">Modules</p>
+<table class="autosummary longtable docutils align-default">
+<tbody>
+<tr class="row-odd"><td><p><a class="reference internal" href="src.common.html#module-src.common" title="src.common"><code class="xref py py-obj docutils literal notranslate"><span class="pre">common</span></code></a></p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="src.integrator.html#module-src.integrator" title="src.integrator"><code class="xref py py-obj docutils literal notranslate"><span class="pre">integrator</span></code></a></p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="src.models.html#module-src.models" title="src.models"><code class="xref py py-obj docutils literal notranslate"><span class="pre">models</span></code></a></p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="src.sensitivity.html#module-src.sensitivity" title="src.sensitivity"><code class="xref py py-obj docutils literal notranslate"><span class="pre">sensitivity</span></code></a></p></td>
+<td><p></p></td>
+</tr>
+</tbody>
+</table>
 </section>
 
 

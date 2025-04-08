@@ -1,18 +1,13 @@
-src.models.electricity package
-==============================
-
-Subpackages
------------
-
-.. toctree::
-   :maxdepth: 4
-
-   src.models.electricity.scripts
-
-Module contents
----------------
+src.models.electricity
+======================
 
 .. automodule:: src.models.electricity
-   :members:
-   :undoc-members:
-   :show-inheritance:
+
+   
+.. rubric:: Modules
+
+.. autosummary::
+   :toctree:
+   :recursive:
+
+   scripts

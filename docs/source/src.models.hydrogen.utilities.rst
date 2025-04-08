@@ -1,21 +1,13 @@
-src.models.hydrogen.utilities package
-=====================================
-
-Submodules
-----------
-
-src.models.hydrogen.utilities.h2\_functions module
---------------------------------------------------
-
-.. automodule:: src.models.hydrogen.utilities.h2_functions
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-Module contents
----------------
+src.models.hydrogen.utilities
+=============================
 
 .. automodule:: src.models.hydrogen.utilities
-   :members:
-   :undoc-members:
-   :show-inheritance:
+
+   
+.. rubric:: Modules
+
+.. autosummary::
+   :toctree:
+   :recursive:
+
+   h2_functions

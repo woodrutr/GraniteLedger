@@ -18,7 +18,7 @@ If running in standalone, the module will return graphs of the updated load valu
 
 The module is set to take in a Pyomo Parameter of prices that is indexed by [region, year, hour]. It will also work for dataframes indexed in the same fashion. The regions can be any subset of integers 1 to 25. The years can be any subset of integers 2023 to 2050. The hours are currently only programmed to work with seasonal data (1 to 4) or a custom subset that is valued 1 to 96. See the residential preprocessor directory for more information on how input data is prepared.  
 
-There are several settings that are pulled from the 'src/integrator/input' directory. The years and regions to be used are in the [sw_year.csv](/src/integrator/input/sw_year.csv) and [sw_reg.csv](/src/integrator/input/sw_reg.csv) switch files. The rest of the settings are in the [run_config.toml](/src/integrator/run_config.toml) file. There is a section noted for "Residential Inputs." The following settings can be found there: 
+There are several settings that are pulled from the 'src/integrator' directory. The settings are specified in the [run_config.toml](/src/common/run_config.toml) file. There is a section noted for "Residential Inputs." The following settings can be found there: 
 
 | Setting | Values | Information |
 |:------- | :----- | :---------- |
@@ -52,14 +52,14 @@ The user may choose which input variable to change and by what amount. These set
 ### Sets
 |Set    | Code    | Data Type  | Short Description |
 |:----- | :------ | :--------- | :---------------- |
-|$\Theta_{Price}$  | price_set       | Sparse Set | $(r,y,h)$ or $(r,s,pt,steps,y)$ values for given updating prices
+|$\Theta_{Price}$  | price_set       | Sparse Set | $(r,y,h)$ or $(r,season,tech,step,y)$ values for given updating prices
 |$\Theta_{Load}$ | load_set | Sparse Set | $(r,y,h)$ values for base loads
 
 ### Parameters
 | Parameter | Code     | Data Type     | Short Description      | Index |
 |:-----     | :------  | :---------    | :----------------      | :-----|
 |$BaseLoad$ | loads[BaseLoads] | DataFrame | The base values for Load | $(r,y,h)$ |
-|$BasePrice$ | prices[BaseSupplyPrices] or prices[BaseDualPrices}] | DataFrame | The base values for price | $(r,s,pt,steps,y)\in\Theta_{Price}$ or $(r,y,h)\in\Theta_{Price}$ |
+|$BasePrice$ | prices[BaseSupplyPrices] or prices[BaseDualPrices}] | DataFrame | The base values for price | $(r,season,tech,step,y)\in\Theta_{Price}$ or $(r,y,h)\in\Theta_{Price}$ |
 |$PriceElasticity$ | p_elas | DataFrame | Price elasticities | (r, y) |
 |$Income$ | income | DataFrame | Income values | $(r,y,h)\in\Theta_{Load}$ |
 $IncomeElasticity$ | i_elas | DataFrame | Income elasticities | (r,y) |
@@ -70,7 +70,7 @@ $IncomeElasticity$ | i_elas | DataFrame | Income elasticities | (r,y) |
 ### Variables
 | Variable  | Code     | Data Type     | Short Description      | Index |
 |:-----     | :------  | :---------    | :----------------      | :-----|
-|$Price$ | avgPrices or newPrices| DataFrame | Updating prices | $(r,s,pt,steps,y)\in\Theta_{Price}$ or $(r,y,h)\in\Theta_{Price}$ |
+|$Price$ | avgPrices or newPrices| DataFrame | Updating prices | $(r,season,tech,step,y)\in\Theta_{Price}$ or $(r,y,h)\in\Theta_{Price}$ |
 |$NewLoad$ | newLoad or Load| DataFrame | Values for newly calculated Load | $(r,y,h)\in\Theta_{Load}$
 
 ### Updating Function 

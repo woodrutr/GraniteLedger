@@ -41,22 +41,9 @@
   </form>
 </div>
         </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
-              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../modules.html">src</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../src.integrator.html">src.integrator package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../src.models.electricity.html">src.models.electricity package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../src.html">src package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../src.models.html">src.models package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../src.models.residential.scripts.html">src.models.residential.scripts package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../src.models.residential.html">src.models.residential package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../src.models.residential.preprocessor.html">src.models.residential.preprocessor package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../src.models.hydrogen.utilities.html">src.models.hydrogen.utilities package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../src.models.hydrogen.html">src.models.hydrogen package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../src.models.hydrogen.network.html">src.models.hydrogen.network package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../src.models.hydrogen.model.html">src.models.hydrogen.model package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../src.models.electricity.scripts.html">src.models.electricity.scripts package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../src.models.electricity.scripts.common.html">src.models.electricity.scripts.common package</a></li>
+              <ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../src.models.html">src.models</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../src.html">src</a></li>
 </ul>
 
         </div>
@@ -89,22 +76,25 @@
 
 <span class="sd">&quot;&quot;&quot;</span>
 
+<span class="c1"># Import packages</span>
 <span class="kn">from</span> <span class="nn">logging</span> <span class="kn">import</span> <span class="n">getLogger</span>
 <span class="kn">from</span> <span class="nn">pathlib</span> <span class="kn">import</span> <span class="n">Path</span>
 <span class="kn">from</span> <span class="nn">pyomo.environ</span> <span class="kn">import</span> <span class="n">value</span>
 
-<span class="kn">from</span> <span class="nn">src.integrator.config_setup</span> <span class="kn">import</span> <span class="n">Config_settings</span>
+<span class="c1"># Import python modules</span>
+<span class="kn">from</span> <span class="nn">src.common.config_setup</span> <span class="kn">import</span> <span class="n">Config_settings</span>
 <span class="kn">from</span> <span class="nn">src.integrator</span> <span class="kn">import</span> <span class="n">utilities</span>
 <span class="kn">from</span> <span class="nn">src.models.electricity.scripts.runner</span> <span class="kn">import</span> <span class="n">run_elec_model</span>
 <span class="kn">from</span> <span class="nn">src.models.hydrogen.model.actions</span> <span class="kn">import</span> <span class="n">run_hydrogen_model</span>
 <span class="kn">from</span> <span class="nn">src.models.residential.scripts.residential</span> <span class="kn">import</span> <span class="n">run_residential</span>
 <span class="kn">from</span> <span class="nn">src.integrator.progress_plot</span> <span class="kn">import</span> <span class="n">plot_price_distro</span>
 
+<span class="c1"># Establish logger</span>
 <span class="n">logger</span> <span class="o">=</span> <span class="n">getLogger</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
 
 
 <div class="viewcode-block" id="run_elec_solo">
-<a class="viewcode-back" href="../../../src.integrator.html#src.integrator.runner.run_elec_solo">[docs]</a>
+<a class="viewcode-back" href="../../../src.integrator.runner.html#src.integrator.runner.run_elec_solo">[docs]</a>
 <span class="k">def</span> <span class="nf">run_elec_solo</span><span class="p">(</span><span class="n">settings</span><span class="p">:</span> <span class="n">Config_settings</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Runs electricity model by itself as defined in settings</span>
@@ -117,18 +107,18 @@
     <span class="c1"># engage the Electricity Model...</span>
     <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Running Electricity Module&#39;</span><span class="p">)</span>
     <span class="n">instance</span> <span class="o">=</span> <span class="n">run_elec_model</span><span class="p">(</span><span class="n">settings</span><span class="p">)</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;Objective value: </span><span class="si">{</span><span class="n">value</span><span class="p">(</span><span class="n">instance</span><span class="o">.</span><span class="n">totalCost</span><span class="p">)</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;Objective value: </span><span class="si">{</span><span class="n">value</span><span class="p">(</span><span class="n">instance</span><span class="o">.</span><span class="n">total_cost</span><span class="p">)</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
 
     <span class="c1"># write out prices and plot them</span>
     <span class="n">elec_price</span> <span class="o">=</span> <span class="n">utilities</span><span class="o">.</span><span class="n">get_elec_price</span><span class="p">(</span><span class="n">instance</span><span class="p">)</span>
     <span class="n">price_records</span> <span class="o">=</span> <span class="n">utilities</span><span class="o">.</span><span class="n">get_annual_wt_avg</span><span class="p">(</span><span class="n">elec_price</span><span class="p">)</span>
     <span class="n">elec_price</span><span class="o">.</span><span class="n">to_csv</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="n">settings</span><span class="o">.</span><span class="n">OUTPUT_ROOT</span> <span class="o">/</span> <span class="s1">&#39;electricity&#39;</span> <span class="o">/</span> <span class="s1">&#39;prices&#39;</span> <span class="o">/</span> <span class="s1">&#39;elec_price.csv&#39;</span><span class="p">))</span></div>
 
-    <span class="c1"># plot_price_distro(list(elec_price.price_wt))</span>
+    <span class="c1"># plot_price_distro(settings.OUTPUT_ROOT, list(elec_price.price_wt))</span>
 
 
 <div class="viewcode-block" id="run_h2_solo">
-<a class="viewcode-back" href="../../../src.integrator.html#src.integrator.runner.run_h2_solo">[docs]</a>
+<a class="viewcode-back" href="../../../src.integrator.runner.html#src.integrator.runner.run_h2_solo">[docs]</a>
 <span class="k">def</span> <span class="nf">run_h2_solo</span><span class="p">(</span><span class="n">settings</span><span class="p">:</span> <span class="n">Config_settings</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Runs hydrogen model by itself as defined in settings</span>
@@ -147,13 +137,13 @@
         <span class="n">empty_settings</span> <span class="o">=</span> <span class="nb">object</span><span class="p">()</span>
         <span class="n">empty_settings</span><span class="o">.</span><span class="n">years</span> <span class="o">=</span> <span class="kc">None</span>
         <span class="n">empty_settings</span><span class="o">.</span><span class="n">regions</span> <span class="o">=</span> <span class="kc">None</span>
-        <span class="n">empty_settings</span><span class="o">.</span><span class="n">h2_data_folder</span> <span class="o">=</span> <span class="s1">&#39;src/models/hydrogen/inputs/single_region&#39;</span>
+        <span class="n">empty_settings</span><span class="o">.</span><span class="n">h2_data_folder</span> <span class="o">=</span> <span class="s1">&#39;input/hydrogen/single_region&#39;</span>
         <span class="n">run_hydrogen_model</span><span class="p">(</span><span class="n">empty_settings</span><span class="p">)</span></div>
 
 
 
 <div class="viewcode-block" id="run_residential_solo">
-<a class="viewcode-back" href="../../../src.integrator.html#src.integrator.runner.run_residential_solo">[docs]</a>
+<a class="viewcode-back" href="../../../src.integrator.runner.html#src.integrator.runner.run_residential_solo">[docs]</a>
 <span class="k">def</span> <span class="nf">run_residential_solo</span><span class="p">(</span><span class="n">settings</span><span class="p">:</span> <span class="n">Config_settings</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Runs residential model by itself as defined in settings</span>
@@ -169,7 +159,7 @@
 
 
 <div class="viewcode-block" id="run_standalone">
-<a class="viewcode-back" href="../../../src.integrator.html#src.integrator.runner.run_standalone">[docs]</a>
+<a class="viewcode-back" href="../../../src.integrator.runner.html#src.integrator.runner.run_standalone">[docs]</a>
 <span class="k">def</span> <span class="nf">run_standalone</span><span class="p">(</span><span class="n">settings</span><span class="p">:</span> <span class="n">Config_settings</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Runs standalone methods based on settings selections; running 1 or more modules</span>
 

@@ -11,13 +11,14 @@ constructed with those input values.
 # Import packages
 from collections import defaultdict
 import pyomo.environ as pyo
-from sensitivity_tools import *
+from src.sensitivity.sensitivity_tools import *
 from sympy import *
+
+# TODO: redo sympy wildcard import to avoid sphinx issues
 import random as rnd
 import time
-from babymodel import *
-from sensitivity_tools import *
-from logging import getLogger
+from src.sensitivity.babymodel import *
+# from logging import getLogger
 
 # Establish logger
 # logger = getLogger(__name__)
@@ -25,7 +26,7 @@ from logging import getLogger
 ###################################################################################################
 
 start_year = 2020
-end_year = 2025
+end_year = 2022
 price_growth_rate = 1.2
 demand_growth_rate = 1.1
 num_regions = 3
@@ -36,7 +37,7 @@ demand_fraction = 0.8
 transportation_cap = 2000
 p = 0.1
 
-name_of_parameter_to_test = 'transportation_capacity'
+name_of_parameter_to_test = 'demand_growth_rate'
 
 
 (
@@ -205,4 +206,4 @@ def speed_accuracy_test(params, parameter_name, p):
 
 
 # run speed_accuracy_test with given inputs (can be changed directly at beginning of script)
-speed_accuracy_test(params, name_of_parameter_to_test, p)
+# speed_accuracy_test(params, name_of_parameter_to_test, p)

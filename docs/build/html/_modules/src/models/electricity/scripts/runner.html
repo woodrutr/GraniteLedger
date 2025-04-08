@@ -41,22 +41,9 @@
   </form>
 </div>
         </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
-              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
-<ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../../../modules.html">src</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../../../src.integrator.html">src.integrator package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../../../src.models.electricity.html">src.models.electricity package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../../../src.html">src package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../../../src.models.html">src.models package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../../../src.models.residential.scripts.html">src.models.residential.scripts package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../../../src.models.residential.html">src.models.residential package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../../../src.models.residential.preprocessor.html">src.models.residential.preprocessor package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../../../src.models.hydrogen.utilities.html">src.models.hydrogen.utilities package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../../../src.models.hydrogen.html">src.models.hydrogen package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../../../src.models.hydrogen.network.html">src.models.hydrogen.network package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../../../src.models.hydrogen.model.html">src.models.hydrogen.model package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../../../src.models.electricity.scripts.html">src.models.electricity.scripts package</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../../../src.models.electricity.scripts.common.html">src.models.electricity.scripts.common package</a></li>
+              <ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../../../src.models.html">src.models</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../../src.html">src</a></li>
 </ul>
 
         </div>
@@ -102,12 +89,13 @@
 <span class="p">)</span>
 <span class="kn">from</span> <span class="nn">logging</span> <span class="kn">import</span> <span class="n">getLogger</span>
 
-<span class="c1"># Import scripts</span>
+<span class="c1"># Import python modules</span>
 <span class="kn">from</span> <span class="nn">definitions</span> <span class="kn">import</span> <span class="n">PROJECT_ROOT</span>
 <span class="kn">import</span> <span class="nn">src.models.electricity.scripts.preprocessor</span> <span class="k">as</span> <span class="nn">prep</span>
 <span class="kn">import</span> <span class="nn">src.models.electricity.scripts.postprocessor</span> <span class="k">as</span> <span class="nn">post</span>
-<span class="kn">import</span> <span class="nn">src.models.electricity.scripts.common.common</span> <span class="k">as</span> <span class="nn">com</span>
+<span class="kn">from</span> <span class="nn">src.models.electricity.scripts.utilities</span> <span class="kn">import</span> <span class="n">check_results</span>
 <span class="kn">from</span> <span class="nn">src.models.electricity.scripts.electricity_model</span> <span class="kn">import</span> <span class="n">PowerModel</span>
+<span class="kn">from</span> <span class="nn">src.common.config_setup</span> <span class="kn">import</span> <span class="n">Config_settings</span>
 
 <span class="kn">from</span> <span class="nn">src.integrator.utilities</span> <span class="kn">import</span> <span class="n">select_solver</span>
 
@@ -123,7 +111,7 @@
 
 
 <div class="viewcode-block" id="build_elec_model">
-<a class="viewcode-back" href="../../../../../src.models.electricity.scripts.html#src.models.electricity.scripts.runner.build_elec_model">[docs]</a>
+<a class="viewcode-back" href="../../../../../src.models.electricity.scripts.runner.html#src.models.electricity.scripts.runner.build_elec_model">[docs]</a>
 <span class="k">def</span> <span class="nf">build_elec_model</span><span class="p">(</span><span class="n">all_frames</span><span class="p">,</span> <span class="n">setin</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">PowerModel</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;building pyomo electricity model</span>
 
@@ -139,9 +127,6 @@
 <span class="sd">    PowerModel</span>
 <span class="sd">        built (but unsolved) electricity model</span>
 <span class="sd">    &quot;&quot;&quot;</span>
-    <span class="c1"># disabling garbage collection to improve runtime</span>
-    <span class="n">gc</span><span class="o">.</span><span class="n">disable</span><span class="p">()</span>
-
     <span class="c1"># Building model</span>
     <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Build Pyomo&#39;</span><span class="p">)</span>
     <span class="n">instance</span> <span class="o">=</span> <span class="n">PowerModel</span><span class="p">(</span><span class="n">all_frames</span><span class="p">,</span> <span class="n">setin</span><span class="p">)</span>
@@ -162,7 +147,7 @@
 
 
 <div class="viewcode-block" id="solve_elec_model">
-<a class="viewcode-back" href="../../../../../src.models.electricity.scripts.html#src.models.electricity.scripts.runner.solve_elec_model">[docs]</a>
+<a class="viewcode-back" href="../../../../../src.models.electricity.scripts.runner.html#src.models.electricity.scripts.runner.solve_elec_model">[docs]</a>
 <span class="k">def</span> <span class="nf">solve_elec_model</span><span class="p">(</span><span class="n">instance</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;solve electicity model</span>
 
@@ -200,8 +185,8 @@
             <span class="c1"># Update tolerance</span>
             <span class="n">tol</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span>
                 <span class="p">[</span>
-                    <span class="nb">abs</span><span class="p">(</span><span class="n">instance</span><span class="o">.</span><span class="n">old_cap_wt</span><span class="p">[(</span><span class="n">pt</span><span class="p">,</span> <span class="n">y</span><span class="p">)]</span> <span class="o">-</span> <span class="n">instance</span><span class="o">.</span><span class="n">new_cap_wt</span><span class="p">[(</span><span class="n">pt</span><span class="p">,</span> <span class="n">y</span><span class="p">)])</span>
-                    <span class="k">for</span> <span class="p">(</span><span class="n">pt</span><span class="p">,</span> <span class="n">y</span><span class="p">)</span> <span class="ow">in</span> <span class="n">instance</span><span class="o">.</span><span class="n">cap_set</span>
+                    <span class="nb">abs</span><span class="p">(</span><span class="n">instance</span><span class="o">.</span><span class="n">old_cap_wt</span><span class="p">[(</span><span class="n">tech</span><span class="p">,</span> <span class="n">y</span><span class="p">)]</span> <span class="o">-</span> <span class="n">instance</span><span class="o">.</span><span class="n">new_cap_wt</span><span class="p">[(</span><span class="n">tech</span><span class="p">,</span> <span class="n">y</span><span class="p">)])</span>
+                    <span class="k">for</span> <span class="p">(</span><span class="n">tech</span><span class="p">,</span> <span class="n">y</span><span class="p">)</span> <span class="ow">in</span> <span class="n">instance</span><span class="o">.</span><span class="n">cap_set</span>
                 <span class="p">]</span>
             <span class="p">)</span>
 
@@ -218,7 +203,7 @@
 
     <span class="c1">### Check results and load model solutions</span>
     <span class="c1"># Check results for termination condition and solution status</span>
-    <span class="k">if</span> <span class="n">com</span><span class="o">.</span><span class="n">check_results</span><span class="p">(</span><span class="n">opt_success</span><span class="p">,</span> <span class="n">SolutionStatus</span><span class="p">,</span> <span class="n">TerminationCondition</span><span class="p">):</span>
+    <span class="k">if</span> <span class="n">check_results</span><span class="p">(</span><span class="n">opt_success</span><span class="p">,</span> <span class="n">SolutionStatus</span><span class="p">,</span> <span class="n">TerminationCondition</span><span class="p">):</span>
         <span class="n">name</span> <span class="o">=</span> <span class="s1">&#39;noclass!&#39;</span>
         <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;[</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s1">] Solve failed&#39;</span><span class="p">)</span>
         <span class="k">if</span> <span class="n">opt_success</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
@@ -241,8 +226,8 @@
 
 
 <div class="viewcode-block" id="run_elec_model">
-<a class="viewcode-back" href="../../../../../src.models.electricity.scripts.html#src.models.electricity.scripts.runner.run_elec_model">[docs]</a>
-<span class="k">def</span> <span class="nf">run_elec_model</span><span class="p">(</span><span class="n">settings</span><span class="p">,</span> <span class="n">solve</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">PowerModel</span><span class="p">:</span>
+<a class="viewcode-back" href="../../../../../src.models.electricity.scripts.runner.html#src.models.electricity.scripts.runner.run_elec_model">[docs]</a>
+<span class="k">def</span> <span class="nf">run_elec_model</span><span class="p">(</span><span class="n">settings</span><span class="p">:</span> <span class="n">Config_settings</span><span class="p">,</span> <span class="n">solve</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">PowerModel</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;build electricity model (and solve if solve=True) after passing in settings</span>
 
 <span class="sd">    Parameters</span>
@@ -298,11 +283,11 @@
 
     <span class="c1"># Check</span>
     <span class="c1"># Objective Value</span>
-    <span class="n">obj_val</span> <span class="o">=</span> <span class="n">pyo</span><span class="o">.</span><span class="n">value</span><span class="p">(</span><span class="n">instance</span><span class="o">.</span><span class="n">totalCost</span><span class="p">)</span>
+    <span class="n">obj_val</span> <span class="o">=</span> <span class="n">pyo</span><span class="o">.</span><span class="n">value</span><span class="p">(</span><span class="n">instance</span><span class="o">.</span><span class="n">total_cost</span><span class="p">)</span>
     <span class="c1"># print(&#39;Objective Function Value =&#39;,obj_val)</span>
 
     <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Displaying solution...&#39;</span><span class="p">)</span>
-    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;instance.totalCost(): </span><span class="si">{</span><span class="n">instance</span><span class="o">.</span><span class="n">totalCost</span><span class="p">()</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;instance.total_cost(): </span><span class="si">{</span><span class="n">instance</span><span class="o">.</span><span class="n">total_cost</span><span class="p">()</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
 
     <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Logging infeasible constraints...&#39;</span><span class="p">)</span>
     <span class="n">log_infeasible_constraints</span><span class="p">(</span><span class="n">instance</span><span class="p">,</span> <span class="n">logger</span><span class="o">=</span><span class="n">logger</span><span class="p">)</span>
@@ -326,7 +311,8 @@
     <span class="c1">###############################################################################################</span>
     <span class="c1"># Post-procressing</span>
 
-    <span class="n">post</span><span class="o">.</span><span class="n">postprocessor</span><span class="p">(</span><span class="n">instance</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">settings</span><span class="o">.</span><span class="n">test</span><span class="p">:</span>
+        <span class="n">post</span><span class="o">.</span><span class="n">postprocessor</span><span class="p">(</span><span class="n">instance</span><span class="p">)</span>
     <span class="n">timer</span><span class="o">.</span><span class="n">toc</span><span class="p">(</span><span class="s1">&#39;postprocessing done&#39;</span><span class="p">)</span>
 
     <span class="c1"># final steps for measuring the run time of the code</span>
@@ -350,7 +336,7 @@
 
 
 <div class="viewcode-block" id="init_old_cap">
-<a class="viewcode-back" href="../../../../../src.models.electricity.scripts.html#src.models.electricity.scripts.runner.init_old_cap">[docs]</a>
+<a class="viewcode-back" href="../../../../../src.models.electricity.scripts.runner.html#src.models.electricity.scripts.runner.init_old_cap">[docs]</a>
 <span class="k">def</span> <span class="nf">init_old_cap</span><span class="p">(</span><span class="n">instance</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;initialize capacity for 0th iteration</span>
 
@@ -363,17 +349,17 @@
     <span class="n">instance</span><span class="o">.</span><span class="n">cap_set</span> <span class="o">=</span> <span class="p">[]</span>
     <span class="n">instance</span><span class="o">.</span><span class="n">old_cap_wt</span> <span class="o">=</span> <span class="p">{}</span>
 
-    <span class="k">for</span> <span class="n">r</span><span class="p">,</span> <span class="n">pt</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">steps</span> <span class="ow">in</span> <span class="n">instance</span><span class="o">.</span><span class="n">capacity_builds_index</span><span class="p">:</span>
-        <span class="k">if</span> <span class="p">(</span><span class="n">pt</span><span class="p">,</span> <span class="n">y</span><span class="p">)</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">instance</span><span class="o">.</span><span class="n">old_cap</span><span class="p">:</span>
-            <span class="n">instance</span><span class="o">.</span><span class="n">cap_set</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">pt</span><span class="p">,</span> <span class="n">y</span><span class="p">))</span>
-            <span class="c1"># each pt will increase cap by 1 GW per year. reasonable starting point.</span>
-            <span class="n">instance</span><span class="o">.</span><span class="n">old_cap</span><span class="p">[(</span><span class="n">pt</span><span class="p">,</span> <span class="n">y</span><span class="p">)]</span> <span class="o">=</span> <span class="p">(</span><span class="n">y</span> <span class="o">-</span> <span class="n">instance</span><span class="o">.</span><span class="n">y0</span><span class="p">)</span> <span class="o">*</span> <span class="mi">1</span>
-            <span class="n">instance</span><span class="o">.</span><span class="n">old_cap_wt</span><span class="p">[(</span><span class="n">pt</span><span class="p">,</span> <span class="n">y</span><span class="p">)]</span> <span class="o">=</span> <span class="n">instance</span><span class="o">.</span><span class="n">year_weights</span><span class="p">[</span><span class="n">y</span><span class="p">]</span> <span class="o">*</span> <span class="n">instance</span><span class="o">.</span><span class="n">old_cap</span><span class="p">[(</span><span class="n">pt</span><span class="p">,</span> <span class="n">y</span><span class="p">)]</span></div>
+    <span class="k">for</span> <span class="n">r</span><span class="p">,</span> <span class="n">tech</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">step</span> <span class="ow">in</span> <span class="n">instance</span><span class="o">.</span><span class="n">capacity_builds_index</span><span class="p">:</span>
+        <span class="k">if</span> <span class="p">(</span><span class="n">tech</span><span class="p">,</span> <span class="n">y</span><span class="p">)</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">instance</span><span class="o">.</span><span class="n">old_cap</span><span class="p">:</span>
+            <span class="n">instance</span><span class="o">.</span><span class="n">cap_set</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">tech</span><span class="p">,</span> <span class="n">y</span><span class="p">))</span>
+            <span class="c1"># each tech will increase cap by 1 GW per year. reasonable starting point.</span>
+            <span class="n">instance</span><span class="o">.</span><span class="n">old_cap</span><span class="p">[(</span><span class="n">tech</span><span class="p">,</span> <span class="n">y</span><span class="p">)]</span> <span class="o">=</span> <span class="p">(</span><span class="n">y</span> <span class="o">-</span> <span class="n">instance</span><span class="o">.</span><span class="n">y0</span><span class="p">)</span> <span class="o">*</span> <span class="mi">1</span>
+            <span class="n">instance</span><span class="o">.</span><span class="n">old_cap_wt</span><span class="p">[(</span><span class="n">tech</span><span class="p">,</span> <span class="n">y</span><span class="p">)]</span> <span class="o">=</span> <span class="n">instance</span><span class="o">.</span><span class="n">WeightYear</span><span class="p">[</span><span class="n">y</span><span class="p">]</span> <span class="o">*</span> <span class="n">instance</span><span class="o">.</span><span class="n">old_cap</span><span class="p">[(</span><span class="n">tech</span><span class="p">,</span> <span class="n">y</span><span class="p">)]</span></div>
 
 
 
 <div class="viewcode-block" id="set_new_cap">
-<a class="viewcode-back" href="../../../../../src.models.electricity.scripts.html#src.models.electricity.scripts.runner.set_new_cap">[docs]</a>
+<a class="viewcode-back" href="../../../../../src.models.electricity.scripts.runner.html#src.models.electricity.scripts.runner.set_new_cap">[docs]</a>
 <span class="k">def</span> <span class="nf">set_new_cap</span><span class="p">(</span><span class="n">instance</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;calculate new capacity after solve iteration</span>
 
@@ -384,26 +370,26 @@
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="n">instance</span><span class="o">.</span><span class="n">new_cap</span> <span class="o">=</span> <span class="p">{}</span>
     <span class="n">instance</span><span class="o">.</span><span class="n">new_cap_wt</span> <span class="o">=</span> <span class="p">{}</span>
-    <span class="k">for</span> <span class="n">r</span><span class="p">,</span> <span class="n">pt</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">steps</span> <span class="ow">in</span> <span class="n">instance</span><span class="o">.</span><span class="n">capacity_builds_index</span><span class="p">:</span>
-        <span class="k">if</span> <span class="p">(</span><span class="n">pt</span><span class="p">,</span> <span class="n">y</span><span class="p">)</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">instance</span><span class="o">.</span><span class="n">new_cap</span><span class="p">:</span>
-            <span class="n">instance</span><span class="o">.</span><span class="n">new_cap</span><span class="p">[(</span><span class="n">pt</span><span class="p">,</span> <span class="n">y</span><span class="p">)]</span> <span class="o">=</span> <span class="mf">0.0</span>
-        <span class="n">instance</span><span class="o">.</span><span class="n">new_cap</span><span class="p">[(</span><span class="n">pt</span><span class="p">,</span> <span class="n">y</span><span class="p">)]</span> <span class="o">=</span> <span class="n">instance</span><span class="o">.</span><span class="n">new_cap</span><span class="p">[(</span><span class="n">pt</span><span class="p">,</span> <span class="n">y</span><span class="p">)]</span> <span class="o">+</span> <span class="nb">sum</span><span class="p">(</span>
-            <span class="n">instance</span><span class="o">.</span><span class="n">capacity_builds</span><span class="p">[(</span><span class="n">r</span><span class="p">,</span> <span class="n">pt</span><span class="p">,</span> <span class="n">year</span><span class="p">,</span> <span class="n">steps</span><span class="p">)]</span><span class="o">.</span><span class="n">value</span> <span class="k">for</span> <span class="n">year</span> <span class="ow">in</span> <span class="n">instance</span><span class="o">.</span><span class="n">y</span> <span class="k">if</span> <span class="n">year</span> <span class="o">&lt;</span> <span class="n">y</span>
+    <span class="k">for</span> <span class="n">r</span><span class="p">,</span> <span class="n">tech</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">step</span> <span class="ow">in</span> <span class="n">instance</span><span class="o">.</span><span class="n">capacity_builds_index</span><span class="p">:</span>
+        <span class="k">if</span> <span class="p">(</span><span class="n">tech</span><span class="p">,</span> <span class="n">y</span><span class="p">)</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">instance</span><span class="o">.</span><span class="n">new_cap</span><span class="p">:</span>
+            <span class="n">instance</span><span class="o">.</span><span class="n">new_cap</span><span class="p">[(</span><span class="n">tech</span><span class="p">,</span> <span class="n">y</span><span class="p">)]</span> <span class="o">=</span> <span class="mf">0.0</span>
+        <span class="n">instance</span><span class="o">.</span><span class="n">new_cap</span><span class="p">[(</span><span class="n">tech</span><span class="p">,</span> <span class="n">y</span><span class="p">)]</span> <span class="o">=</span> <span class="n">instance</span><span class="o">.</span><span class="n">new_cap</span><span class="p">[(</span><span class="n">tech</span><span class="p">,</span> <span class="n">y</span><span class="p">)]</span> <span class="o">+</span> <span class="nb">sum</span><span class="p">(</span>
+            <span class="n">instance</span><span class="o">.</span><span class="n">capacity_builds</span><span class="p">[(</span><span class="n">r</span><span class="p">,</span> <span class="n">tech</span><span class="p">,</span> <span class="n">year</span><span class="p">,</span> <span class="n">step</span><span class="p">)]</span><span class="o">.</span><span class="n">value</span> <span class="k">for</span> <span class="n">year</span> <span class="ow">in</span> <span class="n">instance</span><span class="o">.</span><span class="n">y</span> <span class="k">if</span> <span class="n">year</span> <span class="o">&lt;</span> <span class="n">y</span>
         <span class="p">)</span>
-        <span class="n">instance</span><span class="o">.</span><span class="n">new_cap_wt</span><span class="p">[(</span><span class="n">pt</span><span class="p">,</span> <span class="n">y</span><span class="p">)]</span> <span class="o">=</span> <span class="n">instance</span><span class="o">.</span><span class="n">year_weights</span><span class="p">[</span><span class="n">y</span><span class="p">]</span> <span class="o">*</span> <span class="n">instance</span><span class="o">.</span><span class="n">new_cap</span><span class="p">[(</span><span class="n">pt</span><span class="p">,</span> <span class="n">y</span><span class="p">)]</span></div>
+        <span class="n">instance</span><span class="o">.</span><span class="n">new_cap_wt</span><span class="p">[(</span><span class="n">tech</span><span class="p">,</span> <span class="n">y</span><span class="p">)]</span> <span class="o">=</span> <span class="n">instance</span><span class="o">.</span><span class="n">WeightYear</span><span class="p">[</span><span class="n">y</span><span class="p">]</span> <span class="o">*</span> <span class="n">instance</span><span class="o">.</span><span class="n">new_cap</span><span class="p">[(</span><span class="n">tech</span><span class="p">,</span> <span class="n">y</span><span class="p">)]</span></div>
 
 
 
 <div class="viewcode-block" id="cost_learning_func">
-<a class="viewcode-back" href="../../../../../src.models.electricity.scripts.html#src.models.electricity.scripts.runner.cost_learning_func">[docs]</a>
-<span class="k">def</span> <span class="nf">cost_learning_func</span><span class="p">(</span><span class="n">instance</span><span class="p">,</span> <span class="n">pt</span><span class="p">,</span> <span class="n">y</span><span class="p">):</span>
+<a class="viewcode-back" href="../../../../../src.models.electricity.scripts.runner.html#src.models.electricity.scripts.runner.cost_learning_func">[docs]</a>
+<span class="k">def</span> <span class="nf">cost_learning_func</span><span class="p">(</span><span class="n">instance</span><span class="p">,</span> <span class="n">tech</span><span class="p">,</span> <span class="n">y</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;function for updating learning costs by technology and year</span>
 
 <span class="sd">    Parameters</span>
 <span class="sd">    ----------</span>
 <span class="sd">    instance : PowerModel</span>
 <span class="sd">        electricity pyomo model</span>
-<span class="sd">    pt : int</span>
+<span class="sd">    tech : int</span>
 <span class="sd">        technology type</span>
 <span class="sd">    y : int</span>
 <span class="sd">        year</span>
@@ -414,15 +400,19 @@
 <span class="sd">        updated capital cost based on learning calculation</span>
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="n">cost</span> <span class="o">=</span> <span class="p">(</span>
-        <span class="p">(</span><span class="n">instance</span><span class="o">.</span><span class="n">SupplyCurveLearning</span><span class="p">[</span><span class="n">pt</span><span class="p">]</span> <span class="o">+</span> <span class="mf">0.0001</span> <span class="o">*</span> <span class="p">(</span><span class="n">y</span> <span class="o">-</span> <span class="n">instance</span><span class="o">.</span><span class="n">y0</span><span class="p">)</span> <span class="o">+</span> <span class="n">instance</span><span class="o">.</span><span class="n">new_cap</span><span class="p">[</span><span class="n">pt</span><span class="p">,</span> <span class="n">y</span><span class="p">])</span>
-        <span class="o">/</span> <span class="n">instance</span><span class="o">.</span><span class="n">SupplyCurveLearning</span><span class="p">[</span><span class="n">pt</span><span class="p">]</span>
-    <span class="p">)</span> <span class="o">**</span> <span class="p">(</span><span class="o">-</span><span class="mf">1.0</span> <span class="o">*</span> <span class="n">instance</span><span class="o">.</span><span class="n">LearningRate</span><span class="p">[</span><span class="n">pt</span><span class="p">])</span>
+        <span class="p">(</span>
+            <span class="n">instance</span><span class="o">.</span><span class="n">SupplyCurveLearning</span><span class="p">[</span><span class="n">tech</span><span class="p">]</span>
+            <span class="o">+</span> <span class="mf">0.0001</span> <span class="o">*</span> <span class="p">(</span><span class="n">y</span> <span class="o">-</span> <span class="n">instance</span><span class="o">.</span><span class="n">y0</span><span class="p">)</span>
+            <span class="o">+</span> <span class="n">instance</span><span class="o">.</span><span class="n">new_cap</span><span class="p">[</span><span class="n">tech</span><span class="p">,</span> <span class="n">y</span><span class="p">]</span>
+        <span class="p">)</span>
+        <span class="o">/</span> <span class="n">instance</span><span class="o">.</span><span class="n">SupplyCurveLearning</span><span class="p">[</span><span class="n">tech</span><span class="p">]</span>
+    <span class="p">)</span> <span class="o">**</span> <span class="p">(</span><span class="o">-</span><span class="mf">1.0</span> <span class="o">*</span> <span class="n">instance</span><span class="o">.</span><span class="n">LearningRate</span><span class="p">[</span><span class="n">tech</span><span class="p">])</span>
     <span class="k">return</span> <span class="n">cost</span></div>
 
 
 
 <div class="viewcode-block" id="update_cost">
-<a class="viewcode-back" href="../../../../../src.models.electricity.scripts.html#src.models.electricity.scripts.runner.update_cost">[docs]</a>
+<a class="viewcode-back" href="../../../../../src.models.electricity.scripts.runner.html#src.models.electricity.scripts.runner.update_cost">[docs]</a>
 <span class="k">def</span> <span class="nf">update_cost</span><span class="p">(</span><span class="n">instance</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;update capital cost based on new capacity learning</span>
 
@@ -432,17 +422,17 @@
 <span class="sd">        electricity pyomo model</span>
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="n">new_multiplier</span> <span class="o">=</span> <span class="p">{}</span>
-    <span class="k">for</span> <span class="n">pt</span><span class="p">,</span> <span class="n">y</span> <span class="ow">in</span> <span class="n">instance</span><span class="o">.</span><span class="n">cap_set</span><span class="p">:</span>
-        <span class="n">new_multiplier</span><span class="p">[(</span><span class="n">pt</span><span class="p">,</span> <span class="n">y</span><span class="p">)]</span> <span class="o">=</span> <span class="n">cost_learning_func</span><span class="p">(</span><span class="n">instance</span><span class="p">,</span> <span class="n">pt</span><span class="p">,</span> <span class="n">y</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">tech</span><span class="p">,</span> <span class="n">y</span> <span class="ow">in</span> <span class="n">instance</span><span class="o">.</span><span class="n">cap_set</span><span class="p">:</span>
+        <span class="n">new_multiplier</span><span class="p">[(</span><span class="n">tech</span><span class="p">,</span> <span class="n">y</span><span class="p">)]</span> <span class="o">=</span> <span class="n">cost_learning_func</span><span class="p">(</span><span class="n">instance</span><span class="p">,</span> <span class="n">tech</span><span class="p">,</span> <span class="n">y</span><span class="p">)</span>
 
     <span class="n">new_cost</span> <span class="o">=</span> <span class="p">{}</span>
     <span class="c1"># Assign new learning</span>
-    <span class="k">for</span> <span class="n">r</span><span class="p">,</span> <span class="n">pt</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">steps</span> <span class="ow">in</span> <span class="n">instance</span><span class="o">.</span><span class="n">capacity_builds_index</span><span class="p">:</span>
+    <span class="k">for</span> <span class="n">r</span><span class="p">,</span> <span class="n">tech</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">step</span> <span class="ow">in</span> <span class="n">instance</span><span class="o">.</span><span class="n">capacity_builds_index</span><span class="p">:</span>
         <span class="c1"># updating learning cost</span>
-        <span class="n">new_cost</span><span class="p">[(</span><span class="n">r</span><span class="p">,</span> <span class="n">pt</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">steps</span><span class="p">)]</span> <span class="o">=</span> <span class="p">(</span>
-            <span class="n">instance</span><span class="o">.</span><span class="n">CapCostInitial</span><span class="p">[(</span><span class="n">r</span><span class="p">,</span> <span class="n">pt</span><span class="p">,</span> <span class="n">steps</span><span class="p">)]</span> <span class="o">*</span> <span class="n">new_multiplier</span><span class="p">[</span><span class="n">pt</span><span class="p">,</span> <span class="n">y</span><span class="p">]</span>
+        <span class="n">new_cost</span><span class="p">[(</span><span class="n">r</span><span class="p">,</span> <span class="n">tech</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">step</span><span class="p">)]</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">instance</span><span class="o">.</span><span class="n">CapCostInitial</span><span class="p">[(</span><span class="n">r</span><span class="p">,</span> <span class="n">tech</span><span class="p">,</span> <span class="n">step</span><span class="p">)]</span> <span class="o">*</span> <span class="n">new_multiplier</span><span class="p">[</span><span class="n">tech</span><span class="p">,</span> <span class="n">y</span><span class="p">]</span>
         <span class="p">)</span>
-        <span class="n">instance</span><span class="o">.</span><span class="n">CapCostLearning</span><span class="p">[(</span><span class="n">r</span><span class="p">,</span> <span class="n">pt</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">steps</span><span class="p">)]</span><span class="o">.</span><span class="n">value</span> <span class="o">=</span> <span class="n">new_cost</span><span class="p">[(</span><span class="n">r</span><span class="p">,</span> <span class="n">pt</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">steps</span><span class="p">)]</span></div>
+        <span class="n">instance</span><span class="o">.</span><span class="n">CapCostLearning</span><span class="p">[(</span><span class="n">r</span><span class="p">,</span> <span class="n">tech</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">step</span><span class="p">)]</span><span class="o">.</span><span class="n">value</span> <span class="o">=</span> <span class="n">new_cost</span><span class="p">[(</span><span class="n">r</span><span class="p">,</span> <span class="n">tech</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">step</span><span class="p">)]</span></div>
 
 </pre></div>
 

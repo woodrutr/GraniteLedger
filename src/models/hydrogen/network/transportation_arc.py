@@ -2,8 +2,8 @@
 TRANSPORTATION ARC CLASS
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
-    objects in this class represent individual transportation arcs. An arc can
-    exist with zero capacity, so they only represent *possible* arcs.
+objects in this class represent individual transportation arcs. An arc can exist with zero capacity,
+so they only represent *possible* arcs.
 """
 ###################################################################################################
 

@@ -1,3 +1,5 @@
+"""This file is a collection of functions that are used in support of the hydrogen model."""
+
 import typing
 
 # guard against circular import
@@ -7,6 +9,7 @@ if typing.TYPE_CHECKING:
 
 def get_electricty_consumption(hm: 'H2Model', region, year):
     """get electricity consumption for region, year
+
     Parameters
     ----------
     hm : H2Model
@@ -30,6 +33,7 @@ def get_electricty_consumption(hm: 'H2Model', region, year):
 
 def get_electricity_consumption_rate(hm: 'H2Model', tech):
     """the electricity consumption rate for technology type tech
+
     Parameters
     ----------
     hm : H2Model
@@ -98,6 +102,7 @@ def get_production_cost(hm: 'H2Model', hub, tech, year):
 
 def get_elec_price(hm: 'H2Model', region, year):
     """get electricity price in region, year
+
     Parameters
     ----------
     hm : H2Model

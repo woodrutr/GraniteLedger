@@ -18,6 +18,8 @@ from collections import defaultdict
 from logging import getLogger
 import pyomo.environ as pyo
 from sympy import *
+
+# TODO: redo sympy wildcard import to avoid sphinx issues
 import time
 
 # Establish logger

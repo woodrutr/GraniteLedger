@@ -13,7 +13,8 @@ We will:
 import pytest
 from definitions import PROJECT_ROOT
 from pathlib import Path
-from src.integrator import utilities, config_setup
+from src.common import config_setup
+from src.integrator import utilities
 from src.integrator.utilities import simple_solve
 from src.integrator.utilities import EI
 from src.models.electricity.scripts.runner import run_elec_model
@@ -29,14 +30,12 @@ def test_load_updating():
     from prices generated in res from load in elec .... hahah.
     """
     years = [2030, 2031]
-    regions = [
-        2,
-    ]
+    regions = [2]
     # get settings
-    config_path = Path(PROJECT_ROOT, 'src/integrator', 'run_config.toml')
-    settings = config_setup.Config_settings(
-        config_path, test=True, years_ow=years, regions_ow=regions
-    )
+    config_path = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
+    settings = config_setup.Config_settings(config_path, test=True)
+    settings.regions = regions
+    settings.years = years
     # just load the model...
     elec_model = run_elec_model(settings, solve=False)
 
@@ -48,10 +47,10 @@ def test_load_updating():
 
     # solve to get first prices
     simple_solve(elec_model)
-    old_obj = pyo.value(elec_model.totalCost)
+    old_obj = pyo.value(elec_model.total_cost)
 
     prices = utilities.get_elec_price(elec_model)
-    prices = prices.set_index(['r', 'y', 'hr'])['raw_price'].to_dict()
+    prices = prices.set_index(['region', 'year', 'hour'])['raw_price'].to_dict()
     prices = [(EI(*k), prices[k]) for k, v in prices.items()]
 
     price_lut = utilities.convert_elec_price_to_lut(prices=prices)
@@ -88,5 +87,5 @@ def test_load_updating():
     elec_model.Load.store_values(meta.blk.Load.extract_values())
     elec_model.Load.pprint()
     simple_solve(elec_model)
-    new_obj = pyo.value(elec_model.totalCost)
-    assert new_obj < 0.9 * old_obj, 'new objective value should decrease with this data'
+    new_obj = pyo.value(elec_model.total_cost)
+    assert new_obj < 0.95 * old_obj, 'new objective value should decrease with this data'

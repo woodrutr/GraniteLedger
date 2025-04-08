@@ -9,7 +9,6 @@ electricity prices and demands.
 # Import packages
 from pathlib import Path
 import pandas as pd
-from src.integrator.config_setup import Config_settings
 import sympy as sp
 import pyomo.environ as pyo
 import sys
@@ -17,9 +16,10 @@ import matplotlib.pyplot as plt
 from logging import getLogger
 import numpy as np
 
-# Import scripts
+# Import python modules
 from definitions import PROJECT_ROOT
-from src.integrator.utilities import get_output_root
+from src.common.config_setup import Config_settings
+from src.common.utilities import scale_load, scale_load_with_enduses
 
 # Establish Logger
 logger = getLogger(__name__)
@@ -30,9 +30,11 @@ logger = getLogger(__name__)
 
 class residentialModule:
     """
-    This contains the Residential model and its associated functions. Once an object is instantiated, it can calculate new Load values for updated prices.
-    It can also calculate estimated changes to the Load if one of the input variables is changed by a specified percent.
-    The model will be created in a symbolic form to be easily manipulated, and then values can be filled in for calculations.
+    This contains the Residential model and its associated functions. Once an object is
+    instantiated, it can calculate new Load values for updated prices. It can also calculate
+    estimated changes to the Load if one of the input variables is changed by a specified percent.
+    The model will be created in a symbolic form to be easily manipulated, and then values can be
+    filled in for calculations.
     """
 
     prices = {}
@@ -47,20 +49,22 @@ class residentialModule:
         load_df: pd.DataFrame | None = None,
         calibrate: bool | None = False,
     ):
-        """Sets up the sympy version of the residential module. This includes
-        the 3 updating indexes, the combined full equation, and the equation converted to a python lambda function.
+        """Sets up the sympy version of the residential module. This includes the 3 updating
+        indexes, the combined full equation, and the equation converted to a python lambda function.
         It also loads in the base values for Load if they haven't been established yet.
 
 
         Parameters
         ----------
         loadFile : str, optional
-            An optional filepath if a different or new baseline Load fileis needed, by default 'input/Load.csv'
+            An optional filepath if a different or new baseline Load fileis needed
         """
         # if none, create a settings object
         if not settings:
-            config_path = Path(PROJECT_ROOT, 'src/integrator', 'run_config.toml')
+            config_path = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
             settings = Config_settings(config_path=config_path, test=True)
+        self.OUTPUT_ROOT = settings.OUTPUT_ROOT
+
         # Create indexes
         self.year = sp.Idx('year')
         self.reg = sp.Idx('region')
@@ -129,76 +133,120 @@ class residentialModule:
 
         # Set base Load values if they aren't already set
         if loadFile:
-            self.loads['BaseLoads'] = pd.read_csv(loadFile).set_index(['r', 'y', 'hr'], drop=False)
-        elif not self.loads:
-            root_path = PROJECT_ROOT
-
-            y = 2023
-            path_to_load_data = Path(PROJECT_ROOT, 'src/models/residential/input/load/Load_'+str(y)+'.csv')
-            self.loads['BaseLoads']  = pd.read_csv(path_to_load_data)
-            for y in range(2024,2050):
-                path_to_load_data = Path(PROJECT_ROOT, 'src/models/residential/input/load/Load_'+str(y)+'.csv')
-                tmp = pd.read_csv(path_to_load_data)
-                self.loads['BaseLoads'] = pd.concat([self.loads['BaseLoads'],tmp]).reset_index(drop=True)
-
-            self.loads['BaseLoads'] = self.loads['BaseLoads'].set_index(
-                ['r', 'y', 'hr'], drop=False
+            self.loads['BaseLoads'] = pd.read_csv(loadFile).set_index(
+                ['region', 'year', 'hour'], drop=False
             )
+        elif not self.loads:
+            # read in load data from residential input directory
+            self.load_scalar = settings.scale_load
+            res_dir = Path(PROJECT_ROOT, 'input', 'residential')
+            if self.load_scalar == 'annual':
+                self.loads['BaseLoads'] = scale_load(res_dir)
+            elif self.load_scalar == 'enduse':
+                self.loads['BaseLoads'] = scale_load_with_enduses(res_dir)
+            else:
+                raise ValueError('load_scalar in TOML must be set to "annual" or "enduse"')
+            self.loads['BaseLoads'].set_index(['region', 'year', 'hour'], drop=False, inplace=True)
 
         # Set base year if not already set
         if not self.baseYear:
             # TODO:  How could this below work after y has been made part of the index?
-            self.baseYear = self.loads['BaseLoads'].y.min()
+            self.baseYear = self.loads['BaseLoads'].year.min()
 
         # Create hour map if not already set
         if self.hr_map.empty:
             # TODO:  update config path reference
             self.hr_map = settings.cw_temporal
-            self.hr_map.set_index('hr', inplace=True, drop=False)
+            self.hr_map.set_index('hour', inplace=True, drop=False)
         pass
 
         # Create base price values if they aren't already set
         if 'BasePrices' not in residentialModule.prices.keys():
-            path_to_price_data = PROJECT_ROOT / 'src/models/residential/input/BaseElecPrice.csv'
+            path_to_price_data = PROJECT_ROOT / 'input/residential/BaseElecPrice.csv'
             residentialModule.prices['BasePrices'] = pd.read_csv(path_to_price_data).set_index(
-                ['r', 'y', 'hr'], drop=False
+                ['region', 'year', 'hour'], drop=False
             )
 
         self.calibrate = calibrate
 
-        # Make lambdifiedDemand function easier to use with named inputs and default values for potentially unused variables
-        self.demandF = (
-            lambda price,
-            load,
+        # Make lambdifiedDemand function easier to use with named inputs and default values
+
+    def demandF(
+        self,
+        price,
+        load,
+        year,
+        basePrice=1,
+        p_elas=-0.10,
+        baseYear=None,
+        baseIncome=1,
+        income=1,
+        i_elas=1,
+        trend=0,
+        priceIndex=1,
+        incomeIndex=1,
+        p_lag=1,
+        i_lag=1,
+    ):
+        """The demand function.  Wraps the sympy demand function with some defaults
+
+        Parameters
+        ----------
+        price : _type_
+            _description_
+        load : _type_
+            _description_
+        year : _type_
+            _description_
+        basePrice : int, optional
+            _description_, by default 1
+        p_elas : float, optional
+            _description_, by default -0.10
+        baseYear : _type_, optional
+            _description_, by default None
+        baseIncome : int, optional
+            _description_, by default 1
+        income : int, optional
+            _description_, by default 1
+        i_elas : int, optional
+            _description_, by default 1
+        trend : int, optional
+            _description_, by default 0
+        priceIndex : int, optional
+            _description_, by default 1
+        incomeIndex : int, optional
+            _description_, by default 1
+        p_lag : int, optional
+            _description_, by default 1
+        i_lag : int, optional
+            _description_, by default 1
+
+        Returns
+        -------
+        _type_
+            _description_
+        """
+        if not baseYear:
+            # sub in the default if None...
+            baseYear = residentialModule.baseYear
+        res = self.lambdifiedDemand(
+            incomeIndex,
+            i_lag,
+            income,
+            baseIncome,
+            i_elas,
+            priceIndex,
+            p_lag,
+            price,
+            basePrice,
+            p_elas,
             year,
-            basePrice=1,
-            p_elas=-0.10,
-            baseYear=residentialModule.baseYear,
-            baseIncome=1,
-            income=1,
-            i_elas=1,
-            trend=0,
-            priceIndex=1,
-            incomeIndex=1,
-            p_lag=1,
-            i_lag=1: self.lambdifiedDemand(
-                incomeIndex,
-                i_lag,
-                income,
-                baseIncome,
-                i_elas,
-                priceIndex,
-                p_lag,
-                price,
-                basePrice,
-                p_elas,
-                year,
-                baseYear,
-                2050,
-                trend,
-                load,
-            )
+            baseYear,
+            2050,
+            trend,
+            load,
         )
+        return res
 
     def update_load(self, p):
         """Takes in Dual pyomo Parameters or dataframes to update Load values
@@ -216,13 +264,21 @@ class residentialModule:
         # Read in price values
         if type(p) == pyo.base.param.IndexedParam:
             newLoad = pd.DataFrame(
-                [(i[0], i[1], i[2], p[i].value) for i in p], columns=['r', 'y', 'hr', 'newPrice']
+                [(i[0], i[1], i[2], p[i].value) for i in p],
+                columns=['region', 'year', 'hour', 'newPrice'],
             )
         elif len(p.columns) == 1:
-            newLoad = p.rename(columns={list(p)[0]: 'newPrice'}).reset_index(names=['r', 'y', 'hr'])
+            newLoad = p.rename(columns={list(p)[0]: 'newPrice'}).reset_index(
+                names=['region', 'year', 'hour']
+            )
         else:
             newLoad = p.rename(
-                columns={list(p)[0]: 'newPrice', list(p)[1]: 'r', list(p)[2]: 'y', list(p)[3]: 'hr'}
+                columns={
+                    list(p)[0]: 'newPrice',
+                    list(p)[1]: 'region',
+                    list(p)[2]: 'year',
+                    list(p)[3]: 'hour',
+                }
             )
 
         newLoad.newPrice = abs(newLoad.newPrice)
@@ -230,7 +286,7 @@ class residentialModule:
         # Create average base prices and loads based on hourly structure used
         # This will store the averaged values in the first run to be called later
         if 'AvgBasePrice' not in residentialModule.prices.keys():
-            hours = newLoad.hr.unique()
+            hours = newLoad.hour.unique()
 
             # Create a map for hour types to create averages
             if len(hours) == 4:
@@ -240,28 +296,28 @@ class residentialModule:
             elif len(hours) == 8760:
                 hourMap = {i: [] for i in hours}
                 for h in range(1, len(self.hr_map) + 1):
-                    hourMap[self.hr_map.loc[h, 'hr']].append(h)
+                    hourMap[self.hr_map.loc[h, 'hour']].append(h)
             else:
                 hourMap = {i: [] for i in hours}
                 for h in range(1, len(self.hr_map) + 1):
-                    hourMap[self.hr_map.loc[h, 'Map_hr']].append(h)
+                    hourMap[self.hr_map.loc[h, 'Map_hour']].append(h)
 
             # Create average base values for price and load based on hours in the new prices
             newLoad['AvgBasePrice'] = newLoad.apply(
                 lambda row: sum(
-                    self.prices['BasePrices'].loc[(row.r, self.baseYear, hr), 'price_wt']
-                    for hr in hourMap[row.hr]
+                    self.prices['BasePrices'].loc[(row.region, self.baseYear, hr), 'price_wt']
+                    for hr in hourMap[row.hour]
                 )
-                / (len(hourMap[row.hr])),
+                / (len(hourMap[row.hour])),
                 axis=1,
             )
             newLoad['AvgBaseLoad'] = newLoad.apply(
                 lambda row: sum(
-                    self.loads['BaseLoads'].loc[(row.r, self.baseYear, hr), 'Load']
-                    * self.hr_map.loc[hr, 'Hr_weights']
-                    for hr in hourMap[row.hr]
+                    self.loads['BaseLoads'].loc[(row.region, self.baseYear, hr), 'Load']
+                    * self.hr_map.loc[hr, 'WeightHour']
+                    for hr in hourMap[row.hour]
                 )
-                / (len(hourMap[row.hr])),
+                / (len(hourMap[row.hour])),
                 axis=1,
             )
             residentialModule.prices['AvgBasePrice'] = newLoad['AvgBasePrice']
@@ -272,17 +328,15 @@ class residentialModule:
 
         # Calculate new load values with or without the calibrate file
         if self.calibrate == True:
-            demandInputs = pd.read_csv(
-                PROJECT_ROOT / 'src/models/residential/input/demand_inputs.csv'
-            )
-            newLoad = newLoad.merge(demandInputs, on=['r', 'y', 'hr'])
+            demandInputs = pd.read_csv(PROJECT_ROOT / 'input/residential/demand_inputs.csv')
+            newLoad = newLoad.merge(demandInputs, on=['region', 'year', 'hour'])
             newLoad['Load'] = self.demandF(
                 newLoad.newPrice,
                 newLoad.AvgBaseLoad,
-                newLoad.y,
+                newLoad.year,
                 newLoad.AvgBasePrice,
                 newLoad.p_elas,
-                self.prices['BasePrices'].y.min(),
+                self.prices['BasePrices'].year.min(),
                 1,
                 newLoad.income,
                 newLoad.i_elas,
@@ -294,16 +348,17 @@ class residentialModule:
             )
         else:
             newLoad['Load'] = self.demandF(
-                newLoad.newPrice, newLoad.AvgBaseLoad, newLoad.y, newLoad.AvgBasePrice
+                newLoad.newPrice, newLoad.AvgBaseLoad, newLoad.year, newLoad.AvgBasePrice
             )
-        newLoad = newLoad.set_index(['r', 'y', 'hr'], drop=False)
+        newLoad = newLoad.set_index(['region', 'year', 'hour'], drop=False)
         return newLoad
 
     def sensitivity(self, prices, change_var, percent):
-        """This estimates how much the output Load will change due to a change in one of the input variables.
-        It can calculate these values for changes in price, price elasticity, income, income elasticity, or long term trend.
-        The Load calculation requires input prices, so this function requires that as well for the base output Load.
-        Then, an estimate for Load is calculated for the case where the named 'change_var' is changed by 'percent' %.
+        """This estimates how much the output Load will change due to a change in one of the input
+        variables. It can calculate these values for changes in price, price elasticity, income,
+        income elasticity, or long term trend. The Load calculation requires input prices, so this
+        function requires that as well for the base output Load. Then, an estimate for Load is
+        calculated for the case where the named 'change_var' is changed by 'percent' %.
 
         Parameters
         ----------
@@ -318,9 +373,12 @@ class residentialModule:
         Returns
         -------
         dataframe
-            Indexed values for the calculated Load at the given prices, the Load if the variable of interest is increased by 'percent'%, and the Load if the variable of interest is decreased by 'percent'%
+            Indexed values for the calculated Load at the given prices, the Load if the variable of
+            interest is increased by 'percent'%, and the Load if the variable of interest is
+            decreased by 'percent'%
         """
-        # Create dummy symbols for all indexed variables. The derivative wasn't working correctly when the indexes were present
+        # Create dummy symbols for all indexed variables. The derivative wasn't working correctly
+        # when the indexes were present
         (
             income,
             baseIncome,
@@ -388,6 +446,8 @@ class residentialModule:
             wrt = p_elas
         elif change_var == 'trendGR':
             wrt = trendGR
+        else:
+            raise ValueError(f'unknown value {change_var} received.  See function dox.')
 
         change = percent / 100
 
@@ -453,7 +513,7 @@ class residentialModule:
             newValues['deriv'] = deriv_function(
                 newValues.newPrice,
                 newValues.AvgBaseLoad,
-                newValues.y,
+                newValues.year,
                 newValues.AvgBasePrice,
                 newValues.p_elas,
                 self.baseYear,
@@ -478,7 +538,7 @@ class residentialModule:
                 )
         else:
             newValues['deriv'] = deriv_function(
-                newValues.newPrice, newValues.AvgBaseLoad, newValues.y, newValues.AvgBasePrice
+                newValues.newPrice, newValues.AvgBaseLoad, newValues.year, newValues.AvgBasePrice
             )
             if change_var == 'price':
                 newValues['upper'] = newValues.Load + newValues.deriv * change * newValues.newPrice
@@ -493,10 +553,11 @@ class residentialModule:
         return newValues[['Load', 'upper', 'lower']]
 
     def complex_step_sensitivity(self, prices, change_var, percent):
-        """This estimates how much the output Load will change due to a change in one of the input variables.
-        It can calculate these values for changes in price, price elasticity, income, income elasticity, or long term trend.
-        The Load calculation requires input prices, so this function requires that as well for the base output Load.
-        Then, an estimate for Load is calculated for the case where the named 'change_var' is changed by 'percent' %.
+        """This estimates how much the output Load will change due to a change in one of the input
+        variables. It can calculate these values for changes in price, price elasticity, income,
+        income elasticity, or long term trend. The Load calculation requires input prices, so this
+        function requires that as well for the base output Load. Then, an estimate for Load is
+        calculated for the case where the named 'change_var' is changed by 'percent' %.
 
         Parameters
         ----------
@@ -511,7 +572,9 @@ class residentialModule:
         Returns
         -------
         dataframe
-            Indexed values for the calculated Load at the given prices, the Load if the variable of interest is increased by 'percent'%, and the Load if the variable of interest is decreased by 'percent'%
+            Indexed values for the calculated Load at the given prices, the Load if the variable
+            of interest is increased by 'percent'%, and the Load if the variable of interest is
+            decreased by 'percent'%
         """
 
         change = percent / 100
@@ -522,24 +585,24 @@ class residentialModule:
         if type(prices) == pyo.base.param.IndexedParam:
             newLoad = pd.DataFrame(
                 [(i[0], i[1], i[2], prices[i].value) for i in prices],
-                columns=['r', 'y', 'hr', 'newPrice'],
+                columns=['region', 'year', 'hour', 'newPrice'],
             )
         elif len(prices.columns) == 1:
             newLoad = prices.rename(columns={list(prices)[0]: 'newPrice'}).reset_index(
-                names=['r', 'y', 'hr']
+                names=['region', 'year', 'hour']
             )
         else:
             newLoad = prices.rename(
                 columns={
                     list(prices)[0]: 'newPrice',
-                    list(prices)[1]: 'r',
-                    list(prices)[2]: 'y',
-                    list(prices)[3]: 'hr',
+                    list(prices)[1]: 'region',
+                    list(prices)[2]: 'year',
+                    list(prices)[3]: 'hour',
                 }
             )
         prices = abs(prices)
 
-        hours = newLoad.hr.unique()
+        hours = newLoad.hour.unique()
 
         # Create a map for hour types to create averages
         if len(hours) == 4:
@@ -549,28 +612,28 @@ class residentialModule:
         elif len(hours) == 8760:
             hourMap = {i: [] for i in hours}
             for h in range(1, len(self.hr_map) + 1):
-                hourMap[self.hr_map.loc[h, 'hr']].append(h)
+                hourMap[self.hr_map.loc[h, 'hour']].append(h)
         else:
             hourMap = {i: [] for i in hours}
             for h in range(1, len(self.hr_map) + 1):
-                hourMap[self.hr_map.loc[h, 'Map_hr']].append(h)
+                hourMap[self.hr_map.loc[h, 'Map_hour']].append(h)
 
         # Create average base values for price and load based on hours in the new prices
         newLoad['AvgBasePrice'] = newLoad.apply(
             lambda row: sum(
-                self.prices['BasePrices'].loc[(row.r, self.baseYear, hr), 'price_wt']
-                for hr in hourMap[row.hr]
+                self.prices['BasePrices'].loc[(row.region, self.baseYear, hr), 'price_wt']
+                for hr in hourMap[row.hour]
             )
-            / (len(hourMap[row.hr])),
+            / (len(hourMap[row.hour])),
             axis=1,
         )
         newLoad['AvgBaseLoad'] = newLoad.apply(
             lambda row: sum(
-                self.loads['BaseLoads'].loc[(row.r, self.baseYear, hr), 'Load']
-                * self.hr_map.loc[hr, 'Hr_weights']
-                for hr in hourMap[row.hr]
+                self.loads['BaseLoads'].loc[(row.region, self.baseYear, hr), 'Load']
+                * self.hr_map.loc[hr, 'WeightHour']
+                for hr in hourMap[row.hour]
             )
-            / (len(hourMap[row.hr])),
+            / (len(hourMap[row.hour])),
             axis=1,
         )
 
@@ -579,7 +642,7 @@ class residentialModule:
             newLoad['Load'] = self.demandF(
                 newLoad.newPrice,
                 newLoad.AvgBaseLoad,
-                newLoad.y,
+                newLoad.year,
                 newLoad.AvgBasePrice,
                 income=newLoad.income,
             )
@@ -588,7 +651,7 @@ class residentialModule:
             newLoad['Load'] = self.demandF(
                 newLoad.newPrice,
                 newLoad.AvgBaseLoad,
-                newLoad.y,
+                newLoad.year,
                 newLoad.AvgBasePrice,
                 i_elas=newLoad.i_elas,
             )
@@ -597,7 +660,7 @@ class residentialModule:
             newLoad['Load'] = self.demandF(
                 newLoad.newPrice,
                 newLoad.AvgBaseLoad,
-                newLoad.y,
+                newLoad.year,
                 newLoad.AvgBasePrice,
                 p_elas=newLoad.p_elas,
             )
@@ -606,14 +669,14 @@ class residentialModule:
             newLoad['Load'] = self.demandF(
                 newLoad.newPrice,
                 newLoad.AvgBaseLoad,
-                newLoad.y,
+                newLoad.year,
                 newLoad.AvgBasePrice,
                 trend=newLoad.trendGR,
             )
         else:
             newLoad['price'] = newLoad.newPrice + dih
             newLoad['Load'] = self.demandF(
-                newLoad.price, newLoad.AvgBaseLoad, newLoad.y, newLoad.AvgBasePrice
+                newLoad.price, newLoad.AvgBaseLoad, newLoad.year, newLoad.AvgBasePrice
             )
 
         newLoad['deriv'] = np.imag(newLoad.Load) / complex_step
@@ -622,7 +685,7 @@ class residentialModule:
         newLoad['upper'] = newLoad.Load + newLoad.deriv * change * np.real(newLoad[change_var])
         newLoad['lower'] = newLoad.Load - newLoad.deriv * change * np.real(newLoad[change_var])
 
-        newLoad = newLoad.set_index(['r', 'y', 'hr'], drop=False)
+        newLoad = newLoad.set_index(['region', 'year', 'hour'], drop=False)
 
         return newLoad[['Load', 'upper', 'lower']]
 
@@ -641,16 +704,16 @@ class residentialModule:
             years to be graphed
         """
         values.reset_index(inplace=True)
-        OUTPUT_ROOT = get_output_root()
+        OUTPUT_ROOT = self.OUTPUT_ROOT
         if 'plotly' in sys.modules:
             pd.options.plotting.backend = 'plotly'
             for y in years:
                 for r in regions:
-                    values.loc[(values.r == r) & (values.y == y)].plot(
-                        x='hr',
+                    values.loc[(values.region == r) & (values.year == y)].plot(
+                        x='hour',
                         y=['upper', 'lower', 'Load'],
                         title=f'Load Values For Region {r} In Year {y}',
-                        labels={'hr': 'Hours', 'value': 'Load Values'},
+                        labels={'hour': 'Hours', 'value': 'Load Values'},
                     )
                     plt.savefig(
                         Path(OUTPUT_ROOT, f'NewLoadSensitivity_{r}_{y}.png'), format='png', dpi=300
@@ -658,8 +721,8 @@ class residentialModule:
         else:
             for y in years:
                 for r in regions:
-                    values.loc[(values.r == r) & (values.y == y)].plot(
-                        x='hr',
+                    values.loc[(values.region == r) & (values.year == y)].plot(
+                        x='hour',
                         y=['upper', 'lower', 'Load'],
                         title=f'Load Values For Region {r} In Year {y}',
                         xlabel='Hours',
@@ -673,7 +736,8 @@ class residentialModule:
     def view_output_load(
         self, values: pd.DataFrame, regions: list[int] = [1], years: list[int] = [2023]
     ):
-        """This is used to display the updated Load values after calculation. It will create a graph for each region and year combination.
+        """This is used to display the updated Load values after calculation. It will create a
+        graph for each region and year combination.
 
         Parameters
         ----------
@@ -684,23 +748,23 @@ class residentialModule:
         years : list[int], optional
             The years to be displayed
         """
-        OUTPUT_ROOT = get_output_root()
+        OUTPUT_ROOT = self.OUTPUT_ROOT
         if 'plotly' in sys.modules:
             pd.options.plotting.backend = 'plotly'
             for y in years:
                 for r in regions:
-                    values.loc[(values.r == r) & (values.y == y)].plot(
-                        x='hr',
+                    values.loc[(values.region == r) & (values.year == y)].plot(
+                        x='hour',
                         y='Load',
                         title=f'Load Values For Region {r} In Year {y}',
-                        labels={'hr': 'Hours', 'value': 'Load Values'},
+                        labels={'hour': 'Hours', 'value': 'Load Values'},
                     )
                     plt.savefig(Path(OUTPUT_ROOT, f'NewLoad_{r}_{y}.png'), format='png', dpi=300)
         else:
             for y in years:
                 for r in regions:
-                    values.loc[(values.r == r) & (values.y == y)].plot(
-                        x='hr',
+                    values.loc[(values.region == r) & (values.year == y)].plot(
+                        x='hour',
                         y='Load',
                         title=f'Load Values For Region {r} In Year {y}',
                         xlabel='Hours',
@@ -748,8 +812,9 @@ class residentialModule:
 
 
 def run_residential(settings: Config_settings):
-    """This runs the residential model in stand-alone mode. It can run update_load to calculate new Load values based on prices,
-    or it can calculate the new Load value along with estimates for the Load if one of the input variables changes.
+    """This runs the residential model in stand-alone mode. It can run update_load to calculate new
+    Load values based on prices, or it can calculate the new Load value along with estimates for
+    the Load if one of the input variables changes.
 
     Parameters
     ----------
@@ -757,13 +822,13 @@ def run_residential(settings: Config_settings):
         information given from run_config to set several values
     """
     logger.info('Creating residentialModule object')
-    input_path = PROJECT_ROOT / 'src/models/residential/input/testPrices.csv'
+    input_path = PROJECT_ROOT / 'input/residential/testPrices.csv'
     model = residentialModule(settings=settings)
     testPrices = pd.read_csv(input_path)
     testPricesSelected = testPrices.loc[
-        (testPrices.r.isin(settings.regions)) & (testPrices.y.isin(settings.years))
+        (testPrices.region.isin(settings.regions)) & (testPrices.year.isin(settings.years))
     ]
-    testPricesSelected.set_index(['r', 'y', 'hr'], inplace=True)
+    testPricesSelected.set_index(['region', 'year', 'hour'], inplace=True)
     # Run the model using either the sensitivity method or the update_load method based on settings
     if settings.sensitivity & settings.complex:
         logger.info('Calling complex-step sensitivity function')

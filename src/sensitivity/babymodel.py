@@ -11,11 +11,11 @@ model parameters as input.
 
 # Import packages
 import pyomo.environ as pyo
-from sensitivity_tools import *
+from src.sensitivity.sensitivity_tools import *
 import random as rnd
 
 # Establish logger
-logger = getLogger(__name__)
+# logger = getLogger(__name__)
 
 ###################################################################################################
 

@@ -16,12 +16,13 @@ from pyomo.util.infeasible import (
 )
 from logging import getLogger
 
-# Import scripts
+# Import python modules
 from definitions import PROJECT_ROOT
 import src.models.electricity.scripts.preprocessor as prep
 import src.models.electricity.scripts.postprocessor as post
-import src.models.electricity.scripts.common.common as com
+from src.models.electricity.scripts.utilities import check_results
 from src.models.electricity.scripts.electricity_model import PowerModel
+from src.common.config_setup import Config_settings
 
 from src.integrator.utilities import select_solver
 
@@ -51,9 +52,6 @@ def build_elec_model(all_frames, setin) -> PowerModel:
     PowerModel
         built (but unsolved) electricity model
     """
-    # disabling garbage collection to improve runtime
-    gc.disable()
-
     # Building model
     logger.info('Build Pyomo')
     instance = PowerModel(all_frames, setin)
@@ -109,8 +107,8 @@ def solve_elec_model(instance):
             # Update tolerance
             tol = sum(
                 [
-                    abs(instance.old_cap_wt[(pt, y)] - instance.new_cap_wt[(pt, y)])
-                    for (pt, y) in instance.cap_set
+                    abs(instance.old_cap_wt[(tech, y)] - instance.new_cap_wt[(tech, y)])
+                    for (tech, y) in instance.cap_set
                 ]
             )
 
@@ -127,7 +125,7 @@ def solve_elec_model(instance):
 
     ### Check results and load model solutions
     # Check results for termination condition and solution status
-    if com.check_results(opt_success, SolutionStatus, TerminationCondition):
+    if check_results(opt_success, SolutionStatus, TerminationCondition):
         name = 'noclass!'
         logger.info(f'[{name}] Solve failed')
         if opt_success is not None:
@@ -148,7 +146,7 @@ def solve_elec_model(instance):
         exit()
 
 
-def run_elec_model(settings, solve=True) -> PowerModel:
+def run_elec_model(settings: Config_settings, solve=True) -> PowerModel:
     """build electricity model (and solve if solve=True) after passing in settings
 
     Parameters
@@ -204,11 +202,11 @@ def run_elec_model(settings, solve=True) -> PowerModel:
 
     # Check
     # Objective Value
-    obj_val = pyo.value(instance.totalCost)
+    obj_val = pyo.value(instance.total_cost)
     # print('Objective Function Value =',obj_val)
 
     logger.info('Displaying solution...')
-    logger.info(f'instance.totalCost(): {instance.totalCost()}')
+    logger.info(f'instance.total_cost(): {instance.total_cost()}')
 
     logger.info('Logging infeasible constraints...')
     log_infeasible_constraints(instance, logger=logger)
@@ -232,7 +230,8 @@ def run_elec_model(settings, solve=True) -> PowerModel:
     ###############################################################################################
     # Post-procressing
 
-    post.postprocessor(instance)
+    if not settings.test:
+        post.postprocessor(instance)
     timer.toc('postprocessing done')
 
     # final steps for measuring the run time of the code
@@ -266,12 +265,12 @@ def init_old_cap(instance):
     instance.cap_set = []
     instance.old_cap_wt = {}
 
-    for r, pt, y, steps in instance.capacity_builds_index:
-        if (pt, y) not in instance.old_cap:
-            instance.cap_set.append((pt, y))
-            # each pt will increase cap by 1 GW per year. reasonable starting point.
-            instance.old_cap[(pt, y)] = (y - instance.y0) * 1
-            instance.old_cap_wt[(pt, y)] = instance.year_weights[y] * instance.old_cap[(pt, y)]
+    for r, tech, y, step in instance.capacity_builds_index:
+        if (tech, y) not in instance.old_cap:
+            instance.cap_set.append((tech, y))
+            # each tech will increase cap by 1 GW per year. reasonable starting point.
+            instance.old_cap[(tech, y)] = (y - instance.y0) * 1
+            instance.old_cap_wt[(tech, y)] = instance.WeightYear[y] * instance.old_cap[(tech, y)]
 
 
 def set_new_cap(instance):
@@ -284,23 +283,23 @@ def set_new_cap(instance):
     """
     instance.new_cap = {}
     instance.new_cap_wt = {}
-    for r, pt, y, steps in instance.capacity_builds_index:
-        if (pt, y) not in instance.new_cap:
-            instance.new_cap[(pt, y)] = 0.0
-        instance.new_cap[(pt, y)] = instance.new_cap[(pt, y)] + sum(
-            instance.capacity_builds[(r, pt, year, steps)].value for year in instance.y if year < y
+    for r, tech, y, step in instance.capacity_builds_index:
+        if (tech, y) not in instance.new_cap:
+            instance.new_cap[(tech, y)] = 0.0
+        instance.new_cap[(tech, y)] = instance.new_cap[(tech, y)] + sum(
+            instance.capacity_builds[(r, tech, year, step)].value for year in instance.y if year < y
         )
-        instance.new_cap_wt[(pt, y)] = instance.year_weights[y] * instance.new_cap[(pt, y)]
+        instance.new_cap_wt[(tech, y)] = instance.WeightYear[y] * instance.new_cap[(tech, y)]
 
 
-def cost_learning_func(instance, pt, y):
+def cost_learning_func(instance, tech, y):
     """function for updating learning costs by technology and year
 
     Parameters
     ----------
     instance : PowerModel
         electricity pyomo model
-    pt : int
+    tech : int
         technology type
     y : int
         year
@@ -311,9 +310,13 @@ def cost_learning_func(instance, pt, y):
         updated capital cost based on learning calculation
     """
     cost = (
-        (instance.SupplyCurveLearning[pt] + 0.0001 * (y - instance.y0) + instance.new_cap[pt, y])
-        / instance.SupplyCurveLearning[pt]
-    ) ** (-1.0 * instance.LearningRate[pt])
+        (
+            instance.SupplyCurveLearning[tech]
+            + 0.0001 * (y - instance.y0)
+            + instance.new_cap[tech, y]
+        )
+        / instance.SupplyCurveLearning[tech]
+    ) ** (-1.0 * instance.LearningRate[tech])
     return cost
 
 
@@ -326,14 +329,14 @@ def update_cost(instance):
         electricity pyomo model
     """
     new_multiplier = {}
-    for pt, y in instance.cap_set:
-        new_multiplier[(pt, y)] = cost_learning_func(instance, pt, y)
+    for tech, y in instance.cap_set:
+        new_multiplier[(tech, y)] = cost_learning_func(instance, tech, y)
 
     new_cost = {}
     # Assign new learning
-    for r, pt, y, steps in instance.capacity_builds_index:
+    for r, tech, y, step in instance.capacity_builds_index:
         # updating learning cost
-        new_cost[(r, pt, y, steps)] = (
-            instance.CapCostInitial[(r, pt, steps)] * new_multiplier[pt, y]
+        new_cost[(r, tech, y, step)] = (
+            instance.CapCostInitial[(r, tech, step)] * new_multiplier[tech, y]
         )
-        instance.CapCostLearning[(r, pt, y, steps)].value = new_cost[(r, pt, y, steps)]
+        instance.CapCostLearning[(r, tech, y, step)].value = new_cost[(r, tech, y, step)]

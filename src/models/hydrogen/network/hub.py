@@ -2,9 +2,8 @@
 HUB CLASS
 ~~~~~~~~~
 
-class objects are individual hubs, which are fundamental units of production in
-the model. Hubs belong to regions, and connect to each other with transportation
-arcs.
+class objects are individual hubs, which are fundamental units of production in the model. Hubs
+belong to regions, and connect to each other with transportation arcs.
 """
 ###################################################################################################
 # Setup
@@ -31,8 +30,7 @@ class Hub:
         self.region = region
 
         if data is not None:
-            
-            self.data = data.fillna(0).infer_objects(copy=False)
+            self.data = data.mask(data.isna(), 0).infer_objects(copy=False)
 
         # outbound and inbound dictionaries mapping names of hubs to the arc objects
         self.outbound = {}
