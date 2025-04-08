@@ -1,0 +1,12 @@
+first_year = 2023
+last_year = 2050
+population_year = 2022
+EIA860m_excel_name = 'may_generator2024'
+
+
+[executions]
+vre_capfactor = true
+supplycurve = true
+transmission = true
+other_data = true
+

@@ -1,0 +1,51 @@
+name: bsky
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.12.5
+  - numpy=2.1.1 
+  - pandas=2.2.2
+  - sympy=1.12.1 # pinning this because version 1.13 seems to have problem with the lambdify operation is res mod #works
+  - pyomo=6.8.0 
+  - highs=1.7.2
+  - highspy=1.7.2
+  - ipopt=3.14.17
+  - ruff=0.6.2
+  - grequests=0.6.0
+  - matplotlib=3.9.2
+  - plotly=5.24.0
+  - pytest=8.3.2
+  - sqlalchemy=2.0.33
+  - networkx=3.3
+  - openpyxl=3.1.5
+  - dash=2.17.1
+  - pathlib=1.0.1
+  - toml=0.10.2
+  - dash-bootstrap-components=1.6.0
+  - tomli=2.0.1
+  - tomlkit=0.13.2
+
+# For data pipelines in sample
+  - snakemake=8.18.2
+  - aiohttp=3.10.5
+  - graphviz=11.0.0
+  - r-base=4.4.2
+  - r-tidyverse=2.0.0
+  - r-data.table=1.17.0
+  - r-sf=1.0_19
+  - r-tigris=2.1
+  - r-here=1.0.1
+  - r-tidycensus=1.7.1
+  - r-readxl=1.4.3
+  - r-chron=2.3-61
+  - r-lmtest=0.9_40
+  - r-lubridate=1.9.4 
+  - r-caret=6.0-94
+  - r-fBasics=4041.97
+  - h5py=3.12.1
+  - requests=2.32.3
+
+# needed?  ... for removal?
+  - pylint=3.2.7
+  - tabulate=0.9.0
