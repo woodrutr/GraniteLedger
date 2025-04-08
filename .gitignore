@@ -37,6 +37,7 @@ output/*
 !output/*.bat
 !output/*.py
 !output/tech_colors.csv
+!output/*.md
 !output/test
 output/test/*
 unit_tests/model_test/mode_test_log

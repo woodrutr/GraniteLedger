@@ -399,4 +399,4 @@ U.S. Energy Information Administration
 The BlueSky code, as distributed here, is governed by the [Apache 2.0 license](https://github.com/eiagov)
 
 ### Project status
-In April 2025, EIA released Version 1.1 of the Project BlueSky prototype model.  Given current resource constraints, EIA will pause future Project BlueSky model development activity.
+In April 2025, EIA released Version 1.1 of the Project BlueSky prototype model.  Given current resource constraints, EIA will pause future Project BlueSky model development activity. Project BlueSky enabled EIA to explore new energy modeling approaches, and this foundational work will serve as a basis for EIA’s future long-term model development efforts as EIA continues to advance its energy modeling capabilities.
