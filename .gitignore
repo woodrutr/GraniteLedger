@@ -46,6 +46,3 @@ unit_tests/test_logs/electricity/prices/elec_price.csv
 *.db
 *.h5
 *.zip
-
-!sample/electricity_data_pipeline/output/*.py
-!sample/enduse_data_pipeline/output/*.py

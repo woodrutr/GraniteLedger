@@ -17,6 +17,7 @@ weather_data.db
 /.snakemake/*
 raw_data/*
 /inputs/EIA930/*
+!/inputs/EIA930/*.xlsx
 *.db
 *.h5
 *.zip

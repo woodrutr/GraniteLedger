@@ -13,6 +13,7 @@ __pycache__
 .snakemake
 
 output/*
+!/output/*.py
 settings/*
 !settings/*.py
 !settings/data_config.toml
