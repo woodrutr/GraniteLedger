@@ -71,8 +71,9 @@ fwrite(dt.ba_basr_merge,
 f_countymerge <- function(i.year){
   
   ### Load County File and calculate area
-  sf.cnty <- tigris::counties(cb = TRUE,
-                              year = 2019) %>%
+  sf.cnty <- st_read(here("inputs", "shapefiles", "cb_2019_us_county_5m.shp")) %>%
+  # sf.cnty <- tigris::counties(cb = TRUE,
+  #                             year = 2019) %>%
     st_transform(v.crs) %>%
     mutate(FIPS_cnty = GEOID) %>%
     mutate(Area_m2  = as.numeric(round(st_area(.),0))) %>%

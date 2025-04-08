@@ -1,0 +1,81 @@
+## ams_version=1.0
+
+Model Main_Beer_Transport {
+	Set Plants {
+		Index: p;
+	}
+	Set Customers {
+		Index: c;
+	}
+	Parameter Supply {
+		IndexDomain: p;
+	}
+	Parameter Demand {
+		IndexDomain: c;
+	}
+	Parameter UnitTransportCost {
+		IndexDomain: (p,c);
+	}
+	Constraint SupplyRestriction {
+		IndexDomain: p;
+		Definition: sum[ c, Transport(p,c) ] <= Supply(p);
+	}
+	Constraint DemandRequirement {
+		IndexDomain: c;
+		Definition: sum[ p, Transport(p,c) ] >= Demand(c);
+	}
+	Variable Transport {
+		IndexDomain: (p,c);
+		Range: nonnegative;
+	}
+	Variable TotalTransportCost {
+		Range: free;
+		Definition: sum[ (p,c), UnitTransportCost(p,c) * Transport(p,c) ];
+	}
+	MathematicalProgram LeastCostTransportPlan {
+		Objective: TotalTransportCost;
+		Direction: minimize;
+		Constraints: AllConstraints;
+		Variables: AllVariables;
+		Type: Automatic;
+	}
+	Procedure MainInitialization {
+		Comment: "Add initialization statements here that do NOT require any library being initialized already.";
+	}
+	Procedure PostMainInitialization {
+		Comment: {
+			"Add initialization statements here that require that the libraries are already initialized properly,
+			or add statements that require the Data Management module to be initialized."
+		}
+	}
+	Procedure MainExecution {
+		Body: {
+			solve LeastCostTransportPlan;
+			
+			if( LeastCostTransportPlan.ProgramStatus <> 'Optimal' ) then
+				empty Transport, TotalTransportCost;
+			endif;
+		}
+	}
+	Procedure PreMainTermination {
+		Body: {
+			return DataManagementExit();
+		}
+		Comment: {
+			"Add termination statements here that require all libraries to be still alive.
+			Return 1 if you allow the termination sequence to continue.
+			Return 0 if you want to cancel the termination sequence."
+		}
+	}
+	Procedure MainTermination {
+		Body: {
+			return 1;
+		}
+		Comment: {
+			"Add termination statements here that do not require all libraries to be still alive.
+			Return 1 to allow the termination sequence to continue.
+			Return 0 if you want to cancel the termination sequence.
+			It is recommended to only use the procedure PreMainTermination to cancel the termination sequence and let this procedure always return 1."
+		}
+	}
+}

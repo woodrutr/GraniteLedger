@@ -117,8 +117,9 @@ dt.ba_basr <- fread(here("outputs", "crosswalks", "EIA_BA-BASR-County.csv")) %>%
 f_findnearest_year <- function(i.year){
   
   ### Load county shapefile for each year; calculate centroid
-  sf.county = tigris::counties(cb = TRUE,
-                               year = 2019)  %>%
+  sf.county <- st_read(here("inputs", "shapefiles", "cb_2019_us_county_5m.shp")) %>%
+  # sf.county = tigris::counties(cb = TRUE,
+  #                              year = 2019)  %>%
     st_transform(v.crs)                        %>%
     mutate(FIPS_cnty    = GEOID)               %>%
     dplyr::select(FIPS_cnty)                   %>%

@@ -63,8 +63,9 @@ v.crs  <- "ESRI:102008"
 f_basr_make <- function(i.year){
   
   ### Load Counties (from API), set CRS, and calculate county size
-  sf.ba_cnty  <- tigris::counties(cb = TRUE,
-                                 year = 2019)  %>%
+  sf.ba_cnty  <- st_read(here("inputs", "shapefiles", "cb_2019_us_county_5m.shp")) %>%
+  # sf.ba_cnty  <- tigris::counties(cb = TRUE,
+  #                                year = 2019)  %>%
     st_transform(v.crs)                        %>%
     mutate(FIPS_cnty = GEOID)                  %>%
     mutate(Area_m2  = as.numeric(round(st_area(.),0))) %>%
