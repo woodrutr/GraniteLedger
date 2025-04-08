@@ -36,6 +36,7 @@ src/models/hydrogen/output/*.csv
 output/*
 !output/*.bat
 !output/*.py
+!output/*.md
 !output/tech_colors.csv
 !output/test
 output/test/*
