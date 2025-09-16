@@ -39,7 +39,7 @@ regions = [7,8,9] # representative region mapping switches
 ###################################################################################################
 # Electricity Inputs
 
-## Electricity feature switches 
+## Electricity feature switches
 ## Unless otherwise specified, 0=off, 1=on
 
 sw_trade = 1 # Interregional trade switch
@@ -48,9 +48,13 @@ sw_rm = 1 # Reserve margin requirement switch
 sw_ramp = 0 # Maximum ramping constraint switch
 sw_reserves = 1 # Operating reserve requirement switch
 
+# Carbon policy
+# Specify a system-wide CO2 emissions cap in metric tons. Set to null for no cap.
+carbon_cap = null
+
 # Aggregate years switch
 # When on, representative years are aggregated and weighted based on unselected years
-sw_agg_years = 1 
+sw_agg_years = 1
 
 # Capital cost technology learning switch
 # Turning this feature on, capital cost can be a function of the amount of capacity built by technology.

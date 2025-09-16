@@ -23,6 +23,8 @@ from logging import getLogger
 from definitions import PROJECT_ROOT
 from src.models.electricity.scripts.utilities import create_obj_df
 
+PRICED_CONSTRAINTS = {'demand_balance', 'total_emissions_cap'}
+
 # Establish logger
 logger = getLogger(__name__)
 
@@ -56,8 +58,12 @@ def report_obj_df(mod_object, instance, dir_out, sub_dir):
     # TODO:  Consider if these objs needs reporting, and if so adjust...
     if name not in ['var_elec_request', 'FixedElecRequest']:
         # get data associated with object
-        df = create_obj_df(mod_object)
+        df = create_obj_df(mod_object, instance=instance)
         if not df.empty:
+            dual_series = None
+            if 'dual' in df.columns:
+                dual_series = df['dual'].reset_index(drop=True)
+                df = df.drop(columns=['dual'])
             # get column names associated with object if available
             if name in instance.cols_dict:
                 df.columns = ['Key'] + instance.cols_dict[name]
@@ -66,6 +72,15 @@ def report_obj_df(mod_object, instance, dir_out, sub_dir):
             else:
                 pass
                 # logger.debug('Electricity Model:' + name + ' missing from cols_dict')
+            if dual_series is not None:
+                insert_pos = 2 if df.shape[1] >= 2 else 1
+                df.insert(insert_pos, 'dual', dual_series)
+                if not dual_series.isna().all() and name in PRICED_CONSTRAINTS:
+                    price_df = pd.DataFrame({'Key': df['Key'], 'shadow_price': dual_series})
+                    price_df.to_csv(
+                        Path(dir_out / 'prices' / f'{name}.csv'),
+                        index=False,
+                    )
             df.to_csv(Path(dir_out / sub_dir / f'{name}.csv'), index=False)
         else:
             logger.info('Electricity Model:' + name + ' is empty.')
