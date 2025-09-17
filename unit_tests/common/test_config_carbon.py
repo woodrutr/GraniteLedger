@@ -16,6 +16,7 @@ RUN_CONFIG_PATH = Path(PROJECT_ROOT, "src/common", "run_config.toml")
 
 
 def _write_temp_config(tmp_path, contents: str) -> Path:
+    """Write a temporary run_config.toml and return its path."""
     temp_config_path = tmp_path / "run_config.toml"
     temp_config_path.write_text(contents)
     return temp_config_path
@@ -32,7 +33,7 @@ def _remove_cap_group_tables(config_contents: str) -> list[str]:
             skip_cap_group = True
             continue
         if skip_cap_group:
-            # end of an array-of-tables block when we hit a blank line
+            # end of block when we hit a blank line
             if stripped == "":
                 skip_cap_group = False
             continue
