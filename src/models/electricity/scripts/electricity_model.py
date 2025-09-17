@@ -70,13 +70,24 @@ class PowerModel(Model):
         self.sw_reserves = setA.sw_reserves
         self.sw_h2int = 0
         self.carbon_cap = setA.carbon_cap
-        self.carbon_allowance_start_bank = getattr(setA, 'carbon_allowance_start_bank', 0.0)
-        self.carbon_allowance_bank_enabled = getattr(
-            setA, 'carbon_allowance_bank_enabled', True
-        )
-        self.carbon_allowance_allow_borrowing = getattr(
-            setA, 'carbon_allowance_allow_borrowing', False
-        )
+        self.carbon_cap_group_names = list(getattr(setA, 'carbon_cap_group_names', []))
+        start_bank_raw = getattr(setA, 'carbon_cap_group_start_bank', {}) or {}
+        bank_enabled_raw = getattr(setA, 'carbon_cap_group_bank_enabled', {}) or {}
+        allow_borrowing_raw = getattr(
+            setA, 'carbon_cap_group_allow_borrowing', {}
+        ) or {}
+        self.carbon_cap_group_start_bank = {
+            group: float(start_bank_raw.get(group, 0.0))
+            for group in self.carbon_cap_group_names
+        }
+        self.carbon_cap_group_bank_enabled = {
+            group: bool(bank_enabled_raw.get(group, True))
+            for group in self.carbon_cap_group_names
+        }
+        self.carbon_cap_group_allow_borrowing = {
+            group: bool(allow_borrowing_raw.get(group, False))
+            for group in self.carbon_cap_group_names
+        }
         self.year_list = list(setA.years)
         self.first_year = self.year_list[0] if self.year_list else None
         self.prev_year_lookup = {
@@ -121,6 +132,20 @@ class PowerModel(Model):
         self.declare_set('region_int', setA.region_int)
         self.declare_set('region_trade', setA.region_trade)
         self.declare_set('region_int_trade', setA.region_int_trade)
+
+        self.declare_set('carbon_cap_group', self.carbon_cap_group_names)
+        allowances_index_df = all_frames.get('CarbonAllowanceProcurement')
+        if allowances_index_df is None:
+            allowances_index_df = pd.DataFrame(
+                columns=['cap_group', 'year', 'CarbonAllowanceProcurement']
+            ).set_index(['cap_group', 'year'])
+        self.declare_set('carbon_cap_group_year_index', allowances_index_df)
+        membership_index_df = all_frames.get('CarbonCapGroupMembership')
+        if membership_index_df is None:
+            membership_index_df = pd.DataFrame(
+                columns=['cap_group', 'region', 'CarbonCapGroupMembership']
+            ).set_index(['cap_group', 'region'])
+        self.declare_set('carbon_cap_group_region_index', membership_index_df)
 
         # Load sets
         self.declare_set('demand_balance_index', all_frames['Load'])
@@ -237,24 +262,41 @@ class PowerModel(Model):
         if self.carbon_cap is not None:
             self.declare_param('CarbonCap', None, self.carbon_cap)
 
-        self.declare_param(
-            'CarbonStartBank', None, self.carbon_allowance_start_bank, mutable=True
+        start_bank_series = pd.Series(
+            {
+                group: self.carbon_cap_group_start_bank.get(group, 0.0)
+                for group in self.carbon_cap_group_names
+            },
+            name='CarbonStartBank',
+            dtype=float,
         )
-        if 'CarbonAllowanceProcurement' in all_frames:
-            self.declare_param(
-                'CarbonAllowanceProcurement',
-                self.year,
-                all_frames['CarbonAllowanceProcurement'],
-                mutable=True,
-            )
-        else:
-            allowance_fallback = pd.Series(
-                {year: 0.0 for year in setA.years}, name='CarbonAllowanceProcurement'
-            )
-            allowance_fallback.index.name = 'year'
-            self.declare_param(
-                'CarbonAllowanceProcurement', self.year, allowance_fallback, mutable=True
-            )
+        start_bank_series.index.name = 'carbon_cap_group'
+        self.declare_param(
+            'CarbonStartBank', self.carbon_cap_group, start_bank_series, mutable=True
+        )
+
+        membership_param_df = all_frames.get('CarbonCapGroupMembership')
+        if membership_param_df is None:
+            membership_param_df = pd.DataFrame(
+                columns=['cap_group', 'region', 'CarbonCapGroupMembership']
+            ).set_index(['cap_group', 'region'])
+        self.declare_param(
+            'CarbonCapGroupMembership',
+            self.carbon_cap_group_region_index,
+            membership_param_df,
+        )
+
+        allowances_param_df = all_frames.get('CarbonAllowanceProcurement')
+        if allowances_param_df is None:
+            allowances_param_df = pd.DataFrame(
+                columns=['cap_group', 'year', 'CarbonAllowanceProcurement']
+            ).set_index(['cap_group', 'year'])
+        self.declare_param(
+            'CarbonAllowanceProcurement',
+            self.carbon_cap_group_year_index,
+            allowances_param_df,
+            mutable=True,
+        )
         if 'CarbonAllowancePrice' in all_frames:
             self.declare_param(
                 'CarbonPrice', self.year, all_frames['CarbonAllowancePrice'], mutable=True
@@ -375,15 +417,29 @@ class PowerModel(Model):
         self.declare_var('storage_inflow', self.Storage_index)
         self.declare_var('storage_outflow', self.Storage_index)
         self.declare_var('storage_level', self.Storage_index)
-        self.declare_var('allowance_purchase', self.year, bound=(0, 1000000000000))
-        bank_within = 'Reals' if self.carbon_allowance_allow_borrowing else 'NonNegativeReals'
+        self.declare_var(
+            'allowance_purchase',
+            self.carbon_cap_group_year_index,
+            bound=(0, 1000000000000),
+        )
+        allow_borrowing_any = any(self.carbon_cap_group_allow_borrowing.values())
+        bank_within = 'Reals' if allow_borrowing_any else 'NonNegativeReals'
         bank_bounds = (
             (-1000000000000, 1000000000000)
-            if self.carbon_allowance_allow_borrowing
+            if allow_borrowing_any
             else (0, 1000000000000)
         )
-        self.declare_var('allowance_bank', self.year, within=bank_within, bound=bank_bounds)
-        self.declare_var('year_emissions', self.year, bound=(0, 1000000000000))
+        self.declare_var(
+            'allowance_bank',
+            self.carbon_cap_group_year_index,
+            within=bank_within,
+            bound=bank_bounds,
+        )
+        self.declare_var(
+            'year_emissions',
+            self.carbon_cap_group_year_index,
+            bound=(0, 1000000000000),
+        )
 
         # if capacity expansion is on
         if self.sw_expansion:
@@ -483,13 +539,17 @@ class PowerModel(Model):
             """Total cost of procured carbon allowances."""
 
             return sum(
-                self.CarbonPrice[y] * self.allowance_purchase[y] for y in self.year
+                self.CarbonPrice[y] * self.allowance_purchase[(cap_group, y)]
+                for (cap_group, y) in self.carbon_cap_group_year_index
             )
 
         self.carbon_allowance_cost = pyo.Expression(expr=carbon_allowance_cost)
 
         self.total_emissions = pyo.Expression(
-            expr=sum(self.year_emissions[y] for y in self.year)
+            expr=sum(
+                self.year_emissions[(cap_group, y)]
+                for (cap_group, y) in self.carbon_cap_group_year_index
+            )
         )
 
         # if capacity expansion is on
@@ -670,51 +730,77 @@ class PowerModel(Model):
         ###########################################################################################
         # Constraints
 
-        def incoming_bank(m, year):
+        def incoming_bank(m, cap_group, year):
             prev_year = m.prev_year_lookup.get(year)
             carryover = (
-                m.allowance_bank[prev_year]
-                if (m.carbon_allowance_bank_enabled and prev_year is not None)
+                m.allowance_bank[(cap_group, prev_year)]
+                if (
+                    m.carbon_cap_group_bank_enabled.get(cap_group, True)
+                    and prev_year is not None
+                )
                 else 0
             )
             start_bank = (
-                m.CarbonStartBank if (m.first_year is not None and year == m.first_year) else 0
+                m.CarbonStartBank[cap_group]
+                if (m.first_year is not None and year == m.first_year)
+                else 0
             )
             return carryover + start_bank
 
-        @self.Constraint(self.year)
-        def year_emissions_balance(self, y):
+        @self.Constraint(self.carbon_cap_group_year_index)
+        def year_emissions_balance(self, cap_group, y):
             """Link yearly emissions variable to generation decisions."""
 
-            return self.year_emissions[y] == pyo.quicksum(
+            return self.year_emissions[(cap_group, y)] == pyo.quicksum(
                 self.WeightDay[self.MapHourDay[hr]]
                 * self.WeightYear[y]
                 * self.EmissionsRate[tech]
                 * self.generation_total[(tech, y_idx, r, step, hr)]
+                * self.CarbonCapGroupMembership[(cap_group, r)]
                 for hr in self.hour
                 for (tech, y_idx, r, step) in self.GenHour_index[hr]
                 if y_idx == y
             )
 
-        @self.Constraint(self.year)
-        def allowance_purchase_limit(self, y):
+        @self.Constraint(self.carbon_cap_group_year_index)
+        def allowance_purchase_limit(self, cap_group, y):
             """Bound allowance purchases by available procurement."""
 
-            return self.allowance_purchase[y] <= self.CarbonAllowanceProcurement[y]
+            return (
+                self.allowance_purchase[(cap_group, y)]
+                <= self.CarbonAllowanceProcurement[(cap_group, y)]
+            )
 
-        @self.Constraint(self.year)
-        def allowance_bank_balance(self, y):
+        @self.Constraint(self.carbon_cap_group_year_index)
+        def allowance_bank_balance(self, cap_group, y):
             """Track allowance bank evolution across years."""
 
-            incoming = incoming_bank(self, y)
-            return self.allowance_bank[y] == incoming + self.allowance_purchase[y] - self.year_emissions[y]
+            incoming = incoming_bank(self, cap_group, y)
+            return self.allowance_bank[(cap_group, y)] == (
+                incoming
+                + self.allowance_purchase[(cap_group, y)]
+                - self.year_emissions[(cap_group, y)]
+            )
 
-        @self.Constraint(self.year)
-        def allowance_emissions_limit(self, y):
+        @self.Constraint(self.carbon_cap_group_year_index)
+        def allowance_emissions_limit(self, cap_group, y):
             """Ensure emissions do not exceed allowances plus incoming bank."""
 
-            incoming = incoming_bank(self, y)
-            return self.year_emissions[y] <= self.allowance_purchase[y] + incoming
+            incoming = incoming_bank(self, cap_group, y)
+            return self.year_emissions[(cap_group, y)] <= (
+                self.allowance_purchase[(cap_group, y)] + incoming
+            )
+
+        non_borrow_pairs = [
+            (cap_group, y)
+            for (cap_group, y) in self.carbon_cap_group_year_index
+            if not self.carbon_cap_group_allow_borrowing.get(cap_group, False)
+        ]
+        if non_borrow_pairs:
+            self.allowance_bank_nonneg = pyo.Constraint(
+                non_borrow_pairs,
+                rule=lambda m, cap_group, y: m.allowance_bank[(cap_group, y)] >= 0,
+            )
 
         if self.carbon_cap is not None:
             self.total_emissions_cap = pyo.Constraint(

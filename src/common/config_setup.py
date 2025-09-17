@@ -177,16 +177,62 @@ class Config_settings:
 
         ############################################################################################
         # __INIT__: Carbon Policy Configs
-        carbon_policy_section = config.get('carbon_policy')
-        if isinstance(carbon_policy_section, dict):
-            carbon_cap_value = carbon_policy_section.get('carbon_cap')
-        else:
-            carbon_cap_value = config.get('carbon_cap')
+        carbon_policy_section = config.get('carbon_policy') or {}
+        carbon_cap_value = carbon_policy_section.get('carbon_cap', config.get('carbon_cap'))
 
         if carbon_cap_value in (None, ''):
             self.carbon_cap = None
         else:
             self.carbon_cap = float(carbon_cap_value) * SHORT_TON_TO_METRIC_TON
+
+        cap_groups_section = carbon_policy_section.get('cap_groups', {})
+        parsed_cap_groups: dict[str, dict] = {}
+        if isinstance(cap_groups_section, dict):
+            for group_name, group_config in cap_groups_section.items():
+                if not isinstance(group_config, dict):
+                    continue
+
+                regions_raw = group_config.get('regions', []) or []
+                member_regions = [int(r) for r in regions_raw if int(r) in self.regions]
+                if not member_regions:
+                    continue
+
+                allowance_raw = group_config.get('allowance_procurement', {}) or {}
+                allowance_map = {
+                    int(year): float(value)
+                    for year, value in allowance_raw.items()
+                }
+
+                start_bank_raw = group_config.get('start_bank', 0.0)
+                start_bank = float(start_bank_raw) if start_bank_raw is not None else 0.0
+                bank_enabled = bool(group_config.get('bank_enabled', True))
+                allow_borrowing = bool(group_config.get('allow_borrowing', False))
+
+                parsed_cap_groups[group_name] = {
+                    'regions': member_regions,
+                    'allowance_procurement': allowance_map,
+                    'start_bank': start_bank,
+                    'bank_enabled': bank_enabled,
+                    'allow_borrowing': allow_borrowing,
+                }
+
+        self.carbon_cap_groups = parsed_cap_groups
+        self.carbon_cap_group_names = list(parsed_cap_groups.keys())
+        self.carbon_cap_group_regions = {
+            group: data['regions'] for group, data in parsed_cap_groups.items()
+        }
+        self.carbon_cap_group_allowance_overrides = {
+            group: data['allowance_procurement'] for group, data in parsed_cap_groups.items()
+        }
+        self.carbon_cap_group_start_bank = {
+            group: data['start_bank'] for group, data in parsed_cap_groups.items()
+        }
+        self.carbon_cap_group_bank_enabled = {
+            group: data['bank_enabled'] for group, data in parsed_cap_groups.items()
+        }
+        self.carbon_cap_group_allow_borrowing = {
+            group: data['allow_borrowing'] for group, data in parsed_cap_groups.items()
+        }
 
         ############################################################################################
         # __INIT__:  Electricity Configs
@@ -204,21 +250,6 @@ class Config_settings:
         else:
             carbon_cap_value = float(carbon_cap)
         self.carbon_cap = carbon_cap_value
-        allowance_procurement = config.get('carbon_allowance_procurement', {}) or {}
-        self.carbon_allowance_procurement = {
-            int(year): float(value) for year, value in allowance_procurement.items()
-        }
-        start_bank = config.get('carbon_allowance_start_bank', 0.0)
-        self.carbon_allowance_start_bank = (
-            float(start_bank) if start_bank is not None else 0.0
-        )
-        self.carbon_allowance_bank_enabled = bool(
-            config.get('carbon_allowance_bank_enabled', True)
-        )
-        self.carbon_allowance_allow_borrowing = bool(
-            config.get('carbon_allowance_allow_borrowing', False)
-        )
-
         ############################################################################################
         # __INIT__: Residential Configs
         self.scale_load = config['scale_load']
@@ -265,8 +296,6 @@ class Config_settings:
                 'force_10',
                 'sensitivity',
                 'complex',
-                'carbon_allowance_bank_enabled',
-                'carbon_allowance_allow_borrowing',
             },
             '_check_zero_one': {
                 'sw_trade',
