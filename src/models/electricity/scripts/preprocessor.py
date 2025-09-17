@@ -954,8 +954,18 @@ def preprocessor(setin):
     filter_list = ['CapCost']
     if 'CarbonAllowanceProcurement' in all_frames:
         filter_list.append('CarbonAllowanceProcurement')
+    years = getattr(setin, 'years')
     for key in filter_list:
-        all_frames[key] = all_frames[key].loc[all_frames[key]['year'].isin(getattr(setin, 'years'))]
+        frame = all_frames[key]
+        if 'year' in frame.columns:
+            all_frames[key] = frame.loc[frame['year'].isin(years)]
+        elif frame.index.name == 'year':
+            all_frames[key] = frame.loc[frame.index.isin(years)]
+        elif isinstance(frame.index, pd.MultiIndex) and 'year' in frame.index.names:
+            year_mask = frame.index.get_level_values('year').isin(years)
+            all_frames[key] = frame.loc[year_mask]
+        else:
+            all_frames[key] = frame
 
     # average values in years/hours used
     for key in all_frames.keys():
