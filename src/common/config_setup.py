@@ -53,6 +53,76 @@ class Config_settings:
             return trimmed_value
         return raw_value
 
+    def _configure_carbon_policy(self, config: dict):
+        """Configure carbon policy attributes based on the run configuration."""
+
+        carbon_policy_section = config.get('carbon_policy')
+        carbon_policy_config = (
+            carbon_policy_section if isinstance(carbon_policy_section, dict) else {}
+        )
+
+        top_level_carbon_cap = self._normalize_carbon_cap_value(config.get('carbon_cap'))
+        carbon_policy_defines_carbon_cap = 'carbon_cap' in carbon_policy_config
+
+        if carbon_policy_defines_carbon_cap:
+            carbon_cap_value = self._normalize_carbon_cap_value(
+                carbon_policy_config.get('carbon_cap')
+            )
+        else:
+            carbon_cap_value = top_level_carbon_cap
+
+        if carbon_cap_value is None:
+            self.carbon_cap = None
+        else:
+            self.carbon_cap = float(carbon_cap_value) * SHORT_TON_TO_METRIC_TON
+
+        if (
+            'carbon_cap' in config
+            and not carbon_policy_defines_carbon_cap
+            and top_level_carbon_cap is None
+        ):
+            self.carbon_cap = None
+
+        def _get_policy_value(policy_keys, root_key, default):
+            for key in policy_keys:
+                if key in carbon_policy_config:
+                    return carbon_policy_config[key]
+            return config.get(root_key, default)
+
+        allowance_procurement = _get_policy_value(
+            ('carbon_allowance_procurement', 'allowance_procurement'),
+            'carbon_allowance_procurement',
+            {},
+        )
+        allowance_procurement = allowance_procurement or {}
+        self.carbon_allowance_procurement = {
+            int(year): float(value) for year, value in allowance_procurement.items()
+        }
+
+        start_bank = _get_policy_value(
+            ('carbon_allowance_start_bank', 'allowance_start_bank'),
+            'carbon_allowance_start_bank',
+            0.0,
+        )
+        if start_bank is None:
+            self.carbon_allowance_start_bank = 0.0
+        else:
+            self.carbon_allowance_start_bank = float(start_bank)
+
+        bank_enabled = _get_policy_value(
+            ('carbon_allowance_bank_enabled', 'allowance_bank_enabled'),
+            'carbon_allowance_bank_enabled',
+            True,
+        )
+        self.carbon_allowance_bank_enabled = bool(bank_enabled)
+
+        allow_borrowing = _get_policy_value(
+            ('carbon_allowance_allow_borrowing', 'allowance_allow_borrowing'),
+            'carbon_allowance_allow_borrowing',
+            False,
+        )
+        self.carbon_allowance_allow_borrowing = bool(allow_borrowing)
+
     def __init__(self, config_path: Path, args: argparse.Namespace | None = None, test=False):
         """Creates configuration object upon instantiation
 
@@ -194,24 +264,7 @@ class Config_settings:
 
         ############################################################################################
         # __INIT__: Carbon Policy Configs
-        carbon_policy_section = config.get('carbon_policy')
-        top_level_carbon_cap = self._normalize_carbon_cap_value(config.get('carbon_cap'))
-        carbon_policy_defines_carbon_cap = (
-            isinstance(carbon_policy_section, dict)
-            and 'carbon_cap' in carbon_policy_section
-        )
-
-        if carbon_policy_defines_carbon_cap:
-            carbon_cap_value = self._normalize_carbon_cap_value(
-                carbon_policy_section.get('carbon_cap')
-            )
-        else:
-            carbon_cap_value = top_level_carbon_cap
-
-        if carbon_cap_value is None:
-            self.carbon_cap = None
-        else:
-            self.carbon_cap = float(carbon_cap_value) * SHORT_TON_TO_METRIC_TON
+        self._configure_carbon_policy(config)
 
         ############################################################################################
         # __INIT__:  Electricity Configs
@@ -221,28 +274,6 @@ class Config_settings:
         self.sw_reserves = config['sw_reserves']
         self.sw_learning = config['sw_learning']
         self.sw_expansion = config['sw_expansion']
-        carbon_cap_key_present = 'carbon_cap' in config
-        carbon_cap = self._normalize_carbon_cap_value(config.get('carbon_cap'))
-        if (
-            carbon_cap_key_present
-            and not carbon_policy_defines_carbon_cap
-            and carbon_cap is None
-        ):
-            self.carbon_cap = None
-        allowance_procurement = config.get('carbon_allowance_procurement', {}) or {}
-        self.carbon_allowance_procurement = {
-            int(year): float(value) for year, value in allowance_procurement.items()
-        }
-        start_bank = config.get('carbon_allowance_start_bank', 0.0)
-        self.carbon_allowance_start_bank = (
-            float(start_bank) if start_bank is not None else 0.0
-        )
-        self.carbon_allowance_bank_enabled = bool(
-            config.get('carbon_allowance_bank_enabled', True)
-        )
-        self.carbon_allowance_allow_borrowing = bool(
-            config.get('carbon_allowance_allow_borrowing', False)
-        )
 
         ############################################################################################
         # __INIT__: Residential Configs
