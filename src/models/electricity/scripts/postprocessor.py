@@ -76,7 +76,13 @@ def report_obj_df(mod_object, instance, dir_out, sub_dir):
                 insert_pos = 2 if df.shape[1] >= 2 else 1
                 df.insert(insert_pos, 'dual', dual_series)
                 if not dual_series.isna().all() and name in PRICED_CONSTRAINTS:
-                    price_df = pd.DataFrame({'Key': df['Key'], 'shadow_price': dual_series})
+                    price_df = df.drop(columns=[name]).copy()
+                    price_df = price_df.rename(columns={'dual': 'shadow_price'})
+                    if 'shadow_price' in price_df.columns:
+                        ordered_cols = [
+                            col for col in price_df.columns if col != 'shadow_price'
+                        ] + ['shadow_price']
+                        price_df = price_df[ordered_cols]
                     price_df.to_csv(
                         Path(dir_out / 'prices' / f'{name}.csv'),
                         index=False,

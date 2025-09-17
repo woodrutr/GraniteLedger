@@ -103,6 +103,7 @@ class Sets:
 
         # Regional Sets
         self.region = settings.regions
+        self.cap_groups = ['system']
 
         # Temporal Sets
         self.sw_temporal = settings.sw_temporal
@@ -744,53 +745,143 @@ def preprocessor(setin):
     all_frames['EmissionsRate'] = emissions_df
 
     # Allowance procurement and price inputs (tons and $/ton)
-    allowances_df = all_frames.get('CarbonAllowanceProcurement')
-    if allowances_df is None:
-        allowances_df = pd.DataFrame(
+    cap_group_map = all_frames.get('CarbonCapGroupMap')
+    if cap_group_map is not None:
+        cap_group_map = cap_group_map.copy()
+        required_cols = {'region', 'cap_group'}
+        if not required_cols.issubset(cap_group_map.columns):
+            missing = required_cols - set(cap_group_map.columns)
+            raise ValueError(
+                'CarbonCapGroupMap input must include region and cap_group columns; '
+                f'missing {missing}'
+            )
+        cap_group_map = cap_group_map[list(required_cols)].dropna()
+    else:
+        cap_group_map = pd.DataFrame(
             {
-                'year': setin.years,
-                'CarbonAllowanceProcurement': [0.0] * len(setin.years),
+                'region': list(setin.region),
+                'cap_group': ['system'] * len(setin.region),
             }
         )
+    cap_group_map['cap_group'] = cap_group_map['cap_group'].astype(str)
+    cap_group_map = cap_group_map.drop_duplicates(subset=['region'], keep='last')
+    cap_group_map = cap_group_map[cap_group_map['region'].isin(setin.region)]
+    if cap_group_map.empty:
+        cap_group_map = pd.DataFrame(
+            {
+                'region': list(setin.region),
+                'cap_group': ['system'] * len(setin.region),
+            }
+        )
+    missing_regions = set(setin.region) - set(cap_group_map['region'])
+    if missing_regions:
+        default_group = cap_group_map['cap_group'].iloc[0]
+        cap_group_map = pd.concat(
+            [
+                cap_group_map,
+                pd.DataFrame(
+                    {
+                        'region': list(missing_regions),
+                        'cap_group': [default_group] * len(missing_regions),
+                    }
+                ),
+            ],
+            ignore_index=True,
+        )
+    cap_group_map = cap_group_map.sort_values(['region']).reset_index(drop=True)
+    cap_group_map['cap_group'] = cap_group_map['cap_group'].astype(str)
+    all_frames['CarbonCapGroupMap'] = cap_group_map
+
+    allowances_df = all_frames.get('CarbonAllowanceProcurement')
+    if allowances_df is None:
+        allowances_df = pd.DataFrame(columns=['cap_group', 'year', 'CarbonAllowanceProcurement'])
     else:
         allowances_df = allowances_df.copy()
+
     if 'year' not in allowances_df.columns:
         raise ValueError('CarbonAllowanceProcurement input must include a year column')
     if 'CarbonAllowanceProcurement' not in allowances_df.columns:
         raise ValueError(
             'CarbonAllowanceProcurement input must include a CarbonAllowanceProcurement column'
         )
+    if 'cap_group' not in allowances_df.columns:
+        allowances_df['cap_group'] = cap_group_map['cap_group'].iloc[0]
+
+    allowances_df['cap_group'] = allowances_df['cap_group'].astype(str)
+    allowances_df['year'] = allowances_df['year'].astype(int)
     allowances_df['CarbonAllowanceProcurement'] = allowances_df[
         'CarbonAllowanceProcurement'
     ].astype(float)
-    overrides = getattr(setin, 'carbon_allowance_procurement_overrides', {}) or {}
-    for year, value in overrides.items():
-        if not isinstance(year, int):
-            year = int(year)
-        if allowances_df['year'].eq(year).any():
-            allowances_df.loc[
-                allowances_df['year'] == year, 'CarbonAllowanceProcurement'
-            ] = float(value)
+
+    override_input = getattr(setin, 'carbon_allowance_procurement_overrides', {}) or {}
+    override_groups = set()
+    nested_overrides = {}
+    if override_input:
+        if any(isinstance(v, dict) for v in override_input.values()):
+            for group_key, values in override_input.items():
+                if not isinstance(values, dict):
+                    continue
+                group_name = str(group_key)
+                override_groups.add(group_name)
+                nested_overrides[group_name] = {
+                    int(year): float(values[year]) for year in values
+                }
+
+    groups_from_map = set(cap_group_map['cap_group'])
+    groups_from_allowances = set(allowances_df['cap_group'])
+    cap_groups = groups_from_map | groups_from_allowances | override_groups
+    if not cap_groups:
+        cap_groups = {'system'}
+    cap_groups = sorted(cap_groups)
+    setin.cap_groups = cap_groups
+
+    allowance_index = pd.MultiIndex.from_product(
+        [cap_groups, setin.years], names=['cap_group', 'year']
+    )
+    allowances_df = (
+        allowances_df[['cap_group', 'year', 'CarbonAllowanceProcurement']]
+        .set_index(['cap_group', 'year'])
+        .reindex(allowance_index, fill_value=0.0)
+        .reset_index()
+    )
+
+    if override_input:
+        if nested_overrides:
+            overrides_to_apply = nested_overrides
         else:
-            allowances_df = pd.concat(
-                [
-                    allowances_df,
-                    pd.DataFrame(
-                        {
-                            'year': [year],
-                            'CarbonAllowanceProcurement': [float(value)],
-                        }
-                    ),
-                ],
-                ignore_index=True,
-            )
-    allowances_df = pd.merge(
-        pd.DataFrame({'year': setin.years}), allowances_df, on='year', how='left'
-    ).fillna(0.0)
-    allowances_df['CarbonAllowanceProcurement'] = allowances_df[
-        'CarbonAllowanceProcurement'
-    ].astype(float)
+            overrides_to_apply = {
+                group: {int(year): float(value) for year, value in override_input.items()}
+                for group in cap_groups
+            }
+        allowances_df = allowances_df.set_index(['cap_group', 'year'])
+        for group, year_values in overrides_to_apply.items():
+            for year, value in year_values.items():
+                key = (group, year)
+                if key in allowances_df.index:
+                    allowances_df.loc[key, 'CarbonAllowanceProcurement'] = value
+        allowances_df = allowances_df.reset_index()
+
     all_frames['CarbonAllowanceProcurement'] = allowances_df
+
+    allowance_price_df = all_frames.get('CarbonAllowancePrice')
+    if allowance_price_df is not None:
+        allowance_price_df = allowance_price_df.copy()
+        if 'year' not in allowance_price_df.columns:
+            raise ValueError('CarbonAllowancePrice input must include a year column')
+        if 'CarbonPrice' not in allowance_price_df.columns:
+            raise ValueError('CarbonAllowancePrice input must include a CarbonPrice column')
+        if 'cap_group' not in allowance_price_df.columns:
+            allowance_price_df['cap_group'] = cap_groups[0]
+        allowance_price_df['cap_group'] = allowance_price_df['cap_group'].astype(str)
+        allowance_price_df['year'] = allowance_price_df['year'].astype(int)
+        allowance_price_df['CarbonPrice'] = allowance_price_df['CarbonPrice'].astype(float)
+        allowance_price_df = (
+            allowance_price_df[['cap_group', 'year', 'CarbonPrice']]
+            .set_index(['cap_group', 'year'])
+            .reindex(allowance_index, fill_value=0.0)
+            .reset_index()
+        )
+        all_frames['CarbonAllowancePrice'] = allowance_price_df
 
     # read in load data from residential input directory
     res_dir = Path(PROJECT_ROOT, 'input', 'residential')
@@ -865,14 +956,16 @@ def preprocessor(setin):
     )
 
     if 'CarbonAllowanceProcurement' in all_frames:
-        allowances_df = all_frames['CarbonAllowanceProcurement'].reset_index()
+        allowances_df = all_frames['CarbonAllowanceProcurement'].copy()
         allowances_df = pd.merge(
             allowances_df, setin.WeightYear, on='year', how='left'
         ).fillna({'WeightYear': 1})
         allowances_df['CarbonAllowanceProcurement'] = (
             allowances_df['CarbonAllowanceProcurement'] * allowances_df['WeightYear']
         )
-        allowances_df = allowances_df[['year', 'CarbonAllowanceProcurement']]
+        allowances_df = allowances_df[
+            ['cap_group', 'year', 'CarbonAllowanceProcurement']
+        ]
         all_frames['CarbonAllowanceProcurement'] = allowances_df
 
     # using same T_vre capacity factor for all model years and reordering columns

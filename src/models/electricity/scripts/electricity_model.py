@@ -122,6 +122,84 @@ class PowerModel(Model):
         self.declare_set('region_trade', setA.region_trade)
         self.declare_set('region_int_trade', setA.region_int_trade)
 
+        # Carbon allowance cap groups
+        allowance_frame = all_frames.get('CarbonAllowanceProcurement')
+        data_cap_groups = (
+            {str(group) for group in allowance_frame['cap_group'].unique()}
+            if (allowance_frame is not None and 'cap_group' in allowance_frame.columns)
+            else set()
+        )
+        config_cap_groups = {
+            str(group)
+            for group in getattr(setA, 'cap_groups', [])
+            if group is not None
+        }
+        if not config_cap_groups and not data_cap_groups:
+            config_cap_groups = {'system'}
+        cap_groups = sorted(config_cap_groups | data_cap_groups) or ['system']
+        self.cap_groups = cap_groups
+        self.declare_set('cap_group', cap_groups)
+        self.declare_set_with_sets('allowance_index', self.cap_group, self.year)
+
+        cap_group_map_df = all_frames.get('CarbonCapGroupMap')
+        if cap_group_map_df is not None:
+            cap_group_map_df = cap_group_map_df.copy()
+        else:
+            cap_group_map_df = pd.DataFrame(
+                {
+                    'region': list(setA.region),
+                    'cap_group': [cap_groups[0]] * len(setA.region),
+                }
+            )
+        if 'region' not in cap_group_map_df.columns or 'cap_group' not in cap_group_map_df.columns:
+            raise ValueError(
+                'CarbonCapGroupMap input must include region and cap_group columns'
+            )
+        cap_group_map_df = cap_group_map_df[['region', 'cap_group']].dropna()
+        cap_group_map_df['cap_group'] = cap_group_map_df['cap_group'].astype(str)
+        cap_group_map_df = cap_group_map_df[
+            cap_group_map_df['region'].isin(setA.region)
+        ]
+        if cap_group_map_df.empty:
+            cap_group_map_df = pd.DataFrame(
+                {
+                    'region': list(setA.region),
+                    'cap_group': [cap_groups[0]] * len(setA.region),
+                }
+            )
+        missing_regions = set(setA.region) - set(cap_group_map_df['region'])
+        if missing_regions:
+            cap_group_map_df = pd.concat(
+                [
+                    cap_group_map_df,
+                    pd.DataFrame(
+                        {
+                            'region': list(missing_regions),
+                            'cap_group': [cap_groups[0]] * len(missing_regions),
+                        }
+                    ),
+                ],
+                ignore_index=True,
+            )
+        cap_group_map_df = cap_group_map_df.drop_duplicates(
+            subset=['region'], keep='last'
+        )
+        cap_group_map_df = cap_group_map_df.sort_values('region').reset_index(drop=True)
+        cap_group_map_df['cap_group'] = cap_group_map_df['cap_group'].astype(str)
+        self.region_to_cap_group = {
+            row.region: row.cap_group for row in cap_group_map_df.itertuples(index=False)
+        }
+        self.cap_group_regions = {
+            group: sorted(
+                [
+                    row.region
+                    for row in cap_group_map_df.itertuples(index=False)
+                    if row.cap_group == group
+                ]
+            )
+            for group in self.cap_groups
+        }
+
         # Load sets
         self.declare_set('demand_balance_index', all_frames['Load'])
         self.declare_set_with_sets('unmet_load_index', self.region, self.year, self.hour)
@@ -237,23 +315,69 @@ class PowerModel(Model):
         if self.carbon_cap is not None:
             self.declare_param('CarbonCap', None, self.carbon_cap)
 
-        self.declare_param(
-            'CarbonStartBank', None, self.carbon_allowance_start_bank, mutable=True
+        start_bank_input = getattr(setA, 'carbon_allowance_start_bank', 0.0)
+        if isinstance(start_bank_input, dict):
+            cap_group_start_bank = {
+                group: float(
+                    start_bank_input.get(group, start_bank_input.get(str(group), 0.0))
+                )
+                for group in self.cap_groups
+            }
+        else:
+            start_value = float(start_bank_input or 0.0)
+            cap_group_start_bank = {group: start_value for group in self.cap_groups}
+        start_bank_df = pd.DataFrame(
+            {
+                'cap_group': list(cap_group_start_bank.keys()),
+                'CarbonStartBank': list(cap_group_start_bank.values()),
+            }
         )
-        if 'CarbonAllowanceProcurement' in all_frames:
+        self.declare_param(
+            'CarbonStartBank', self.cap_group, start_bank_df, mutable=True
+        )
+        self.cap_group_start_bank = cap_group_start_bank
+
+        allowance_param = all_frames.get('CarbonAllowanceProcurement')
+        if allowance_param is not None:
+            allowance_param = allowance_param.copy()
+            if 'cap_group' not in allowance_param.columns:
+                allowance_param['cap_group'] = self.cap_groups[0]
+            allowance_param['cap_group'] = allowance_param['cap_group'].astype(str)
+            allowance_param = allowance_param[
+                allowance_param['cap_group'].isin(self.cap_groups)
+            ]
             self.declare_param(
                 'CarbonAllowanceProcurement',
-                self.year,
-                all_frames['CarbonAllowanceProcurement'],
+                self.allowance_index,
+                allowance_param,
                 mutable=True,
             )
         else:
-            allowance_fallback = pd.Series(
-                {year: 0.0 for year in setA.years}, name='CarbonAllowanceProcurement'
-            )
-            allowance_fallback.index.name = 'year'
+            if self.year_list:
+                fallback_records = pd.DataFrame(
+                    {
+                        'cap_group': [
+                            group for group in self.cap_groups for _ in self.year_list
+                        ],
+                        'year': [
+                            year for _ in self.cap_groups for year in self.year_list
+                        ],
+                        'CarbonAllowanceProcurement': 0.0,
+                    }
+                )
+            else:
+                fallback_records = pd.DataFrame(
+                    {
+                        'cap_group': self.cap_groups,
+                        'year': [setA.start_year] * len(self.cap_groups),
+                        'CarbonAllowanceProcurement': 0.0,
+                    }
+                )
             self.declare_param(
-                'CarbonAllowanceProcurement', self.year, allowance_fallback, mutable=True
+                'CarbonAllowanceProcurement',
+                self.allowance_index,
+                fallback_records,
+                mutable=True,
             )
         # if capacity expansion is on
         if self.sw_expansion:
@@ -364,14 +488,15 @@ class PowerModel(Model):
         self.declare_var('storage_inflow', self.Storage_index)
         self.declare_var('storage_outflow', self.Storage_index)
         self.declare_var('storage_level', self.Storage_index)
-        self.declare_var('allowance_purchase', self.year, bound=(0, 1000000000000))
+        self.declare_var('allowance_purchase', self.allowance_index, bound=(0, 1000000000000))
         bank_within = 'Reals' if self.carbon_allowance_allow_borrowing else 'NonNegativeReals'
         bank_bounds = (
             (-1000000000000, 1000000000000)
             if self.carbon_allowance_allow_borrowing
             else (0, 1000000000000)
         )
-        self.declare_var('allowance_bank', self.year, within=bank_within, bound=bank_bounds)
+        self.declare_var('allowance_bank', self.allowance_index, within=bank_within, bound=bank_bounds)
+        self.declare_var('allowance_emissions', self.allowance_index, bound=(0, 1000000000000))
         self.declare_var('year_emissions', self.year, bound=(0, 1000000000000))
 
         # if capacity expansion is on
@@ -649,51 +774,73 @@ class PowerModel(Model):
         ###########################################################################################
         # Constraints
 
-        def incoming_bank(m, year):
+        def incoming_bank(m, cap_group, year):
             prev_year = m.prev_year_lookup.get(year)
             carryover = (
-                m.allowance_bank[prev_year]
+                m.allowance_bank[(cap_group, prev_year)]
                 if (m.carbon_allowance_bank_enabled and prev_year is not None)
                 else 0
             )
-            start_bank = (
-                m.CarbonStartBank if (m.first_year is not None and year == m.first_year) else 0
-            )
+            start_bank = 0
+            if m.first_year is not None and year == m.first_year:
+                start_bank = m.cap_group_start_bank.get(cap_group, 0.0)
             return carryover + start_bank
 
-        @self.Constraint(self.year)
-        def year_emissions_balance(self, y):
-            """Link yearly emissions variable to generation decisions."""
+        @self.Constraint(self.allowance_index)
+        def allowance_emissions_balance(self, cap_group, y):
+            """Link cap-group emissions to generation decisions."""
 
-            return self.year_emissions[y] == pyo.quicksum(
+            regions = self.cap_group_regions.get(cap_group, [])
+            if not regions:
+                return self.allowance_emissions[(cap_group, y)] == 0
+            return self.allowance_emissions[(cap_group, y)] == pyo.quicksum(
                 self.WeightDay[self.MapHourDay[hr]]
                 * self.WeightYear[y]
                 * self.EmissionsRate[tech]
                 * self.generation_total[(tech, y_idx, r, step, hr)]
                 for hr in self.hour
                 for (tech, y_idx, r, step) in self.GenHour_index[hr]
-                if y_idx == y
+                if y_idx == y and r in regions
             )
 
         @self.Constraint(self.year)
-        def allowance_purchase_limit(self, y):
+        def year_emissions_balance(self, y):
+            """Aggregate cap-group emissions across all groups."""
+
+            return self.year_emissions[y] == sum(
+                self.allowance_emissions[(cap_group, y)] for cap_group in self.cap_group
+            )
+
+        @self.Constraint(self.allowance_index)
+        def allowance_purchase_limit(self, cap_group, y):
             """Bound allowance purchases by available procurement."""
 
-            return self.allowance_purchase[y] <= self.CarbonAllowanceProcurement[y]
+            return (
+                self.allowance_purchase[(cap_group, y)]
+                <= self.CarbonAllowanceProcurement[(cap_group, y)]
+            )
 
-        @self.Constraint(self.year)
-        def allowance_bank_balance(self, y):
+        @self.Constraint(self.allowance_index)
+        def allowance_bank_balance(self, cap_group, y):
             """Track allowance bank evolution across years."""
 
-            incoming = incoming_bank(self, y)
-            return self.allowance_bank[y] == incoming + self.allowance_purchase[y] - self.year_emissions[y]
+            incoming = incoming_bank(self, cap_group, y)
+            return (
+                self.allowance_bank[(cap_group, y)]
+                == incoming
+                + self.allowance_purchase[(cap_group, y)]
+                - self.allowance_emissions[(cap_group, y)]
+            )
 
-        @self.Constraint(self.year)
-        def allowance_emissions_limit(self, y):
+        @self.Constraint(self.allowance_index)
+        def allowance_emissions_limit(self, cap_group, y):
             """Ensure emissions do not exceed allowances plus incoming bank."""
 
-            incoming = incoming_bank(self, y)
-            return self.year_emissions[y] <= self.allowance_purchase[y] + incoming
+            incoming = incoming_bank(self, cap_group, y)
+            return (
+                self.allowance_emissions[(cap_group, y)]
+                <= self.allowance_purchase[(cap_group, y)] + incoming
+            )
 
         if self.carbon_cap is not None:
             self.total_emissions_cap = pyo.Constraint(

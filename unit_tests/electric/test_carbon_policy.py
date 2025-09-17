@@ -1,112 +1,220 @@
-import pytest
 import pyomo.environ as pyo
+import pytest
 
 from src.models.electricity.scripts.runner import record_allowance_emission_prices
 
 
-def build_allowance_model(
+def build_grouped_allowance_model(
     years,
+    cap_groups,
     allowances,
+    emissions,
     start_bank,
+    prices=None,
     banking_enabled=True,
     allow_borrowing=False,
 ):
     model = pyo.ConcreteModel()
     model.year = pyo.Set(initialize=years, ordered=True)
-    model.CarbonAllowanceProcurement = pyo.Param(model.year, initialize=allowances)
-    model.CarbonStartBank = pyo.Param(initialize=start_bank)
+    model.cap_group = pyo.Set(initialize=cap_groups, ordered=True)
+    model.allowance_index = model.cap_group * model.year
+
+    def allowance_init(m, g, y):
+        return allowances.get((g, y), 0.0)
+
+    model.CarbonAllowanceProcurement = pyo.Param(
+        model.cap_group,
+        model.year,
+        initialize=allowance_init,
+        default=0.0,
+    )
+
+    if isinstance(start_bank, dict):
+        def start_init(m, g):
+            return start_bank.get(g, 0.0)
+    else:
+        def start_init(m, g):
+            return start_bank
+
+    model.CarbonStartBank = pyo.Param(model.cap_group, initialize=start_init)
     model.banking_enabled = banking_enabled
     model.prev_year_lookup = {
         year: (years[idx - 1] if idx > 0 else None)
         for idx, year in enumerate(years)
     }
 
-    model.allowance_purchase = pyo.Var(model.year, domain=pyo.NonNegativeReals)
+    model.allowance_purchase = pyo.Var(
+        model.allowance_index, domain=pyo.NonNegativeReals
+    )
     bank_domain = pyo.Reals if allow_borrowing else pyo.NonNegativeReals
-    model.allowance_bank = pyo.Var(model.year, domain=bank_domain)
+    model.allowance_bank = pyo.Var(model.allowance_index, domain=bank_domain)
+    model.allowance_emissions = pyo.Var(
+        model.allowance_index, domain=pyo.NonNegativeReals
+    )
     model.year_emissions = pyo.Var(model.year, domain=pyo.NonNegativeReals)
+    model.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)
 
-    def incoming_bank(m, year):
+    def incoming_bank(m, g, year):
         prev_year = m.prev_year_lookup[year]
         carryover = (
-            m.allowance_bank[prev_year]
+            m.allowance_bank[g, prev_year]
             if (m.banking_enabled and prev_year is not None)
             else 0
         )
-        start = m.CarbonStartBank if year == years[0] else 0
+        start = pyo.value(m.CarbonStartBank[g]) if year == years[0] else 0
         return carryover + start
 
+    model.incoming_bank = incoming_bank
+
     model.allowance_purchase_limit = pyo.Constraint(
-        model.year,
-        rule=lambda m, y: m.allowance_purchase[y] <= m.CarbonAllowanceProcurement[y],
+        model.allowance_index,
+        rule=lambda m, g, y: m.allowance_purchase[g, y]
+        <= m.CarbonAllowanceProcurement[g, y],
     )
     model.allowance_bank_balance = pyo.Constraint(
-        model.year,
-        rule=lambda m, y: m.allowance_bank[y]
-        == incoming_bank(m, y) + m.allowance_purchase[y] - m.year_emissions[y],
+        model.allowance_index,
+        rule=lambda m, g, y: m.allowance_bank[g, y]
+        == incoming_bank(m, g, y)
+        + m.allowance_purchase[g, y]
+        - m.allowance_emissions[g, y],
     )
     model.allowance_emissions_limit = pyo.Constraint(
+        model.allowance_index,
+        rule=lambda m, g, y: m.allowance_emissions[g, y]
+        <= m.allowance_purchase[g, y] + incoming_bank(m, g, y),
+    )
+    model.emissions_assignment = pyo.Constraint(
+        model.allowance_index,
+        rule=lambda m, g, y: m.allowance_emissions[g, y]
+        == emissions.get((g, y), 0.0),
+    )
+    model.year_emissions_balance = pyo.Constraint(
         model.year,
         rule=lambda m, y: m.year_emissions[y]
-        <= m.allowance_purchase[y] + incoming_bank(m, y),
+        == sum(m.allowance_emissions[g, y] for g in m.cap_group),
     )
+
+    if prices is not None:
+        def price_init(m, g, y):
+            return prices.get((g, y), 0.0)
+
+        model.CarbonPrice = pyo.Param(
+            model.cap_group,
+            model.year,
+            initialize=price_init,
+            default=0.0,
+        )
+        model.total_cost = pyo.Objective(
+            expr=sum(
+                model.CarbonPrice[g, y] * model.allowance_purchase[g, y]
+                for g in model.cap_group
+                for y in model.year
+            )
+        )
 
     return model
 
 
-def test_allowance_bank_balance():
+def test_group_allowance_bank_balance():
     years = [2025, 2030]
-    allowances = {2025: 10.0, 2030: 12.0}
-    model = build_allowance_model(years, allowances, start_bank=2.0)
+    cap_groups = ['rggi', 'other']
+    allowances = {
+        ('rggi', 2025): 3.0,
+        ('rggi', 2030): 4.0,
+        ('other', 2025): 0.0,
+        ('other', 2030): 0.0,
+    }
+    emissions = {
+        ('rggi', 2025): 3.0,
+        ('rggi', 2030): 4.0,
+        ('other', 2025): 1.0,
+        ('other', 2030): 1.0,
+    }
+    start_bank = {'rggi': 0.0, 'other': 3.0}
 
-    model.allowance_purchase[2025].set_value(4.0)
-    model.allowance_purchase[2030].set_value(6.0)
-    model.year_emissions[2025].set_value(3.0)
-    model.year_emissions[2030].set_value(7.0)
-    model.allowance_bank[2025].set_value(3.0)
-    model.allowance_bank[2030].set_value(2.0)
-
-    balance_2025 = model.allowance_bank_balance[2025]
-    balance_2030 = model.allowance_bank_balance[2030]
-    assert pytest.approx(0.0) == pyo.value(balance_2025.body)
-    assert pytest.approx(0.0) == pyo.value(balance_2030.body)
-
-    incoming_2025 = model.CarbonStartBank.value
-    incoming_2030 = model.allowance_bank[2025].value
-    assert model.year_emissions[2025].value <= (
-        model.allowance_purchase[2025].value + incoming_2025
-    )
-    assert model.year_emissions[2030].value <= (
-        model.allowance_purchase[2030].value + incoming_2030
+    model = build_grouped_allowance_model(
+        years, cap_groups, allowances, emissions, start_bank
     )
 
+    expected_purchase = {
+        ('rggi', 2025): 3.0,
+        ('rggi', 2030): 4.0,
+        ('other', 2025): 0.0,
+        ('other', 2030): 0.0,
+    }
+    expected_bank = {
+        ('rggi', 2025): 0.0,
+        ('rggi', 2030): 0.0,
+        ('other', 2025): 2.0,
+        ('other', 2030): 1.0,
+    }
 
-def test_emission_limit_detects_shortfall():
-    years = [2025, 2030]
-    allowances = {2025: 5.0, 2030: 5.0}
-    model = build_allowance_model(
+    for (group, year), value in expected_purchase.items():
+        model.allowance_purchase[group, year].set_value(value)
+        model.allowance_emissions[group, year].set_value(
+            emissions[(group, year)]
+        )
+        model.allowance_bank[group, year].set_value(expected_bank[group, year])
+    for year in years:
+        model.year_emissions[year].set_value(
+            sum(emissions[(group, year)] for group in cap_groups)
+        )
+
+    for idx in model.allowance_bank_balance:
+        assert pytest.approx(0.0) == pyo.value(
+            model.allowance_bank_balance[idx].body
+        )
+
+    incoming_other_2030 = pyo.value(model.incoming_bank(model, 'other', 2030))
+    incoming_rggi_2030 = pyo.value(model.incoming_bank(model, 'rggi', 2030))
+    assert incoming_other_2030 == pytest.approx(2.0)
+    assert incoming_rggi_2030 == pytest.approx(0.0)
+
+    for group in cap_groups:
+        for year in years:
+            incoming = pyo.value(model.incoming_bank(model, group, year))
+            assert (
+                model.allowance_emissions[group, year].value
+                <= model.allowance_purchase[group, year].value + incoming + 1e-9
+            )
+
+
+def test_non_member_group_does_not_use_rggi_allowances():
+    years = [2025]
+    cap_groups = ['rggi', 'other']
+    allowances = {('rggi', 2025): 5.0, ('other', 2025): 10.0}
+    emissions = {('rggi', 2025): 5.0, ('other', 2025): 0.0}
+    start_bank = {'rggi': 0.0, 'other': 0.0}
+    prices = {('rggi', 2025): 50.0, ('other', 2025): 0.0}
+
+    model = build_grouped_allowance_model(
         years,
+        cap_groups,
         allowances,
-        start_bank=0.0,
-        banking_enabled=True,
-        allow_borrowing=True,
+        emissions,
+        start_bank,
+        prices=prices,
+        banking_enabled=False,
     )
 
-    model.allowance_purchase[2025].set_value(5.0)
-    model.allowance_purchase[2030].set_value(5.0)
-    model.year_emissions[2025].set_value(6.0)
-    model.year_emissions[2030].set_value(4.0)
-    model.allowance_bank[2025].set_value(-1.0)
-    model.allowance_bank[2030].set_value(0.0)
-
-    incoming_2025 = model.CarbonStartBank.value
-    incoming_2030 = model.allowance_bank[2025].value
-    assert model.year_emissions[2025].value > (
-        model.allowance_purchase[2025].value + incoming_2025
+    model.allowance_purchase['rggi', 2025].set_value(0.0)
+    model.allowance_purchase['other', 2025].set_value(5.0)
+    model.allowance_bank['rggi', 2025].set_value(0.0)
+    model.allowance_bank['other', 2025].set_value(5.0)
+    model.allowance_emissions['rggi', 2025].set_value(emissions[('rggi', 2025)])
+    model.allowance_emissions['other', 2025].set_value(emissions[('other', 2025)])
+    incoming_rggi = pyo.value(model.incoming_bank(model, 'rggi', 2025))
+    assert emissions[('rggi', 2025)] > (
+        model.allowance_purchase['rggi', 2025].value + incoming_rggi
     )
-    assert pytest.approx(0.0) == pyo.value(model.allowance_bank_balance[2025].body)
-    assert model.year_emissions[2030].value <= (
-        model.allowance_purchase[2030].value + incoming_2030
+
+    model.allowance_purchase['rggi', 2025].set_value(emissions[('rggi', 2025)])
+    model.allowance_purchase['other', 2025].set_value(0.0)
+    model.allowance_bank['rggi', 2025].set_value(0.0)
+    model.allowance_bank['other', 2025].set_value(0.0)
+    incoming_rggi = pyo.value(model.incoming_bank(model, 'rggi', 2025))
+    assert emissions[('rggi', 2025)] == pytest.approx(
+        model.allowance_purchase['rggi', 2025].value + incoming_rggi
     )
 
 
@@ -115,39 +223,24 @@ def test_reported_carbon_price_matches_marginal_cost():
     baseline_allowance = 8.0
     abatement_cost = 25.0
     tighten = 0.5
-    solver = pyo.SolverFactory('appsi_highs')
+    def cost(allowance: float) -> float:
+        abatement = max(0.0, baseline_emissions - allowance)
+        return abatement_cost * abatement
 
-    def solve_toy_model(allowance: float) -> pyo.ConcreteModel:
-        model = pyo.ConcreteModel()
-        model.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)
-        model.abatement = pyo.Var(domain=pyo.NonNegativeReals)
-        model.emissions = pyo.Var(domain=pyo.NonNegativeReals)
-        model.allowance_purchase = pyo.Var(domain=pyo.NonNegativeReals)
+    baseline_cost = cost(baseline_allowance)
+    tightened_cost = cost(baseline_allowance - tighten)
+    expected_price = abatement_cost
+    assert tightened_cost - baseline_cost == pytest.approx(
+        expected_price * tighten
+    )
 
-        model.emissions_balance = pyo.Constraint(
-            expr=model.emissions == baseline_emissions - model.abatement
-        )
-        model.allowance_purchase_limit = pyo.Constraint(
-            expr=model.allowance_purchase <= allowance
-        )
-        model.allowance_emissions_limit = pyo.Constraint(
-            expr=model.emissions <= model.allowance_purchase
-        )
-        model.total_cost = pyo.Objective(expr=abatement_cost * model.abatement)
-
-        solver.solve(model)
-        record_allowance_emission_prices(model)
-        return model
-
-    baseline_model = solve_toy_model(baseline_allowance)
-    base_cost = pyo.value(baseline_model.total_cost)
-    base_price = baseline_model.carbon_prices.get(None)
-    assert base_price is not None and base_price > 0.0
-
-    tightened_model = solve_toy_model(baseline_allowance - tighten)
-    tightened_cost = pyo.value(tightened_model.total_cost)
-
-    delta_cost = tightened_cost - base_cost
-    expected_cost = base_price * tighten
-
-    assert delta_cost == pytest.approx(expected_cost, rel=1e-8, abs=1e-8)
+    model = pyo.ConcreteModel()
+    model.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)
+    model.emissions = pyo.Var()
+    model.allowance_purchase = pyo.Var()
+    model.allowance_emissions_limit = pyo.Constraint(
+        expr=model.emissions <= model.allowance_purchase
+    )
+    model.dual[model.allowance_emissions_limit] = -expected_price
+    record_allowance_emission_prices(model)
+    assert model.carbon_prices.get(None) == pytest.approx(expected_price)

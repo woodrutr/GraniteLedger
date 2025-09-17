@@ -1,3 +1,5 @@
-year,CarbonPrice
-2025,50.0
-2030,60.0
+cap_group,year,CarbonPrice
+rggi,2025,50.0
+rggi,2030,60.0
+other,2025,0.0
+other,2030,0.0
