@@ -195,12 +195,18 @@ class Config_settings:
         ############################################################################################
         # __INIT__: Carbon Policy Configs
         carbon_policy_section = config.get('carbon_policy')
-        if isinstance(carbon_policy_section, dict) and 'carbon_cap' in carbon_policy_section:
-            carbon_cap_value = carbon_policy_section.get('carbon_cap')
-        else:
-            carbon_cap_value = config.get('carbon_cap')
+        top_level_carbon_cap = self._normalize_carbon_cap_value(config.get('carbon_cap'))
+        carbon_policy_defines_carbon_cap = (
+            isinstance(carbon_policy_section, dict)
+            and 'carbon_cap' in carbon_policy_section
+        )
 
-        carbon_cap_value = self._normalize_carbon_cap_value(carbon_cap_value)
+        if carbon_policy_defines_carbon_cap:
+            carbon_cap_value = self._normalize_carbon_cap_value(
+                carbon_policy_section.get('carbon_cap')
+            )
+        else:
+            carbon_cap_value = top_level_carbon_cap
 
         if carbon_cap_value is None:
             self.carbon_cap = None
@@ -217,7 +223,11 @@ class Config_settings:
         self.sw_expansion = config['sw_expansion']
         carbon_cap_key_present = 'carbon_cap' in config
         carbon_cap = self._normalize_carbon_cap_value(config.get('carbon_cap'))
-        if carbon_cap_key_present and carbon_cap is None:
+        if (
+            carbon_cap_key_present
+            and not carbon_policy_defines_carbon_cap
+            and carbon_cap is None
+        ):
             self.carbon_cap = None
         allowance_procurement = config.get('carbon_allowance_procurement', {}) or {}
         self.carbon_allowance_procurement = {
