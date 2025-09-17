@@ -1,3 +1,5 @@
-year,CarbonAllowanceProcurement
-2025,50000000.0
-2030,40000000.0
+cap_group,year,CarbonAllowanceProcurement
+rggi,2025,50000000.0
+rggi,2030,40000000.0
+non_rggi,2025,0.0
+non_rggi,2030,0.0

@@ -75,7 +75,9 @@ def record_allowance_emission_prices(instance: PowerModel) -> dict:
     """Capture modeled carbon prices from the allowance emissions constraints."""
 
     carbon_prices = {}
-    constraint = getattr(instance, 'allowance_emissions_limit', None)
+    constraint = getattr(instance, 'cap_group_allowance_emissions_limit', None)
+    if constraint is None:
+        constraint = getattr(instance, 'allowance_emissions_limit', None)
     if constraint is None:
         instance.carbon_prices = carbon_prices
         return carbon_prices

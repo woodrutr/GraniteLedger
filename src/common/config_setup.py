@@ -205,13 +205,26 @@ class Config_settings:
             carbon_cap_value = float(carbon_cap)
         self.carbon_cap = carbon_cap_value
         allowance_procurement = config.get('carbon_allowance_procurement', {}) or {}
-        self.carbon_allowance_procurement = {
-            int(year): float(value) for year, value in allowance_procurement.items()
-        }
+        processed_allowance = {}
+        if isinstance(allowance_procurement, dict):
+            for group_key, value in allowance_procurement.items():
+                if isinstance(value, dict):
+                    processed_allowance[str(group_key)] = {
+                        int(year): float(amount) for year, amount in value.items()
+                    }
+                else:
+                    # Legacy structure keyed directly by year
+                    processed_allowance.setdefault('__default__', {})[int(group_key)] = float(value)
+        self.carbon_allowance_procurement = processed_allowance
         start_bank = config.get('carbon_allowance_start_bank', 0.0)
-        self.carbon_allowance_start_bank = (
-            float(start_bank) if start_bank is not None else 0.0
-        )
+        if isinstance(start_bank, dict):
+            self.carbon_allowance_start_bank = {
+                str(group): float(amount) for group, amount in start_bank.items()
+            }
+        elif start_bank is None:
+            self.carbon_allowance_start_bank = 0.0
+        else:
+            self.carbon_allowance_start_bank = float(start_bank)
         self.carbon_allowance_bank_enabled = bool(
             config.get('carbon_allowance_bank_enabled', True)
         )

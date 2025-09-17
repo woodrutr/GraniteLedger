@@ -52,8 +52,9 @@ sw_reserves = 1 # Operating reserve requirement switch
 # Specify a system-wide CO2 emissions cap in metric tons. Set to "none" for no cap.
 carbon_cap = "none"
 # Specify the number of allowances procured each modeled year (metric tons).
-# Keys should match the modeled years defined below.
-carbon_allowance_procurement = { "2025" = 50000000.0, "2030" = 40000000.0 }
+# Keys should match the modeled years defined below. Allowances can now be specified
+# by cap group.
+carbon_allowance_procurement = { rggi = { "2025" = 50000000.0, "2030" = 40000000.0 }, non_rggi = { "2025" = 0.0, "2030" = 0.0 } }
 
 # Allowance banking settings (values in metric tons)
 carbon_allowance_start_bank = 0.0

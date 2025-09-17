@@ -61,8 +61,9 @@ sw_learning = 0
 # Specify a system-wide CO2 emissions cap in metric tons. Set to "none" for no cap.
 carbon_cap = "none"
 # Specify the number of allowances procured each modeled year (metric tons).
-# Populate keys to match the modeled years in the `years` list above.
-carbon_allowance_procurement = { "2025" = 0.0, "2030" = 0.0 }
+# Populate keys to match the modeled years in the `years` list above. Provide cap
+# group names to differentiate programs (e.g., rggi vs non_rggi).
+carbon_allowance_procurement = { rggi = { "2025" = 0.0, "2030" = 0.0 } }
 
 # Allowance banking settings (values in metric tons)
 carbon_allowance_start_bank = 0.0

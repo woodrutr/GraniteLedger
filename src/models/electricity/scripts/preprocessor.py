@@ -89,6 +89,9 @@ class Sets:
         self.carbon_allowance_allow_borrowing = getattr(
             settings, 'carbon_allowance_allow_borrowing', False
         )
+        self.cap_groups = []
+        self.cap_group_region_index = None
+        self.region_to_cap_group = {}
 
         self.restypes = [
             'spinning',
@@ -743,15 +746,70 @@ def preprocessor(setin):
     emissions_df = emissions_df[emissions_df['tech'].isin(setin.T_gen)]
     all_frames['EmissionsRate'] = emissions_df
 
+    # Map regions to carbon cap groups
+    cap_group_map_df = all_frames.get('CarbonCapGroupMap')
+    if cap_group_map_df is None or cap_group_map_df.empty:
+        mapping_df = pd.DataFrame(
+            {
+                'region': setin.region,
+                'cap_group': ['system'] * len(setin.region),
+            }
+        )
+    else:
+        mapping_df = cap_group_map_df.copy()
+        if 'region' not in mapping_df.columns:
+            raise ValueError('CarbonCapGroupMap input must include a region column')
+        if 'cap_group' not in mapping_df.columns:
+            raise ValueError('CarbonCapGroupMap input must include a cap_group column')
+    if not mapping_df.empty:
+        mapping_df['region'] = mapping_df['region'].astype(int)
+        mapping_df['cap_group'] = mapping_df['cap_group'].astype(str)
+    mapping_df = mapping_df[mapping_df['region'].isin(setin.region)]
+    if mapping_df.empty:
+        raise ValueError('CarbonCapGroupMap must map each modeled region to a cap group')
+    duplicates = mapping_df.duplicated(subset=['region'], keep=False)
+    if duplicates.any():
+        dup_regions = mapping_df.loc[duplicates, 'region'].unique().tolist()
+        raise ValueError(
+            f'CarbonCapGroupMap must specify a single cap group per region; duplicates for {dup_regions}'
+        )
+    missing_regions = sorted(set(setin.region) - set(mapping_df['region']))
+    if missing_regions:
+        raise ValueError(
+            f'CarbonCapGroupMap missing cap group assignments for regions: {missing_regions}'
+        )
+    mapping_df = mapping_df[['cap_group', 'region']].drop_duplicates().sort_values(
+        ['cap_group', 'region']
+    )
+    setin.cap_groups = sorted(mapping_df['cap_group'].unique())
+    if not setin.cap_groups:
+        setin.cap_groups = ['system']
+        mapping_df = pd.DataFrame(
+            {
+                'cap_group': setin.cap_groups * len(setin.region),
+                'region': setin.region,
+            }
+        )
+    setin.region_to_cap_group = dict(zip(mapping_df['region'], mapping_df['cap_group']))
+    setin.cap_group_region_index = mapping_df.set_index(['cap_group', 'region'])
+    all_frames['CarbonCapGroupMap'] = mapping_df.reset_index(drop=True)
+
+    start_bank_input = getattr(setin, 'carbon_allowance_start_bank', 0.0)
+    if isinstance(start_bank_input, dict):
+        default_start = float(start_bank_input.get('__default__', 0.0))
+        start_bank_map = {
+            group: float(start_bank_input.get(group, default_start))
+            for group in setin.cap_groups
+        }
+    else:
+        default_start = 0.0 if start_bank_input in (None, '') else float(start_bank_input)
+        start_bank_map = {group: default_start for group in setin.cap_groups}
+    setin.carbon_allowance_start_bank = start_bank_map
+
     # Allowance procurement and price inputs (tons and $/ton)
     allowances_df = all_frames.get('CarbonAllowanceProcurement')
     if allowances_df is None:
-        allowances_df = pd.DataFrame(
-            {
-                'year': setin.years,
-                'CarbonAllowanceProcurement': [0.0] * len(setin.years),
-            }
-        )
+        allowances_df = pd.DataFrame(columns=['cap_group', 'year', 'CarbonAllowanceProcurement'])
     else:
         allowances_df = allowances_df.copy()
     if 'year' not in allowances_df.columns:
@@ -760,33 +818,87 @@ def preprocessor(setin):
         raise ValueError(
             'CarbonAllowanceProcurement input must include a CarbonAllowanceProcurement column'
         )
+    if 'cap_group' not in allowances_df.columns:
+        default_group = setin.cap_groups[0]
+        allowances_df['cap_group'] = default_group
+    allowances_df = allowances_df[['cap_group', 'year', 'CarbonAllowanceProcurement']]
+    allowances_df['cap_group'] = allowances_df['cap_group'].fillna(setin.cap_groups[0]).astype(str)
+    allowances_df['year'] = allowances_df['year'].astype(int)
     allowances_df['CarbonAllowanceProcurement'] = allowances_df[
         'CarbonAllowanceProcurement'
     ].astype(float)
+    allowances_df = allowances_df[allowances_df['cap_group'].isin(setin.cap_groups)]
+    allowances_df = allowances_df.drop_duplicates(subset=['cap_group', 'year'], keep='last')
+    full_index = pd.MultiIndex.from_product(
+        [setin.cap_groups, setin.years], names=['cap_group', 'year']
+    )
+    allowances_df = (
+        allowances_df.set_index(['cap_group', 'year'])
+        .reindex(full_index, fill_value=0.0)
+        .reset_index()
+    )
+
     overrides = getattr(setin, 'carbon_allowance_procurement_overrides', {}) or {}
-    for year, value in overrides.items():
-        if not isinstance(year, int):
-            year = int(year)
-        if allowances_df['year'].eq(year).any():
-            allowances_df.loc[
-                allowances_df['year'] == year, 'CarbonAllowanceProcurement'
-            ] = float(value)
+    preferred_group = None
+    if setin.cap_groups:
+        preferred_group = next(
+            (group for group in setin.cap_groups if group.lower() == 'rggi'),
+            setin.cap_groups[0],
+        )
+
+    def apply_override(target_groups, year_value_map):
+        for year_key, override_value in year_value_map.items():
+            try:
+                year_int = int(year_key)
+            except (TypeError, ValueError):
+                continue
+            for group in target_groups:
+                allowances_df.loc[
+                    (allowances_df['cap_group'] == group)
+                    & (allowances_df['year'] == year_int),
+                    'CarbonAllowanceProcurement',
+                ] = float(override_value)
+
+    for group_key, override_value in overrides.items():
+        if isinstance(override_value, dict):
+            key_str = None if group_key is None else str(group_key)
+            normalized = key_str.lower() if key_str is not None else None
+            if key_str in setin.cap_groups:
+                target_groups = [key_str]
+            else:
+                match = (
+                    next((g for g in setin.cap_groups if g.lower() == normalized), None)
+                    if normalized is not None
+                    else None
+                )
+                if match:
+                    target_groups = [match]
+                elif normalized in {'__default__', 'default'} or key_str in {
+                    '__default__',
+                    'default',
+                    None,
+                }:
+                    target_groups = [preferred_group] if preferred_group else []
+                elif normalized in {'__all__', '*'}:
+                    target_groups = list(setin.cap_groups)
+                else:
+                    target_groups = []
+            apply_override(target_groups, override_value)
         else:
-            allowances_df = pd.concat(
-                [
-                    allowances_df,
-                    pd.DataFrame(
-                        {
-                            'year': [year],
-                            'CarbonAllowanceProcurement': [float(value)],
-                        }
-                    ),
-                ],
-                ignore_index=True,
+            try:
+                year_int = int(group_key)
+            except (TypeError, ValueError):
+                continue
+            target_group = preferred_group if preferred_group else (
+                setin.cap_groups[0] if setin.cap_groups else None
             )
-    allowances_df = pd.merge(
-        pd.DataFrame({'year': setin.years}), allowances_df, on='year', how='left'
-    ).fillna(0.0)
+            if target_group is not None:
+                allowances_df.loc[
+                    (allowances_df['cap_group'] == target_group)
+                    & (allowances_df['year'] == year_int),
+                    'CarbonAllowanceProcurement',
+                ] = float(override_value)
+
     allowances_df['CarbonAllowanceProcurement'] = allowances_df[
         'CarbonAllowanceProcurement'
     ].astype(float)
@@ -865,14 +977,16 @@ def preprocessor(setin):
     )
 
     if 'CarbonAllowanceProcurement' in all_frames:
-        allowances_df = all_frames['CarbonAllowanceProcurement'].reset_index()
+        allowances_df = all_frames['CarbonAllowanceProcurement'].copy()
         allowances_df = pd.merge(
             allowances_df, setin.WeightYear, on='year', how='left'
         ).fillna({'WeightYear': 1})
         allowances_df['CarbonAllowanceProcurement'] = (
             allowances_df['CarbonAllowanceProcurement'] * allowances_df['WeightYear']
         )
-        allowances_df = allowances_df[['year', 'CarbonAllowanceProcurement']]
+        allowances_df = allowances_df[
+            ['cap_group', 'year', 'CarbonAllowanceProcurement']
+        ]
         all_frames['CarbonAllowanceProcurement'] = allowances_df
 
     # using same T_vre capacity factor for all model years and reordering columns
