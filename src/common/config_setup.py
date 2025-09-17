@@ -14,6 +14,9 @@ from datetime import datetime
 import types
 import argparse
 
+# Constants
+SHORT_TON_TO_METRIC_TON = 0.90718474
+
 # Import python modules
 from definitions import PROJECT_ROOT
 from src.integrator.utilities import create_temporal_mapping
@@ -171,6 +174,19 @@ class Config_settings:
             self.start_year = config['start_year']
         else:
             self.start_year = self.years[0]
+
+        ############################################################################################
+        # __INIT__: Carbon Policy Configs
+        carbon_policy_section = config.get('carbon_policy')
+        if isinstance(carbon_policy_section, dict):
+            carbon_cap_value = carbon_policy_section.get('carbon_cap')
+        else:
+            carbon_cap_value = config.get('carbon_cap')
+
+        if carbon_cap_value in (None, ''):
+            self.carbon_cap = None
+        else:
+            self.carbon_cap = float(carbon_cap_value) * SHORT_TON_TO_METRIC_TON
 
         ############################################################################################
         # __INIT__:  Electricity Configs

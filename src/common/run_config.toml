@@ -62,6 +62,12 @@ sw_agg_years = 1
 sw_learning = 0
 
 ###################################################################################################
+# Carbon Policy Inputs
+
+# Provide the carbon cap in short tons; values are converted to metric tons internally.
+# carbon_cap = 0
+
+###################################################################################################
 # Residential Inputs
 
 # Select the method for projecting future electricity demand (e.g., "annual" or "enduse")
