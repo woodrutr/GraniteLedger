@@ -834,7 +834,9 @@ def preprocessor(setin):
 
     # Carbon allowance group membership mapping
     membership_df = all_frames.pop('CarbonCapGroupMap', None)
-    if membership_df is None or membership_df.empty:
+    if membership_df is not None and not membership_df.empty:
+        membership_df = membership_df.copy()
+    else:
         fallback_df = all_frames.get('CarbonCapGroup')
         if fallback_df is not None and not fallback_df.empty:
             membership_df = fallback_df.copy()
@@ -842,8 +844,6 @@ def preprocessor(setin):
             membership_df = pd.DataFrame(
                 {'cap_group': ['system'] * len(setin.region), 'region': setin.region}
             )
-    else:
-        membership_df = membership_df.copy()
     if 'cap_group' not in membership_df.columns:
         raise ValueError('CarbonCapGroup input must include a cap_group column')
     if 'region' not in membership_df.columns:
