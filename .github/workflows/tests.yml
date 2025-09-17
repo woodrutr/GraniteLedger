@@ -29,5 +29,5 @@ jobs:
           conda info
           conda list
 
-      - name: Run tests
+      - name: Run unit tests
         run: pytest unit_tests
