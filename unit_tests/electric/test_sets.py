@@ -105,3 +105,23 @@ def test_carbon_cap_group_tables():
     assert setin.cap_group_membership.index.names == ['cap_group', 'region']
     assert setin.carbon_allowance_by_cap_group.index.names == ['cap_group', 'year']
     assert setin.carbon_price_by_cap_group.index.names == ['cap_group', 'year']
+
+
+def test_carbon_cap_group_region_override():
+    config_path = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
+    settings = config_setup.Config_settings(config_path, test=True)
+    settings.regions = [7, 8]
+    settings.years = [2025, 2030]
+    settings.carbon_cap_groups = settings._normalize_carbon_cap_groups(
+        {'national': {'regions': [7]}}
+    )
+
+    all_frames, setin = prep.preprocessor(prep.Sets(settings))
+
+    membership = all_frames['CarbonCapGroupMembership'].reset_index()
+    assert set(membership['cap_group']) == {'national'}
+    assert set(membership['region']) == {7}
+
+    indexed_membership = setin.cap_group_membership.reset_index()
+    assert set(indexed_membership['region']) == {7}
+    assert set(setin.cap_groups) == {'national'}

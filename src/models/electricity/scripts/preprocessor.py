@@ -408,6 +408,25 @@ def build_cap_group_inputs(all_frames, setin):
     if configured_groups:
         membership = membership[membership['cap_group'].isin(configured_groups.keys())]
 
+        if not membership.empty:
+            filtered_membership = []
+            for group_name, group_members in membership.groupby('cap_group', sort=False):
+                config = configured_groups.get(group_name) or {}
+                if 'regions' in config:
+                    allowed_regions = {int(region) for region in config['regions']}
+                    group_members = group_members[
+                        group_members['region'].isin(allowed_regions)
+                    ]
+                if not group_members.empty:
+                    filtered_membership.append(group_members)
+            if filtered_membership:
+                membership = pd.concat(filtered_membership, ignore_index=True)
+            else:
+                membership = pd.DataFrame(columns=membership.columns)
+
+    if membership.empty:
+        return all_frames, setin
+
     active_groups = sorted(membership['cap_group'].unique())
     if not active_groups:
         return all_frames, setin
