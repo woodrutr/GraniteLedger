@@ -197,7 +197,27 @@ class Config_settings:
         self.sw_learning = config['sw_learning']
         self.sw_expansion = config['sw_expansion']
         carbon_cap = config.get('carbon_cap')
-        self.carbon_cap = float(carbon_cap) if carbon_cap is not None else None
+        if isinstance(carbon_cap, str) and carbon_cap.lower() in {'none', 'null'}:
+            carbon_cap_value = None
+        elif carbon_cap is None:
+            carbon_cap_value = None
+        else:
+            carbon_cap_value = float(carbon_cap)
+        self.carbon_cap = carbon_cap_value
+        allowance_procurement = config.get('carbon_allowance_procurement', {}) or {}
+        self.carbon_allowance_procurement = {
+            int(year): float(value) for year, value in allowance_procurement.items()
+        }
+        start_bank = config.get('carbon_allowance_start_bank', 0.0)
+        self.carbon_allowance_start_bank = (
+            float(start_bank) if start_bank is not None else 0.0
+        )
+        self.carbon_allowance_bank_enabled = bool(
+            config.get('carbon_allowance_bank_enabled', True)
+        )
+        self.carbon_allowance_allow_borrowing = bool(
+            config.get('carbon_allowance_allow_borrowing', False)
+        )
 
         ############################################################################################
         # __INIT__: Residential Configs
@@ -245,6 +265,8 @@ class Config_settings:
                 'force_10',
                 'sensitivity',
                 'complex',
+                'carbon_allowance_bank_enabled',
+                'carbon_allowance_allow_borrowing',
             },
             '_check_zero_one': {
                 'sw_trade',

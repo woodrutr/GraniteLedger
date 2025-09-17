@@ -50,12 +50,24 @@ sw_reserves = 1 # Operating reserve requirement switch
 
 # Aggregate years switch
 # When on, representative years are aggregated and weighted based on unselected years
-sw_agg_years = 1 
+sw_agg_years = 1
 
 # Capital cost technology learning switch
 # Turning this feature on, capital cost can be a function of the amount of capacity built by technology.
 # 0 = exogenous learning, 1 = iterative linear function, 2 = nonlinear function
 sw_learning = 0
+
+# Carbon policy
+# Specify a system-wide CO2 emissions cap in metric tons. Set to "none" for no cap.
+carbon_cap = "none"
+# Specify the number of allowances procured each modeled year (metric tons).
+# Populate keys to match the modeled years in the `years` list above.
+carbon_allowance_procurement = { "2025" = 0.0, "2030" = 0.0 }
+
+# Allowance banking settings (values in metric tons)
+carbon_allowance_start_bank = 0.0
+carbon_allowance_bank_enabled = true
+carbon_allowance_allow_borrowing = false
 
 ###################################################################################################
 # Carbon Policy Inputs
