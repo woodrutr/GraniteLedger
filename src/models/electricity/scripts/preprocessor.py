@@ -833,7 +833,9 @@ def preprocessor(setin):
     all_frames['EmissionsRate'] = emissions_df
 
     # Carbon allowance group membership mapping
-    membership_df = all_frames.get('CarbonCapGroup')
+    membership_df = all_frames.pop('CarbonCapGroupMap', None)
+    if membership_df is None or membership_df.empty:
+        membership_df = all_frames.get('CarbonCapGroup')
     if membership_df is None or membership_df.empty:
         membership_df = pd.DataFrame(
             {'cap_group': ['system'] * len(setin.region), 'region': setin.region}
