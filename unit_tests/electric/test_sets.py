@@ -1,6 +1,7 @@
 from logging import getLogger
 from pathlib import Path
 import pandas as pd
+import pytest
 
 from src.common import config_setup
 from src.models.electricity.scripts.utilities import annual_count
@@ -62,3 +63,45 @@ def test_hours_set():
 
     # check that sum of load matches regardless of hours per day
     assert tot_load_d4h1 == tot_load_d8h12, 'some diff in hours sets'
+
+
+def test_carbon_cap_group_tables():
+    config_path = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
+    settings = config_setup.Config_settings(config_path, test=True)
+    settings.regions = [7, 8]
+    settings.years = [2025, 2030]
+
+    all_frames, setin = prep.preprocessor(prep.Sets(settings))
+
+    membership = all_frames['CarbonCapGroupMembership'].reset_index()
+    assert set(membership['region']) == set(settings.regions)
+    assert set(membership['cap_group']) == {'national'}
+
+    allowance_groups = all_frames['CarbonAllowanceProcurementByCapGroup'].reset_index()
+    assert set(allowance_groups['cap_group']) == {'national'}
+    weights = setin.WeightYear.set_index('year')['WeightYear']
+    for _, row in allowance_groups.iterrows():
+        year = int(row['year'])
+        expected = settings.carbon_allowance_procurement.get(year, 0.0) * float(
+            weights.get(year, 1)
+        )
+        assert row['CarbonAllowanceProcurement'] == pytest.approx(expected)
+
+    price_groups = all_frames['CarbonAllowancePriceByCapGroup'].reset_index()
+    assert set(price_groups['cap_group']) == {'national'}
+    base_prices = (
+        all_frames['CarbonAllowancePrice'].reset_index()
+        if 'CarbonAllowancePrice' in all_frames
+        else pd.DataFrame(columns=['year', 'CarbonPrice'])
+    )
+    base_price_lookup = {
+        int(row['year']): float(row['CarbonPrice']) for _, row in base_prices.iterrows()
+    }
+    for _, row in price_groups.iterrows():
+        year = int(row['year'])
+        assert row['CarbonPrice'] == pytest.approx(base_price_lookup.get(year, 0.0))
+
+    assert set(setin.cap_groups) == {'national'}
+    assert setin.cap_group_membership.index.names == ['cap_group', 'region']
+    assert setin.carbon_allowance_by_cap_group.index.names == ['cap_group', 'year']
+    assert setin.carbon_price_by_cap_group.index.names == ['cap_group', 'year']

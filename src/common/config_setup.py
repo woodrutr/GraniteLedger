@@ -185,6 +185,11 @@ class Config_settings:
 
         if carbon_cap_value in (None, ''):
             self.carbon_cap = None
+        elif isinstance(carbon_cap_value, str) and carbon_cap_value.lower() in {
+            'none',
+            'null',
+        }:
+            self.carbon_cap = None
         else:
             self.carbon_cap = float(carbon_cap_value) * SHORT_TON_TO_METRIC_TON
 
@@ -217,6 +222,10 @@ class Config_settings:
         )
         self.carbon_allowance_allow_borrowing = bool(
             config.get('carbon_allowance_allow_borrowing', False)
+        )
+        carbon_cap_groups_config = config.get('carbon_cap_groups', {}) or {}
+        self.carbon_cap_groups = self._normalize_carbon_cap_groups(
+            carbon_cap_groups_config
         )
 
         ############################################################################################
@@ -355,6 +364,71 @@ class Config_settings:
                 .reset_index()
                 .rename(columns={'Map_year': 'year', 'year': 'WeightYear'})
             )
+
+    def _normalize_carbon_cap_groups(self, groups_config):
+        """Standardize carbon cap group settings into dictionaries."""
+
+        normalized = {}
+        if isinstance(groups_config, dict):
+            for group_name, group_config in groups_config.items():
+                normalized[str(group_name)] = self._normalize_single_cap_group(
+                    group_config
+                )
+        elif isinstance(groups_config, list):
+            for group_name in groups_config:
+                normalized[str(group_name)] = {}
+        return normalized
+
+    def _normalize_single_cap_group(self, group_config):
+        if group_config is None:
+            return {}
+        if not isinstance(group_config, dict):
+            return {'value': group_config}
+
+        normalized = {}
+
+        allowance_data = None
+        for key in (
+            'allowances',
+            'allowance_procurement',
+            'carbon_allowance_procurement',
+        ):
+            if key in group_config:
+                allowance_data = group_config[key]
+                break
+        if isinstance(allowance_data, dict):
+            normalized['allowances'] = {
+                int(year): float(amount)
+                for year, amount in allowance_data.items()
+            }
+
+        price_data = None
+        for key in ('prices', 'price', 'carbon_price'):
+            if key in group_config:
+                price_data = group_config[key]
+                break
+        if isinstance(price_data, dict):
+            normalized['prices'] = {
+                int(year): float(price) for year, price in price_data.items()
+            }
+
+        if 'regions' in group_config and isinstance(group_config['regions'], list):
+            normalized['regions'] = [int(region) for region in group_config['regions']]
+
+        for key, value in group_config.items():
+            if key in {
+                'allowances',
+                'allowance_procurement',
+                'carbon_allowance_procurement',
+                'prices',
+                'price',
+                'carbon_price',
+                'regions',
+            }:
+                continue
+            normalized[key] = value
+
+        return normalized
 
     # TODO: no hard coded values! regions should be flexible, come up with a better check
     def _check_regions(self, name, value):

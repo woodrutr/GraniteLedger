@@ -60,6 +60,7 @@ carbon_allowance_start_bank = 0.0
 carbon_allowance_bank_enabled = true
 carbon_allowance_allow_borrowing = false
 
+
 # Aggregate years switch
 # When on, representative years are aggregated and weighted based on unselected years
 sw_agg_years = 1
@@ -103,4 +104,7 @@ complex = true
 # Hydrogen Inputs
 
 h2_data_folder = "input/hydrogen/all_regions"
+
+[carbon_cap_groups.national]
+description = "Default national carbon cap group"
 
