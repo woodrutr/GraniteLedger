@@ -1,6 +1,8 @@
 from logging import getLogger
 from pathlib import Path
+
 import pandas as pd
+import pytest
 
 from src.common import config_setup
 from src.models.electricity.scripts.utilities import annual_count
@@ -62,3 +64,34 @@ def test_hours_set():
 
     # check that sum of load matches regardless of hours per day
     assert tot_load_d4h1 == tot_load_d8h12, 'some diff in hours sets'
+
+
+def test_default_allowance_override_applies_to_remaining_groups():
+    """Ensure default overrides update every group without an explicit override."""
+
+    allowances = pd.DataFrame(
+        {
+            'cap_group': ['rggi', 'rggi', 'non_rggi', 'non_rggi'],
+            'year': [2025, 2030, 2025, 2030],
+            'CarbonAllowanceProcurement': [5.0, 6.0, 5.0, 6.0],
+        }
+    )
+    overrides = {
+        'rggi': {2025: 7.0},
+        '__default__': {2025: 3.0, 2030: 4.0},
+    }
+
+    updated = prep.apply_allowance_overrides(
+        allowances.copy(), overrides, ['rggi', 'non_rggi']
+    )
+
+    def allowance_value(group: str, year: int) -> float:
+        series = updated[
+            (updated['cap_group'] == group) & (updated['year'] == year)
+        ]['CarbonAllowanceProcurement']
+        assert not series.empty
+        return float(series.iloc[0])
+
+    assert allowance_value('rggi', 2025) == pytest.approx(7.0)
+    assert allowance_value('non_rggi', 2025) == pytest.approx(3.0)
+    assert allowance_value('non_rggi', 2030) == pytest.approx(4.0)

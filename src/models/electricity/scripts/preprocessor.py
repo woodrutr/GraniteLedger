@@ -52,6 +52,95 @@ DEFAULT_TECH_EMISSIONS_RATE_TON_PER_GWH = {
 }
 
 
+def apply_allowance_overrides(
+    allowances_df: pd.DataFrame,
+    overrides: dict,
+    cap_groups: list[str],
+) -> pd.DataFrame:
+    """Apply run configuration overrides to the allowance procurement data."""
+
+    if not overrides or not cap_groups:
+        return allowances_df
+
+    group_lookup = {group.lower(): group for group in cap_groups}
+    per_group_overrides: dict[str, dict[int, float]] = {}
+    default_override: dict[int, float] = {}
+    global_override: dict[int, float] = {}
+
+    def normalize_year_map(year_value_map):
+        normalized_map: dict[int, float] = {}
+        for year_key, override_value in year_value_map.items():
+            try:
+                year_int = int(year_key)
+            except (TypeError, ValueError):
+                continue
+            try:
+                normalized_map[year_int] = float(override_value)
+            except (TypeError, ValueError):
+                continue
+        return normalized_map
+
+    for group_key, override_value in overrides.items():
+        if isinstance(override_value, dict):
+            key_str = None if group_key is None else str(group_key)
+            normalized_key = key_str.lower() if key_str is not None else None
+            year_map = normalize_year_map(override_value)
+            if not year_map:
+                continue
+            if key_str in cap_groups:
+                per_group_overrides.setdefault(key_str, {}).update(year_map)
+            elif normalized_key in group_lookup:
+                canonical = group_lookup[normalized_key]
+                per_group_overrides.setdefault(canonical, {}).update(year_map)
+            elif normalized_key in {'__all__', '*'}:
+                global_override.update(year_map)
+            elif normalized_key in {'__default__', 'default'} or key_str in {
+                '__default__',
+                'default',
+                None,
+            }:
+                default_override.update(year_map)
+            else:
+                continue
+        else:
+            try:
+                year_int = int(group_key)
+            except (TypeError, ValueError):
+                continue
+            try:
+                value_float = float(override_value)
+            except (TypeError, ValueError):
+                continue
+            default_override[year_int] = value_float
+
+    def apply_year_overrides(target_groups, year_map):
+        for group in target_groups:
+            for year, value in year_map.items():
+                allowances_df.loc[
+                    (allowances_df['cap_group'] == group)
+                    & (allowances_df['year'] == year),
+                    'CarbonAllowanceProcurement',
+                ] = value
+
+    overridden_groups: set[str] = set()
+    if global_override:
+        apply_year_overrides(cap_groups, global_override)
+        overridden_groups.update(cap_groups)
+
+    for group_name, year_map in per_group_overrides.items():
+        apply_year_overrides([group_name], year_map)
+        overridden_groups.add(group_name)
+
+    if default_override:
+        remaining_groups = (
+            set(cap_groups) - overridden_groups if overridden_groups else set(cap_groups)
+        )
+        if remaining_groups:
+            apply_year_overrides(sorted(remaining_groups), default_override)
+
+    return allowances_df
+
+
 ###################################################################################################
 class Sets:
     """Generates an initial batch of sets that are used to solve electricity model. Sets include: \n
@@ -839,65 +928,11 @@ def preprocessor(setin):
     )
 
     overrides = getattr(setin, 'carbon_allowance_procurement_overrides', {}) or {}
-    preferred_group = None
-    if setin.cap_groups:
-        preferred_group = next(
-            (group for group in setin.cap_groups if group.lower() == 'rggi'),
-            setin.cap_groups[0],
-        )
-
-    def apply_override(target_groups, year_value_map):
-        for year_key, override_value in year_value_map.items():
-            try:
-                year_int = int(year_key)
-            except (TypeError, ValueError):
-                continue
-            for group in target_groups:
-                allowances_df.loc[
-                    (allowances_df['cap_group'] == group)
-                    & (allowances_df['year'] == year_int),
-                    'CarbonAllowanceProcurement',
-                ] = float(override_value)
-
-    for group_key, override_value in overrides.items():
-        if isinstance(override_value, dict):
-            key_str = None if group_key is None else str(group_key)
-            normalized = key_str.lower() if key_str is not None else None
-            if key_str in setin.cap_groups:
-                target_groups = [key_str]
-            else:
-                match = (
-                    next((g for g in setin.cap_groups if g.lower() == normalized), None)
-                    if normalized is not None
-                    else None
-                )
-                if match:
-                    target_groups = [match]
-                elif normalized in {'__default__', 'default'} or key_str in {
-                    '__default__',
-                    'default',
-                    None,
-                }:
-                    target_groups = [preferred_group] if preferred_group else []
-                elif normalized in {'__all__', '*'}:
-                    target_groups = list(setin.cap_groups)
-                else:
-                    target_groups = []
-            apply_override(target_groups, override_value)
-        else:
-            try:
-                year_int = int(group_key)
-            except (TypeError, ValueError):
-                continue
-            target_group = preferred_group if preferred_group else (
-                setin.cap_groups[0] if setin.cap_groups else None
-            )
-            if target_group is not None:
-                allowances_df.loc[
-                    (allowances_df['cap_group'] == target_group)
-                    & (allowances_df['year'] == year_int),
-                    'CarbonAllowanceProcurement',
-                ] = float(override_value)
+    allowances_df = apply_allowance_overrides(
+        allowances_df,
+        overrides,
+        list(setin.cap_groups),
+    )
 
     allowances_df['CarbonAllowanceProcurement'] = allowances_df[
         'CarbonAllowanceProcurement'
