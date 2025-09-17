@@ -2,39 +2,56 @@ name: Tests
 
 on:
   push:
-    branches:
-      - main
-      - work
   pull_request:
 
 jobs:
-  pytest:
-    name: Pytest (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+  unit-tests:
+    name: Unit Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
+        python-version: [3.10, 3.11, 3.12]
+
+    defaults:
+      run:
+        shell: bash -l {0}
+
     steps:
-      - name: Checkout repository
+      - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up Miniconda
+      - name: Set up Conda (with mamba)
         uses: conda-incubator/setup-miniconda@v2
         with:
-          environment-file: envs/conda_env.yml
-          activate-environment: bsky
+          python-version: ${{ matrix.python-version }}
+          auto-activate-base: false
           auto-update-conda: false
+          activate-environment: bsky
+          environment-file: envs/conda_env.yml
           use-mamba: true
-          cache-downloads: true
 
-      - name: Display conda info
-        shell: bash -l {0}
+      - name: Cache Conda packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.conda/pkgs
+          key: ${{ runner.os }}-conda-${{ matrix.python-version }}-${{ hashFiles('envs/conda_env.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-conda-
+
+      - name: Show Conda diagnostics
         run: |
           conda info
           conda list
+          python --version
 
-      - name: Run pytest
-        shell: bash -l {0}
+      - name: Run unit tests
         run: |
-          pytest
+          pytest -vv --disable-warnings --maxfail=5 --junitxml=pytest.xml unit_tests
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-results-${{ matrix.python-version }}
+          path: pytest.xml
