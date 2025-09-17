@@ -36,6 +36,23 @@ class Config_settings:
     - Other
     """
 
+    @staticmethod
+    def _normalize_carbon_cap_value(raw_value):
+        """Normalize configured carbon cap values.
+
+        Sentinel strings such as "none" and "null" (case insensitive) and blank
+        strings map to ``None``. Whitespace surrounding string inputs is ignored so
+        that values like " none " are treated as sentinels. Non-string inputs are
+        returned unchanged.
+        """
+
+        if isinstance(raw_value, str):
+            trimmed_value = raw_value.strip()
+            if trimmed_value.lower() in {'none', 'null'} or trimmed_value == '':
+                return None
+            return trimmed_value
+        return raw_value
+
     def __init__(self, config_path: Path, args: argparse.Namespace | None = None, test=False):
         """Creates configuration object upon instantiation
 
@@ -178,17 +195,14 @@ class Config_settings:
         ############################################################################################
         # __INIT__: Carbon Policy Configs
         carbon_policy_section = config.get('carbon_policy')
-        if isinstance(carbon_policy_section, dict):
+        if isinstance(carbon_policy_section, dict) and 'carbon_cap' in carbon_policy_section:
             carbon_cap_value = carbon_policy_section.get('carbon_cap')
         else:
             carbon_cap_value = config.get('carbon_cap')
 
-        if isinstance(carbon_cap_value, str):
-            carbon_cap_value = carbon_cap_value.strip()
-            if carbon_cap_value.lower() in {'none', 'null'} or carbon_cap_value == '':
-                carbon_cap_value = None
+        carbon_cap_value = self._normalize_carbon_cap_value(carbon_cap_value)
 
-        if carbon_cap_value in (None, ''):
+        if carbon_cap_value is None:
             self.carbon_cap = None
         else:
             self.carbon_cap = float(carbon_cap_value) * SHORT_TON_TO_METRIC_TON
@@ -201,12 +215,9 @@ class Config_settings:
         self.sw_reserves = config['sw_reserves']
         self.sw_learning = config['sw_learning']
         self.sw_expansion = config['sw_expansion']
-        carbon_cap = config.get('carbon_cap')
-        if isinstance(carbon_cap, str):
-            carbon_cap = carbon_cap.strip()
-            if carbon_cap.lower() in {'none', 'null'} or carbon_cap == '':
-                self.carbon_cap = None
-        elif carbon_cap is None:
+        carbon_cap_key_present = 'carbon_cap' in config
+        carbon_cap = self._normalize_carbon_cap_value(config.get('carbon_cap'))
+        if carbon_cap_key_present and carbon_cap is None:
             self.carbon_cap = None
         allowance_procurement = config.get('carbon_allowance_procurement', {}) or {}
         self.carbon_allowance_procurement = {
