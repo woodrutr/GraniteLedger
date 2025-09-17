@@ -792,22 +792,6 @@ def preprocessor(setin):
     ].astype(float)
     all_frames['CarbonAllowanceProcurement'] = allowances_df
 
-    prices_df = all_frames.get('CarbonAllowancePrice')
-    if prices_df is None:
-        prices_df = pd.DataFrame({'year': setin.years, 'CarbonPrice': [0.0] * len(setin.years)})
-    else:
-        prices_df = prices_df.copy()
-    if 'year' not in prices_df.columns:
-        raise ValueError('CarbonAllowancePrice input must include a year column')
-    if 'CarbonPrice' not in prices_df.columns:
-        raise ValueError('CarbonAllowancePrice input must include a CarbonPrice column')
-    prices_df['CarbonPrice'] = prices_df['CarbonPrice'].astype(float)
-    prices_df = pd.merge(
-        pd.DataFrame({'year': setin.years}), prices_df, on='year', how='left'
-    ).fillna(0.0)
-    prices_df['CarbonPrice'] = prices_df['CarbonPrice'].astype(float)
-    all_frames['CarbonAllowancePrice'] = prices_df
-
     # read in load data from residential input directory
     res_dir = Path(PROJECT_ROOT, 'input', 'residential')
     if setin.load_scalar == 'annual':
@@ -842,9 +826,8 @@ def preprocessor(setin):
 
     # last year values used
     filter_list = ['CapCost']
-    for optional_key in ['CarbonAllowanceProcurement', 'CarbonAllowancePrice']:
-        if optional_key in all_frames:
-            filter_list.append(optional_key)
+    if 'CarbonAllowanceProcurement' in all_frames:
+        filter_list.append('CarbonAllowanceProcurement')
     for key in filter_list:
         all_frames[key] = all_frames[key].loc[all_frames[key]['year'].isin(getattr(setin, 'years'))]
 
@@ -891,9 +874,6 @@ def preprocessor(setin):
         )
         allowances_df = allowances_df[['year', 'CarbonAllowanceProcurement']]
         all_frames['CarbonAllowanceProcurement'] = allowances_df
-    if 'CarbonAllowancePrice' in all_frames:
-        prices_df = all_frames['CarbonAllowancePrice'].reset_index()[['year', 'CarbonPrice']]
-        all_frames['CarbonAllowancePrice'] = prices_df
 
     # using same T_vre capacity factor for all model years and reordering columns
     all_frames['CapFactorVRE'] = pd.merge(

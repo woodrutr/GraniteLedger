@@ -58,6 +58,7 @@ def build_elec_model(all_frames, setin) -> PowerModel:
 
     # add electricity price dual
     instance.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)
+    instance.carbon_prices = {}
     # instance.pprint()
 
     # number of variables
@@ -69,6 +70,30 @@ def build_elec_model(all_frames, setin) -> PowerModel:
 
     return instance
 
+
+def record_allowance_emission_prices(instance: PowerModel) -> dict:
+    """Capture modeled carbon prices from the allowance emissions constraints."""
+
+    carbon_prices = {}
+    constraint = getattr(instance, 'allowance_emissions_limit', None)
+    if constraint is None:
+        instance.carbon_prices = carbon_prices
+        return carbon_prices
+
+    if constraint.is_indexed():
+        iterator = ((idx, constraint[idx]) for idx in constraint)
+    else:
+        iterator = [(None, constraint)]
+
+    for idx, constraint_data in iterator:
+        try:
+            price = -float(instance.dual[constraint_data])
+        except (KeyError, ValueError):
+            price = 0.0
+        carbon_prices[idx] = price
+
+    instance.carbon_prices = carbon_prices
+    return carbon_prices
 
 def solve_elec_model(instance):
     """solve electicity model
@@ -193,6 +218,7 @@ def run_elec_model(settings: Config_settings, solve=True) -> PowerModel:
     ###############################################################################################
     # Solve model
     solve_elec_model(instance)
+    record_allowance_emission_prices(instance)
 
     timer.toc('solve model finished')
     logger.info('Solve complete')
