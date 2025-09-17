@@ -929,9 +929,9 @@ def preprocessor(setin):
             overrides,
             list(cap_groups),
         )
-        allowances_df['CarbonAllowanceProcurement'] = allowances_df[
-            'CarbonAllowanceProcurement'
-        ].astype(float)
+    allowances_df['CarbonAllowanceProcurement'] = allowances_df[
+        'CarbonAllowanceProcurement'
+    ].astype(float)
 
     allowances_df = allowances_df.set_index(['cap_group', 'year'])
     all_frames['CarbonAllowanceProcurement'] = allowances_df
