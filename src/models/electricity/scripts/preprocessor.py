@@ -33,6 +33,25 @@ if db_switch == 1:
 data_root = Path(PROJECT_ROOT, 'input', 'electricity')
 
 
+DEFAULT_TECH_EMISSIONS_RATE_TON_PER_GWH = {
+    1: 1000.0,
+    2: 800.0,
+    3: 620.0,
+    4: 370.0,
+    5: 0.0,
+    6: 0.0,
+    7: 0.0,
+    8: 0.0,
+    9: 0.0,
+    10: 0.0,
+    11: 0.0,
+    12: 0.0,
+    13: 0.0,
+    14: 0.0,
+    15: 0.0,
+}
+
+
 ###################################################################################################
 class Sets:
     """Generates an initial batch of sets that are used to solve electricity model. Sets include: \n
@@ -58,6 +77,18 @@ class Sets:
         self.sw_learning = settings.sw_learning
         self.sw_reserves = settings.sw_reserves
         self.carbon_cap = settings.carbon_cap
+        self.carbon_allowance_procurement_overrides = (
+            getattr(settings, 'carbon_allowance_procurement', {})
+        )
+        self.carbon_allowance_start_bank = getattr(
+            settings, 'carbon_allowance_start_bank', 0.0
+        )
+        self.carbon_allowance_bank_enabled = getattr(
+            settings, 'carbon_allowance_bank_enabled', True
+        )
+        self.carbon_allowance_allow_borrowing = getattr(
+            settings, 'carbon_allowance_allow_borrowing', False
+        )
 
         self.restypes = [
             'spinning',
@@ -676,6 +707,107 @@ def preprocessor(setin):
         # add sql db tables to all frames
         all_frames = readin_sql(all_frames)
 
+    # Ensure emissions data are available for all generation technologies
+    emissions_df = all_frames.get('EmissionsRate')
+    if emissions_df is None or emissions_df.empty:
+        emissions_df = pd.DataFrame(
+            {
+                'tech': list(DEFAULT_TECH_EMISSIONS_RATE_TON_PER_GWH.keys()),
+                'EmissionsRate': list(DEFAULT_TECH_EMISSIONS_RATE_TON_PER_GWH.values()),
+            }
+        )
+    else:
+        emissions_df = emissions_df.copy()
+    if 'tech' not in emissions_df.columns:
+        raise ValueError('EmissionsRate input must include a tech column')
+    if 'EmissionsRate' not in emissions_df.columns:
+        raise ValueError('EmissionsRate input must include an EmissionsRate column')
+    emissions_df['EmissionsRate'] = emissions_df['EmissionsRate'].astype(float)
+    missing_techs = set(setin.T_gen) - set(emissions_df['tech'])
+    if missing_techs:
+        emissions_df = pd.concat(
+            [
+                emissions_df,
+                pd.DataFrame(
+                    {
+                        'tech': list(missing_techs),
+                        'EmissionsRate': [
+                            DEFAULT_TECH_EMISSIONS_RATE_TON_PER_GWH.get(tech, 0.0)
+                            for tech in missing_techs
+                        ],
+                    }
+                ),
+            ],
+            ignore_index=True,
+        )
+    emissions_df = emissions_df[emissions_df['tech'].isin(setin.T_gen)]
+    all_frames['EmissionsRate'] = emissions_df
+
+    # Allowance procurement and price inputs (tons and $/ton)
+    allowances_df = all_frames.get('CarbonAllowanceProcurement')
+    if allowances_df is None:
+        allowances_df = pd.DataFrame(
+            {
+                'year': setin.years,
+                'CarbonAllowanceProcurement': [0.0] * len(setin.years),
+            }
+        )
+    else:
+        allowances_df = allowances_df.copy()
+    if 'year' not in allowances_df.columns:
+        raise ValueError('CarbonAllowanceProcurement input must include a year column')
+    if 'CarbonAllowanceProcurement' not in allowances_df.columns:
+        raise ValueError(
+            'CarbonAllowanceProcurement input must include a CarbonAllowanceProcurement column'
+        )
+    allowances_df['CarbonAllowanceProcurement'] = allowances_df[
+        'CarbonAllowanceProcurement'
+    ].astype(float)
+    overrides = getattr(setin, 'carbon_allowance_procurement_overrides', {}) or {}
+    for year, value in overrides.items():
+        if not isinstance(year, int):
+            year = int(year)
+        if allowances_df['year'].eq(year).any():
+            allowances_df.loc[
+                allowances_df['year'] == year, 'CarbonAllowanceProcurement'
+            ] = float(value)
+        else:
+            allowances_df = pd.concat(
+                [
+                    allowances_df,
+                    pd.DataFrame(
+                        {
+                            'year': [year],
+                            'CarbonAllowanceProcurement': [float(value)],
+                        }
+                    ),
+                ],
+                ignore_index=True,
+            )
+    allowances_df = pd.merge(
+        pd.DataFrame({'year': setin.years}), allowances_df, on='year', how='left'
+    ).fillna(0.0)
+    allowances_df['CarbonAllowanceProcurement'] = allowances_df[
+        'CarbonAllowanceProcurement'
+    ].astype(float)
+    all_frames['CarbonAllowanceProcurement'] = allowances_df
+
+    prices_df = all_frames.get('CarbonAllowancePrice')
+    if prices_df is None:
+        prices_df = pd.DataFrame({'year': setin.years, 'CarbonPrice': [0.0] * len(setin.years)})
+    else:
+        prices_df = prices_df.copy()
+    if 'year' not in prices_df.columns:
+        raise ValueError('CarbonAllowancePrice input must include a year column')
+    if 'CarbonPrice' not in prices_df.columns:
+        raise ValueError('CarbonAllowancePrice input must include a CarbonPrice column')
+    prices_df['CarbonPrice'] = prices_df['CarbonPrice'].astype(float)
+    prices_df = pd.merge(
+        pd.DataFrame({'year': setin.years}), prices_df, on='year', how='left'
+    ).fillna(0.0)
+    prices_df['CarbonPrice'] = prices_df['CarbonPrice'].astype(float)
+    all_frames['CarbonAllowancePrice'] = prices_df
+
     # read in load data from residential input directory
     res_dir = Path(PROJECT_ROOT, 'input', 'residential')
     if setin.load_scalar == 'annual':
@@ -710,6 +842,9 @@ def preprocessor(setin):
 
     # last year values used
     filter_list = ['CapCost']
+    for optional_key in ['CarbonAllowanceProcurement', 'CarbonAllowancePrice']:
+        if optional_key in all_frames:
+            filter_list.append(optional_key)
     for key in filter_list:
         all_frames[key] = all_frames[key].loc[all_frames[key]['year'].isin(getattr(setin, 'years'))]
 
@@ -745,6 +880,20 @@ def preprocessor(setin):
         .reset_index()
         .rename(columns={'Map_s': 'season'})
     )
+
+    if 'CarbonAllowanceProcurement' in all_frames:
+        allowances_df = all_frames['CarbonAllowanceProcurement'].reset_index()
+        allowances_df = pd.merge(
+            allowances_df, setin.WeightYear, on='year', how='left'
+        ).fillna({'WeightYear': 1})
+        allowances_df['CarbonAllowanceProcurement'] = (
+            allowances_df['CarbonAllowanceProcurement'] * allowances_df['WeightYear']
+        )
+        allowances_df = allowances_df[['year', 'CarbonAllowanceProcurement']]
+        all_frames['CarbonAllowanceProcurement'] = allowances_df
+    if 'CarbonAllowancePrice' in all_frames:
+        prices_df = all_frames['CarbonAllowancePrice'].reset_index()[['year', 'CarbonPrice']]
+        all_frames['CarbonAllowancePrice'] = prices_df
 
     # using same T_vre capacity factor for all model years and reordering columns
     all_frames['CapFactorVRE'] = pd.merge(

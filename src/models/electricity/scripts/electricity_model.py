@@ -22,7 +22,7 @@ from src.models.electricity.scripts.utilities import ElectricityMethods as em
 # Establish logger
 logger = getLogger(__name__)
 
-TECH_EMISSIONS_RATE_TON_PER_GWH = {
+DEFAULT_TECH_EMISSIONS_RATE_TON_PER_GWH = {
     1: 1000.0,  # Coal Steam
     2: 800.0,  # Oil Steam
     3: 620.0,  # Natural Gas CT
@@ -70,6 +70,19 @@ class PowerModel(Model):
         self.sw_reserves = setA.sw_reserves
         self.sw_h2int = 0
         self.carbon_cap = setA.carbon_cap
+        self.carbon_allowance_start_bank = getattr(setA, 'carbon_allowance_start_bank', 0.0)
+        self.carbon_allowance_bank_enabled = getattr(
+            setA, 'carbon_allowance_bank_enabled', True
+        )
+        self.carbon_allowance_allow_borrowing = getattr(
+            setA, 'carbon_allowance_allow_borrowing', False
+        )
+        self.year_list = list(setA.years)
+        self.first_year = self.year_list[0] if self.year_list else None
+        self.prev_year_lookup = {
+            year: self.year_list[idx - 1] if idx > 0 else None
+            for idx, year in enumerate(self.year_list)
+        }
 
         # 0=no learning, 1=linear iterations, 2=nonlinear learning
         self.sw_learning = setA.sw_learning
@@ -209,14 +222,49 @@ class PowerModel(Model):
         self.declare_param('H2Price', self.H2Price_index, all_frames['H2Price'], mutable=True)
         self.declare_param('StorageLevelCost', None, 0.00000001)
         self.declare_param('H2Heatrate', None, setA.H2Heatrate)
-        emissions_series = pd.Series(
-            {tech: TECH_EMISSIONS_RATE_TON_PER_GWH.get(tech, 0.0) for tech in setA.T_gen},
-            name='EmissionsRate',
-        )
-        emissions_series.index.name = 'tech'
-        self.declare_param('EmissionsRate', self.T_gen, emissions_series)
+        if 'EmissionsRate' in all_frames:
+            self.declare_param('EmissionsRate', self.T_gen, all_frames['EmissionsRate'])
+        else:
+            emissions_series = pd.Series(
+                {
+                    tech: DEFAULT_TECH_EMISSIONS_RATE_TON_PER_GWH.get(tech, 0.0)
+                    for tech in setA.T_gen
+                },
+                name='EmissionsRate',
+            )
+            emissions_series.index.name = 'tech'
+            self.declare_param('EmissionsRate', self.T_gen, emissions_series)
         if self.carbon_cap is not None:
             self.declare_param('CarbonCap', None, self.carbon_cap)
+
+        self.declare_param(
+            'CarbonStartBank', None, self.carbon_allowance_start_bank, mutable=True
+        )
+        if 'CarbonAllowanceProcurement' in all_frames:
+            self.declare_param(
+                'CarbonAllowanceProcurement',
+                self.year,
+                all_frames['CarbonAllowanceProcurement'],
+                mutable=True,
+            )
+        else:
+            allowance_fallback = pd.Series(
+                {year: 0.0 for year in setA.years}, name='CarbonAllowanceProcurement'
+            )
+            allowance_fallback.index.name = 'year'
+            self.declare_param(
+                'CarbonAllowanceProcurement', self.year, allowance_fallback, mutable=True
+            )
+        if 'CarbonAllowancePrice' in all_frames:
+            self.declare_param(
+                'CarbonPrice', self.year, all_frames['CarbonAllowancePrice'], mutable=True
+            )
+        else:
+            price_fallback = pd.Series(
+                {year: 0.0 for year in setA.years}, name='CarbonPrice'
+            )
+            price_fallback.index.name = 'year'
+            self.declare_param('CarbonPrice', self.year, price_fallback, mutable=True)
 
         # if capacity expansion is on
         if self.sw_expansion:
@@ -327,6 +375,15 @@ class PowerModel(Model):
         self.declare_var('storage_inflow', self.Storage_index)
         self.declare_var('storage_outflow', self.Storage_index)
         self.declare_var('storage_level', self.Storage_index)
+        self.declare_var('allowance_purchase', self.year, bound=(0, 1000000000000))
+        bank_within = 'Reals' if self.carbon_allowance_allow_borrowing else 'NonNegativeReals'
+        bank_bounds = (
+            (-1000000000000, 1000000000000)
+            if self.carbon_allowance_allow_borrowing
+            else (0, 1000000000000)
+        )
+        self.declare_var('allowance_bank', self.year, within=bank_within, bound=bank_bounds)
+        self.declare_var('year_emissions', self.year, bound=(0, 1000000000000))
 
         # if capacity expansion is on
         if self.sw_expansion:
@@ -422,19 +479,18 @@ class PowerModel(Model):
 
         self.unmet_load_cost = pyo.Expression(expr=unmet_load_cost)
 
-        def total_emissions(self):
-            """Total system CO2 emissions in metric tons."""
+        def carbon_allowance_cost(self):
+            """Total cost of procured carbon allowances."""
 
             return sum(
-                self.WeightDay[self.MapHourDay[hr]]
-                * self.WeightYear[y]
-                * self.EmissionsRate[tech]
-                * self.generation_total[(tech, y, r, step, hr)]
-                for hr in self.hour
-                for (tech, y, r, step) in self.GenHour_index[hr]
+                self.CarbonPrice[y] * self.allowance_purchase[y] for y in self.year
             )
 
-        self.total_emissions = pyo.Expression(expr=total_emissions)
+        self.carbon_allowance_cost = pyo.Expression(expr=carbon_allowance_cost)
+
+        self.total_emissions = pyo.Expression(
+            expr=sum(self.year_emissions[y] for y in self.year)
+        )
 
         # if capacity expansion is on
         if self.sw_expansion:
@@ -606,12 +662,59 @@ class PowerModel(Model):
                 + (self.trade_cost if self.sw_trade else 0)
                 + (self.capacity_expansion_cost + self.fixed_om_cost if self.sw_expansion else 0)
                 + (self.operating_reserves_cost if self.sw_reserves else 0)
+                + self.carbon_allowance_cost
             )
 
         self.total_cost = pyo.Objective(rule=electricity_objective_function, sense=pyo.minimize)
 
         ###########################################################################################
         # Constraints
+
+        def incoming_bank(m, year):
+            prev_year = m.prev_year_lookup.get(year)
+            carryover = (
+                m.allowance_bank[prev_year]
+                if (m.carbon_allowance_bank_enabled and prev_year is not None)
+                else 0
+            )
+            start_bank = (
+                m.CarbonStartBank if (m.first_year is not None and year == m.first_year) else 0
+            )
+            return carryover + start_bank
+
+        @self.Constraint(self.year)
+        def year_emissions_balance(self, y):
+            """Link yearly emissions variable to generation decisions."""
+
+            return self.year_emissions[y] == pyo.quicksum(
+                self.WeightDay[self.MapHourDay[hr]]
+                * self.WeightYear[y]
+                * self.EmissionsRate[tech]
+                * self.generation_total[(tech, y_idx, r, step, hr)]
+                for hr in self.hour
+                for (tech, y_idx, r, step) in self.GenHour_index[hr]
+                if y_idx == y
+            )
+
+        @self.Constraint(self.year)
+        def allowance_purchase_limit(self, y):
+            """Bound allowance purchases by available procurement."""
+
+            return self.allowance_purchase[y] <= self.CarbonAllowanceProcurement[y]
+
+        @self.Constraint(self.year)
+        def allowance_bank_balance(self, y):
+            """Track allowance bank evolution across years."""
+
+            incoming = incoming_bank(self, y)
+            return self.allowance_bank[y] == incoming + self.allowance_purchase[y] - self.year_emissions[y]
+
+        @self.Constraint(self.year)
+        def allowance_emissions_limit(self, y):
+            """Ensure emissions do not exceed allowances plus incoming bank."""
+
+            incoming = incoming_bank(self, y)
+            return self.year_emissions[y] <= self.allowance_purchase[y] + incoming
 
         if self.carbon_cap is not None:
             self.total_emissions_cap = pyo.Constraint(
