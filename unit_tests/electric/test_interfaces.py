@@ -1,6 +1,10 @@
 import pytest
+
+pyo = pytest.importorskip(
+    'pyomo.environ', reason='Pyomo is required for electricity interface tests'
+)
+
 from pathlib import Path
-from pyomo.environ import value
 
 from definitions import PROJECT_ROOT
 from src.common import config_setup
@@ -58,9 +62,9 @@ def test_update_h2_price():
 
     # sample a couple...
     #                               r, season, tech, step, yr
-    assert value(elec_model.H2Price[2, 1, 5, 1, 2030]) == pytest.approx(999.0)
-    assert value(elec_model.H2Price[2, 3, 5, 1, 2030]) == pytest.approx(999.0)
-    assert value(elec_model.H2Price[2, 2, 5, 1, 2031]) == pytest.approx(101010.10)
+    assert pyo.value(elec_model.H2Price[2, 1, 5, 1, 2030]) == pytest.approx(999.0)
+    assert pyo.value(elec_model.H2Price[2, 3, 5, 1, 2030]) == pytest.approx(999.0)
+    assert pyo.value(elec_model.H2Price[2, 2, 5, 1, 2031]) == pytest.approx(101010.10)
 
 
 def test_poll_h2_demand():

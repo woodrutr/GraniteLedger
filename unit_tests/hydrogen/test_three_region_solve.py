@@ -1,5 +1,9 @@
 import pytest
-from pyomo.environ import value
+
+pyo = pytest.importorskip(
+    'pyomo.environ', reason='Pyomo is required for hydrogen model tests'
+)
+
 from pathlib import Path
 
 from definitions import PROJECT_ROOT
@@ -21,5 +25,5 @@ def test_three_reg_solve():
     sol = actions.solve_it(model)
 
     # pull the objective value out for examination...
-    obj_val = value(model.cost_expression)
+    obj_val = pyo.value(model.cost_expression)
     assert obj_val == pytest.approx(2671.56), "objective value doesn't match"

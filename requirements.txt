@@ -1,0 +1,21 @@
+# Core Python dependencies for the BlueSky Prototype project
+# These pins mirror the Conda environment used by the team so that
+# local development and CI run against the same package set.
+dash==2.17.1
+dash-bootstrap-components==1.6.0
+grequests==0.6.0
+matplotlib==3.9.2
+networkx==3.3
+numpy==2.1.1
+openpyxl==3.1.5
+pandas==2.2.2
+plotly==5.24.0
+pyomo==6.8.0
+pytest==8.3.2
+requests==2.32.3
+ruff==0.6.2
+sqlalchemy==2.0.33
+sympy==1.12.1
+toml==0.10.2
+tomli==2.0.1
+tomlkit==0.13.2

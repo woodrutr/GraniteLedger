@@ -138,8 +138,6 @@ class PowerModel(Model):
             config_cap_groups = {'system'}
         cap_groups = sorted(config_cap_groups | data_cap_groups) or ['system']
         self.cap_groups = cap_groups
-        self.declare_set('cap_group', cap_groups)
-        self.declare_set_with_sets('allowance_index', self.cap_group, self.year)
 
         cap_group_map_df = all_frames.get('CarbonCapGroupMap')
         if cap_group_map_df is not None:
@@ -186,6 +184,15 @@ class PowerModel(Model):
         )
         cap_group_map_df = cap_group_map_df.sort_values('region').reset_index(drop=True)
         cap_group_map_df['cap_group'] = cap_group_map_df['cap_group'].astype(str)
+        cap_group_region_frame = (
+            cap_group_map_df[['cap_group', 'region']]
+            .drop_duplicates()
+            .set_index(['cap_group', 'region'])
+            .sort_index()
+        )
+        self.declare_set('cap_group', cap_groups)
+        self.declare_set('cap_group_region_index', cap_group_region_frame)
+        self.declare_set_with_sets('cap_group_year_index', self.cap_group, self.year)
         self.region_to_cap_group = {
             row.region: row.cap_group for row in cap_group_map_df.itertuples(index=False)
         }
@@ -337,6 +344,34 @@ class PowerModel(Model):
         )
         self.cap_group_start_bank = cap_group_start_bank
 
+        membership_data = all_frames.get('CarbonCapGroupMembership')
+        if membership_data is None:
+            membership_data = cap_group_region_frame
+        if isinstance(membership_data, pd.Series):
+            membership_data = membership_data.to_frame(name='CarbonCapGroupMembership')
+        else:
+            membership_data = membership_data.copy()
+        if 'CarbonCapGroupMembership' not in membership_data.columns:
+            membership_data['CarbonCapGroupMembership'] = 1.0
+        if 'cap_group' in membership_data.columns and 'region' in membership_data.columns:
+            membership_data = membership_data.set_index(['cap_group', 'region'])
+        membership_data.index = membership_data.index.set_names(['cap_group', 'region'])
+        membership_index = list(self.cap_group_region_index)
+        if membership_index:
+            membership_multi_index = pd.MultiIndex.from_tuples(
+                membership_index, names=['cap_group', 'region']
+            )
+        else:
+            membership_multi_index = pd.MultiIndex.from_arrays(
+                [[], []], names=['cap_group', 'region']
+            )
+        membership_data = membership_data.reindex(membership_multi_index, fill_value=0.0)
+        self.declare_param(
+            'CarbonCapGroupMembership',
+            self.cap_group_region_index,
+            membership_data[['CarbonCapGroupMembership']],
+        )
+
         allowance_param = all_frames.get('CarbonAllowanceProcurement')
         if allowance_param is not None:
             allowance_param = allowance_param.copy()
@@ -348,7 +383,7 @@ class PowerModel(Model):
             ]
             self.declare_param(
                 'CarbonAllowanceProcurement',
-                self.allowance_index,
+                self.cap_group_year_index,
                 allowance_param,
                 mutable=True,
             )
@@ -375,7 +410,7 @@ class PowerModel(Model):
                 )
             self.declare_param(
                 'CarbonAllowanceProcurement',
-                self.allowance_index,
+                self.cap_group_year_index,
                 fallback_records,
                 mutable=True,
             )
@@ -488,16 +523,15 @@ class PowerModel(Model):
         self.declare_var('storage_inflow', self.Storage_index)
         self.declare_var('storage_outflow', self.Storage_index)
         self.declare_var('storage_level', self.Storage_index)
-        self.declare_var('allowance_purchase', self.allowance_index, bound=(0, 1000000000000))
+        self.declare_var('allowance_purchase', self.cap_group_year_index, bound=(0, 1000000000000))
         bank_within = 'Reals' if self.carbon_allowance_allow_borrowing else 'NonNegativeReals'
         bank_bounds = (
             (-1000000000000, 1000000000000)
             if self.carbon_allowance_allow_borrowing
             else (0, 1000000000000)
         )
-        self.declare_var('allowance_bank', self.allowance_index, within=bank_within, bound=bank_bounds)
-        self.declare_var('allowance_emissions', self.allowance_index, bound=(0, 1000000000000))
-        self.declare_var('year_emissions', self.year, bound=(0, 1000000000000))
+        self.declare_var('allowance_bank', self.cap_group_year_index, within=bank_within, bound=bank_bounds)
+        self.declare_var('year_emissions', self.cap_group_year_index, bound=(0, 1000000000000))
 
         # if capacity expansion is on
         if self.sw_expansion:
@@ -594,7 +628,11 @@ class PowerModel(Model):
         self.unmet_load_cost = pyo.Expression(expr=unmet_load_cost)
 
         self.total_emissions = pyo.Expression(
-            expr=sum(self.year_emissions[y] for y in self.year)
+            expr=sum(
+                self.year_emissions[(cap_group, y)]
+                for cap_group in self.cap_group
+                for y in self.year
+            )
         )
 
         # if capacity expansion is on
@@ -786,14 +824,14 @@ class PowerModel(Model):
                 start_bank = m.cap_group_start_bank.get(cap_group, 0.0)
             return carryover + start_bank
 
-        @self.Constraint(self.allowance_index)
-        def allowance_emissions_balance(self, cap_group, y):
+        @self.Constraint(self.cap_group_year_index)
+        def year_emissions_balance(self, cap_group, y):
             """Link cap-group emissions to generation decisions."""
 
             regions = self.cap_group_regions.get(cap_group, [])
             if not regions:
-                return self.allowance_emissions[(cap_group, y)] == 0
-            return self.allowance_emissions[(cap_group, y)] == pyo.quicksum(
+                return self.year_emissions[(cap_group, y)] == 0
+            return self.year_emissions[(cap_group, y)] == pyo.quicksum(
                 self.WeightDay[self.MapHourDay[hr]]
                 * self.WeightYear[y]
                 * self.EmissionsRate[tech]
@@ -803,15 +841,7 @@ class PowerModel(Model):
                 if y_idx == y and r in regions
             )
 
-        @self.Constraint(self.year)
-        def year_emissions_balance(self, y):
-            """Aggregate cap-group emissions across all groups."""
-
-            return self.year_emissions[y] == sum(
-                self.allowance_emissions[(cap_group, y)] for cap_group in self.cap_group
-            )
-
-        @self.Constraint(self.allowance_index)
+        @self.Constraint(self.cap_group_year_index)
         def allowance_purchase_limit(self, cap_group, y):
             """Bound allowance purchases by available procurement."""
 
@@ -820,7 +850,7 @@ class PowerModel(Model):
                 <= self.CarbonAllowanceProcurement[(cap_group, y)]
             )
 
-        @self.Constraint(self.allowance_index)
+        @self.Constraint(self.cap_group_year_index)
         def allowance_bank_balance(self, cap_group, y):
             """Track allowance bank evolution across years."""
 
@@ -829,16 +859,16 @@ class PowerModel(Model):
                 self.allowance_bank[(cap_group, y)]
                 == incoming
                 + self.allowance_purchase[(cap_group, y)]
-                - self.allowance_emissions[(cap_group, y)]
+                - self.year_emissions[(cap_group, y)]
             )
 
-        @self.Constraint(self.allowance_index)
+        @self.Constraint(self.cap_group_year_index)
         def allowance_emissions_limit(self, cap_group, y):
             """Ensure emissions do not exceed allowances plus incoming bank."""
 
             incoming = incoming_bank(self, cap_group, y)
             return (
-                self.allowance_emissions[(cap_group, y)]
+                self.year_emissions[(cap_group, y)]
                 <= self.allowance_purchase[(cap_group, y)] + incoming
             )
 
