@@ -58,16 +58,16 @@ sw_agg_years = 1
 sw_learning = 0
 
 # Carbon policy
-# Specify a system-wide CO2 emissions cap in metric tons. Set to "none" for no cap.
-carbon_cap = "none"
-# Specify the number of allowances procured each modeled year (metric tons).
-# Populate keys to match the modeled years in the `years` list above.
-carbon_allowance_procurement = { "2025" = 0.0, "2030" = 0.0 }
-
-# Allowance banking settings (values in metric tons)
-carbon_allowance_start_bank = 0.0
-carbon_allowance_bank_enabled = true
-carbon_allowance_allow_borrowing = false
+# Define one or more carbon cap groups that specify the cap and allowance
+# banking behaviour for the associated regions.
+[[carbon_cap_groups]]
+name = "default"
+cap = "none" # Set to "none" for no cap
+regions = [7,8,9]
+allowance_procurement = { "2025" = 0.0, "2030" = 0.0 }
+start_bank = 0.0
+bank_enabled = true
+allow_borrowing = false
 
 
 ###################################################################################################

@@ -49,16 +49,16 @@ sw_ramp = 0 # Maximum ramping constraint switch
 sw_reserves = 1 # Operating reserve requirement switch
 
 # Carbon policy
-# Specify a system-wide CO2 emissions cap in metric tons. Set to "none" for no cap.
-carbon_cap = "none"
-# Specify the number of allowances procured each modeled year (metric tons).
-# Keys should match the modeled years defined below.
-carbon_allowance_procurement = { "2025" = 50000000.0, "2030" = 40000000.0 }
-
-# Allowance banking settings (values in metric tons)
-carbon_allowance_start_bank = 0.0
-carbon_allowance_bank_enabled = true
-carbon_allowance_allow_borrowing = false
+# Define one or more carbon cap groups that specify the cap and allowance
+# banking behaviour for the associated regions.
+[[carbon_cap_groups]]
+name = "default"
+cap = "none" # Set to "none" for no cap
+regions = [7,8,9]
+allowance_procurement = { "2025" = 50000000.0, "2030" = 40000000.0 }
+start_bank = 0.0
+bank_enabled = true
+allow_borrowing = false
 
 
 # Aggregate years switch

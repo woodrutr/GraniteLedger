@@ -204,139 +204,111 @@ class Config_settings:
         # __INIT__: Hydrogen Configs
         self.h2_data_folder = self.PROJECT_ROOT / config['h2_data_folder']
 
-    def _configure_carbon_policy(self, config):
-        """Normalize and assign carbon policy related configuration values."""
+def _configure_carbon_policy(self, config: dict):
+    """Normalize and assign carbon policy related configuration values."""
 
-        carbon_policy_section = config.get('carbon_policy')
-        if isinstance(carbon_policy_section, dict):
-            carbon_policy = carbon_policy_section.copy()
-        else:
-            carbon_policy = {}
+    # Grab nested carbon_policy section if present
+    carbon_policy_section = config.get('carbon_policy')
+    carbon_policy = carbon_policy_section.copy() if isinstance(carbon_policy_section, dict) else {}
 
-        def _coalesce(*keys, default=None):
-            for key in keys:
-                if key in carbon_policy:
-                    return carbon_policy[key]
-                if key in config:
-                    return config[key]
-            return default
+    # Helper to merge keys from carbon_policy first, then root config
+    def _coalesce(*keys, default=None):
+        for key in keys:
+            if key in carbon_policy:
+                return carbon_policy[key]
+            if key in config:
+                return config[key]
+        return default
 
-        carbon_cap_value = _coalesce('carbon_cap')
-        self.carbon_cap = self._normalize_carbon_cap(carbon_cap_value)
+    # --- Cap ---
+    carbon_cap_value = _coalesce("carbon_cap")
+    self.carbon_cap = self._normalize_carbon_cap(carbon_cap_value)
 
-        allowance_schedule = _coalesce(
-            'carbon_allowance_procurement', 'allowance_procurement'
-        )
-        self.carbon_allowance_procurement = self._normalize_year_value_schedule(
-            allowance_schedule
-        )
+    # --- Allowance schedule ---
+    allowance_schedule = _coalesce("carbon_allowance_procurement", "allowance_procurement")
+    self.carbon_allowance_procurement = self._normalize_year_value_schedule(
+        allowance_schedule
+    )
 
-        start_bank_value = _coalesce(
-            'carbon_allowance_start_bank', 'allowance_start_bank', 'start_bank'
-        )
-        self.carbon_allowance_start_bank = self._normalize_float(
-            start_bank_value, default=0.0
-        )
+    # --- Start bank ---
+    start_bank_value = _coalesce("carbon_allowance_start_bank", "allowance_start_bank", "start_bank")
+    self.carbon_allowance_start_bank = self._normalize_float(start_bank_value, default=0.0)
 
-        bank_enabled = _coalesce(
-            'carbon_allowance_bank_enabled', 'bank_enabled', 'allowance_bank_enabled'
-        )
-        self.carbon_allowance_bank_enabled = self._normalize_bool(
-            bank_enabled, default=True
-        )
+    # --- Bank enabled ---
+    bank_enabled = _coalesce("carbon_allowance_bank_enabled", "bank_enabled", "allowance_bank_enabled")
+    self.carbon_allowance_bank_enabled = self._normalize_bool(bank_enabled, default=True)
 
-        allow_borrowing = _coalesce(
-            'carbon_allowance_allow_borrowing', 'allow_borrowing', 'borrowing'
-        )
-        self.carbon_allowance_allow_borrowing = self._normalize_bool(
-            allow_borrowing, default=False
-        )
+    # --- Borrowing ---
+    allow_borrowing = _coalesce("carbon_allowance_allow_borrowing", "allow_borrowing", "borrowing")
+    self.carbon_allowance_allow_borrowing = self._normalize_bool(allow_borrowing, default=False)
 
-        caps_by_group_config = _coalesce('carbon_caps_by_group', 'caps_by_group', default={})
-        self.carbon_caps_by_group = self._normalize_caps_by_group(
-            caps_by_group_config or {}
-        )
+    # --- Caps by group ---
+    caps_by_group_config = _coalesce("carbon_caps_by_group", "caps_by_group", default={}) or {}
+    self.carbon_caps_by_group = self._normalize_caps_by_group(caps_by_group_config)
 
-        carbon_cap_groups_config = _coalesce('carbon_cap_groups', default={}) or {}
-        self.carbon_cap_groups = self._normalize_carbon_cap_groups(
-            carbon_cap_groups_config
-        )
+    # --- Carbon cap groups ---
+    carbon_cap_groups_config = _coalesce("carbon_cap_groups", default={}) or {}
+    self.carbon_cap_groups = self._normalize_carbon_cap_groups(carbon_cap_groups_config)
 
-        default_group = _coalesce('default_cap_group', 'default_group', 'default')
-        if default_group is None and self.carbon_cap_groups:
-            default_group = next(iter(self.carbon_cap_groups.keys()))
-        self.default_carbon_cap_group = (
-            str(default_group) if default_group is not None else None
-        )
+    # --- Default group handling ---
+    default_group = _coalesce("default_cap_group", "default_group", "default")
+    if default_group is None and self.carbon_cap_groups:
+        default_group = next(iter(self.carbon_cap_groups.keys()))
 
-        if self.default_carbon_cap_group:
-            group_config = self.carbon_cap_groups.get(self.default_carbon_cap_group)
-            if isinstance(group_config, dict):
-                allowances = group_config.get('allowances')
-                if allowances is not None:
-                    self.carbon_allowance_procurement = (
-                        self._normalize_year_value_schedule(allowances)
-                    )
+    self.default_carbon_cap_group = str(default_group) if default_group else None
 
-                group_start_bank = self._coalesce_group_value(
-                    group_config,
-                    'carbon_allowance_start_bank',
-                    'allowance_start_bank',
-                    'start_bank',
+    # --- Apply group overrides if a default group is defined ---
+    if self.default_carbon_cap_group:
+        group_config = self.carbon_cap_groups.get(self.default_carbon_cap_group)
+        if isinstance(group_config, dict):
+            # Allowance overrides
+            allowances = group_config.get("allowances")
+            if allowances is not None:
+                self.carbon_allowance_procurement = self._normalize_year_value_schedule(allowances)
+
+            # Start bank override
+            group_start_bank = self._coalesce_group_value(
+                group_config, "carbon_allowance_start_bank", "allowance_start_bank", "start_bank"
+            )
+            if group_start_bank is not None:
+                self.carbon_allowance_start_bank = self._normalize_float(
+                    group_start_bank, default=self.carbon_allowance_start_bank
                 )
-                if group_start_bank is not None:
-                    self.carbon_allowance_start_bank = self._normalize_float(
-                        group_start_bank, default=self.carbon_allowance_start_bank
-                    )
 
-                group_bank_enabled = self._coalesce_group_value(
-                    group_config,
-                    'carbon_allowance_bank_enabled',
-                    'bank_enabled',
-                    'allowance_bank_enabled',
+            # Bank enabled override
+            group_bank_enabled = self._coalesce_group_value(
+                group_config, "carbon_allowance_bank_enabled", "bank_enabled", "allowance_bank_enabled"
+            )
+            if group_bank_enabled is not None:
+                self.carbon_allowance_bank_enabled = self._normalize_bool(
+                    group_bank_enabled, default=self.carbon_allowance_bank_enabled
                 )
-                if group_bank_enabled is not None:
-                    self.carbon_allowance_bank_enabled = self._normalize_bool(
-                        group_bank_enabled,
-                        default=self.carbon_allowance_bank_enabled,
-                    )
 
-                group_allow_borrowing = self._coalesce_group_value(
-                    group_config,
-                    'carbon_allowance_allow_borrowing',
-                    'allow_borrowing',
-                    'borrowing',
+            # Borrowing override
+            group_allow_borrowing = self._coalesce_group_value(
+                group_config, "carbon_allowance_allow_borrowing", "allow_borrowing", "borrowing"
+            )
+            if group_allow_borrowing is not None:
+                self.carbon_allowance_allow_borrowing = self._normalize_bool(
+                    group_allow_borrowing, default=self.carbon_allowance_allow_borrowing
                 )
-                if group_allow_borrowing is not None:
-                    self.carbon_allowance_allow_borrowing = self._normalize_bool(
-                        group_allow_borrowing,
-                        default=self.carbon_allowance_allow_borrowing,
-                    )
 
-                group_cap_value = self._coalesce_group_value(
-                    group_config,
-                    'carbon_cap',
-                    'cap',
-                    'caps',
-                    'allowance_cap',
-                )
-                if group_cap_value is not None:
-                    self.carbon_cap = self._normalize_carbon_cap(group_cap_value)
+            # Cap override
+            group_cap_value = self._coalesce_group_value(
+                group_config, "carbon_cap", "cap", "caps", "allowance_cap"
+            )
+            if group_cap_value is not None:
+                self.carbon_cap = self._normalize_carbon_cap(group_cap_value)
 
-                group_caps_schedule = self._coalesce_group_value(
-                    group_config,
-                    'caps_by_group',
-                    'caps',
-                    'carbon_caps',
-                )
-                if group_caps_schedule is not None:
-                    normalized_caps = self._normalize_year_value_schedule(
-                        group_caps_schedule
-                    )
-                    if normalized_caps:
-                        self.carbon_caps_by_group[
-                            self.default_carbon_cap_group
-                        ] = normalized_caps
+            # Caps schedule override
+            group_caps_schedule = self._coalesce_group_value(
+                group_config, "caps_by_group", "caps", "carbon_caps"
+            )
+            if group_caps_schedule is not None:
+                normalized_caps = self._normalize_year_value_schedule(group_caps_schedule)
+                if normalized_caps:
+                    self.carbon_caps_by_group[self.default_carbon_cap_group] = normalized_caps
+
 
     ################################################################################################
     # Set Attributes Update
