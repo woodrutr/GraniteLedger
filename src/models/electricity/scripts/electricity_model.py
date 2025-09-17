@@ -307,7 +307,6 @@ class PowerModel(Model):
             )
             price_fallback.index.name = 'year'
             self.declare_param('CarbonPrice', self.year, price_fallback, mutable=True)
-
         # if capacity expansion is on
         if self.sw_expansion:
             self.declare_param('FOMCost', self.FOMCost_index, all_frames['FOMCost'])
@@ -544,7 +543,6 @@ class PowerModel(Model):
             )
 
         self.carbon_allowance_cost = pyo.Expression(expr=carbon_allowance_cost)
-
         self.total_emissions = pyo.Expression(
             expr=sum(
                 self.year_emissions[(cap_group, y)]
@@ -722,7 +720,6 @@ class PowerModel(Model):
                 + (self.trade_cost if self.sw_trade else 0)
                 + (self.capacity_expansion_cost + self.fixed_om_cost if self.sw_expansion else 0)
                 + (self.operating_reserves_cost if self.sw_reserves else 0)
-                + self.carbon_allowance_cost
             )
 
         self.total_cost = pyo.Objective(rule=electricity_objective_function, sense=pyo.minimize)

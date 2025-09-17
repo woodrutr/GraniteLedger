@@ -23,7 +23,7 @@ from logging import getLogger
 from definitions import PROJECT_ROOT
 from src.models.electricity.scripts.utilities import create_obj_df
 
-PRICED_CONSTRAINTS = {'demand_balance', 'total_emissions_cap'}
+PRICED_CONSTRAINTS = {'demand_balance', 'total_emissions_cap', 'allowance_emissions_limit'}
 
 # Establish logger
 logger = getLogger(__name__)
