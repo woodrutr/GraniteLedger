@@ -59,6 +59,64 @@ def test_carbon_cap_groups_from_table(tmp_path):
     )
 
 
+def test_carbon_cap_groups_from_nested_tables(tmp_path):
+    """Carbon cap groups defined as nested tables should be parsed into named groups."""
+
+    source_config = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
+    filtered_lines = _remove_cap_group_tables(source_config.read_text())
+
+    nested_block = [
+        '',
+        '[carbon_cap_groups]',
+        '',
+        '[carbon_cap_groups.default]',
+        'cap = 987.6',
+        'regions = [7,8]',
+        'allowance_procurement = { "2025" = 1.5 }',
+        'start_bank = 2.25',
+        'bank_enabled = false',
+        'allow_borrowing = true',
+        '',
+        '[carbon_cap_groups.industrial]',
+        'cap = 654.3',
+        'regions = [9]',
+        'allowance_procurement = { "2025" = 3.0 }',
+        '',
+    ]
+
+    config_contents = '\n'.join(filtered_lines + nested_block) + '\n'
+
+    temp_config_path = _write_temp_config(tmp_path, config_contents)
+
+    settings = Config_settings(temp_config_path, test=True)
+
+    assert len(settings.carbon_cap_groups) == 2
+    default_group, industrial_group = settings.carbon_cap_groups
+
+    assert settings.default_cap_group is default_group
+    assert default_group.name == 'default'
+    assert default_group.cap == pytest.approx(987.6)
+    assert default_group.regions == (7, 8)
+    assert default_group.allowance_procurement == {2025: 1.5}
+    assert default_group.start_bank == pytest.approx(2.25)
+    assert default_group.bank_enabled is False
+    assert default_group.allow_borrowing is True
+
+    assert industrial_group.name == 'industrial'
+    assert industrial_group.cap == pytest.approx(654.3)
+    assert industrial_group.regions == (9,)
+    assert industrial_group.allowance_procurement == {2025: 3.0}
+    assert industrial_group.start_bank == pytest.approx(0.0)
+    assert industrial_group.bank_enabled is True
+    assert industrial_group.allow_borrowing is False
+
+    assert settings.carbon_cap == default_group.cap
+    assert settings.carbon_allowance_procurement == default_group.allowance_procurement
+    assert settings.carbon_allowance_start_bank == default_group.start_bank
+    assert settings.carbon_allowance_bank_enabled == default_group.bank_enabled
+    assert settings.carbon_allowance_allow_borrowing == default_group.allow_borrowing
+
+
 @pytest.mark.parametrize(
     'raw_value',
     ['none', 'NONE', ' null ', '   ', '', 'null'],
