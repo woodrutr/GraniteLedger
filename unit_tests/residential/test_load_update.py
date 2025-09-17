@@ -11,6 +11,11 @@ We will:
 """
 
 import pytest
+
+pyo = pytest.importorskip(
+    'pyomo.environ', reason='Pyomo is required for residential load update tests'
+)
+
 from definitions import PROJECT_ROOT
 from pathlib import Path
 from src.common import config_setup
@@ -18,9 +23,6 @@ from src.integrator import utilities
 from src.integrator.utilities import simple_solve
 from src.integrator.utilities import EI
 from src.models.electricity.scripts.runner import run_elec_model
-
-
-import pyomo.environ as pyo
 
 from src.models.residential.scripts.residential import residentialModule
 

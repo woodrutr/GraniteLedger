@@ -1,6 +1,10 @@
 from logging import getLogger
 import pytest
-from pyomo.environ import value
+
+pyo = pytest.importorskip(
+    'pyomo.environ', reason='Pyomo is required for hydrogen model tests'
+)
+
 from pathlib import Path
 
 from definitions import PROJECT_ROOT
@@ -22,7 +26,7 @@ def test_solve():
     sol = actions.solve_it(model)
 
     # pull the objective value out for examination...
-    obj_val = value(model.cost_expression)
+    obj_val = pyo.value(model.cost_expression)
     model.display()
 
     print(obj_val)

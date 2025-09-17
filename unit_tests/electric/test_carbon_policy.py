@@ -1,5 +1,8 @@
-import pyomo.environ as pyo
 import pytest
+
+pyo = pytest.importorskip(
+    'pyomo.environ', reason='Pyomo is required for carbon policy electricity tests'
+)
 
 from src.models.electricity.scripts.runner import record_allowance_emission_prices
 
