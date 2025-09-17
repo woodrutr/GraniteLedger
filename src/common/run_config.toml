@@ -39,7 +39,7 @@ regions = [7,8,9] # representative region mapping switches
 ###################################################################################################
 # Electricity Inputs
 
-## Electricity feature switches 
+## Electricity feature switches
 ## Unless otherwise specified, 0=off, 1=on
 
 sw_trade = 1 # Interregional trade switch
@@ -56,6 +56,12 @@ sw_agg_years = 1
 # Turning this feature on, capital cost can be a function of the amount of capacity built by technology.
 # 0 = exogenous learning, 1 = iterative linear function, 2 = nonlinear function
 sw_learning = 0
+
+###################################################################################################
+# Carbon Policy Inputs
+
+# Provide the carbon cap in short tons; values are converted to metric tons internally.
+# carbon_cap = 0
 
 ###################################################################################################
 # Residential Inputs
