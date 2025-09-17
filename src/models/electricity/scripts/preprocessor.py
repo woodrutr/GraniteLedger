@@ -89,6 +89,12 @@ class Sets:
         self.carbon_allowance_allow_borrowing = getattr(
             settings, 'carbon_allowance_allow_borrowing', False
         )
+        self.carbon_cap_groups = getattr(settings, 'carbon_cap_groups', {}) or {}
+        self.active_carbon_cap_groups = {}
+        self.cap_groups = []
+        self.cap_group_membership = pd.DataFrame(columns=['cap_group', 'region'])
+        self.carbon_allowance_by_cap_group = pd.DataFrame()
+        self.carbon_price_by_cap_group = pd.DataFrame()
 
         self.restypes = [
             'spinning',
@@ -285,6 +291,191 @@ def subset_dfs(all_frames, setin, i):
             all_frames[key] = all_frames[key].loc[all_frames[key][i].isin(getattr(setin, i))]
 
     return all_frames
+
+
+def _expand_frame_to_cap_groups(df, groups, group_column='cap_group'):
+    """Ensure a dataframe contains entries for each requested cap group."""
+
+    if df is None or df.empty or not groups:
+        columns = [group_column] + [col for col in (df.columns if df is not None else []) if col != group_column]
+        return pd.DataFrame(columns=columns)
+
+    df = df.copy()
+    groups = {str(group) for group in groups}
+
+    if group_column in df.columns:
+        df[group_column] = df[group_column].astype(str)
+        df = df[df[group_column].isin(groups)]
+    else:
+        df['_tmp'] = 1
+        groups_df = pd.DataFrame({group_column: sorted(groups)})
+        groups_df['_tmp'] = 1
+        df = pd.merge(groups_df, df, on='_tmp', how='outer').drop(columns=['_tmp'])
+
+    if 'year' in df.columns:
+        df['year'] = pd.to_numeric(df['year'], errors='coerce')
+        df = df.dropna(subset=['year'])
+        df['year'] = df['year'].astype(int)
+
+    column_order = [group_column] + [col for col in df.columns if col != group_column]
+    df = df[column_order]
+    return df
+
+
+def _apply_cap_group_value_overrides(df, group_definitions, value_col, override_keys):
+    """Apply overrides defined in the configuration to cap group values."""
+
+    if df is None or df.empty or not group_definitions:
+        return df
+
+    df = df.copy()
+    if 'year' in df.columns:
+        df['year'] = df['year'].astype(int)
+    df[value_col] = pd.to_numeric(df[value_col], errors='coerce')
+
+    for group_name, config in group_definitions.items():
+        if not isinstance(config, dict):
+            continue
+        overrides = None
+        for key in override_keys:
+            value = config.get(key)
+            if isinstance(value, dict) and value:
+                overrides = value
+                break
+        if not overrides:
+            continue
+        for year_key, override_value in overrides.items():
+            try:
+                year = int(year_key)
+                override_float = float(override_value)
+            except (TypeError, ValueError):
+                continue
+            mask = (df['cap_group'] == str(group_name)) & (df['year'] == year)
+            if mask.any():
+                df.loc[mask, value_col] = override_float
+            else:
+                df = pd.concat(
+                    [
+                        df,
+                        pd.DataFrame(
+                            {
+                                'cap_group': [str(group_name)],
+                                'year': [year],
+                                value_col: [override_float],
+                            }
+                        ),
+                    ],
+                    ignore_index=True,
+                )
+
+    df = df.sort_values(['cap_group', 'year']).reset_index(drop=True)
+    return df
+
+
+def build_cap_group_inputs(all_frames, setin):
+    """Construct cap group membership and allowance/price tables."""
+
+    cap_group_map = all_frames.pop('CarbonCapGroupMap', None)
+    setin.cap_groups = []
+    setin.cap_group_membership = pd.DataFrame(columns=['cap_group', 'region'])
+    setin.active_carbon_cap_groups = {}
+
+    if cap_group_map is None or cap_group_map.empty:
+        return all_frames, setin
+
+    required_cols = {'cap_group', 'region'}
+    if not required_cols.issubset(cap_group_map.columns):
+        raise ValueError(
+            'CarbonCapGroupMap input must include cap_group and region columns'
+        )
+
+    membership = cap_group_map[list(required_cols)].copy()
+    membership['cap_group'] = membership['cap_group'].astype(str)
+    membership['region'] = pd.to_numeric(membership['region'], errors='coerce')
+    membership = membership.dropna(subset=['region'])
+    membership['region'] = membership['region'].astype(int)
+    membership = membership[membership['region'].isin(setin.region)]
+    membership = membership.drop_duplicates()
+
+    if membership.empty:
+        return all_frames, setin
+
+    configured_groups = getattr(setin, 'carbon_cap_groups', {}) or {}
+    configured_groups = {
+        str(group_name): (config if isinstance(config, dict) else {})
+        for group_name, config in configured_groups.items()
+    }
+    if configured_groups:
+        membership = membership[membership['cap_group'].isin(configured_groups.keys())]
+
+        if not membership.empty:
+            filtered_membership = []
+            for group_name, group_members in membership.groupby('cap_group', sort=False):
+                config = configured_groups.get(group_name) or {}
+                if 'regions' in config:
+                    allowed_regions = {int(region) for region in config['regions']}
+                    group_members = group_members[
+                        group_members['region'].isin(allowed_regions)
+                    ]
+                if not group_members.empty:
+                    filtered_membership.append(group_members)
+            if filtered_membership:
+                membership = pd.concat(filtered_membership, ignore_index=True)
+            else:
+                membership = pd.DataFrame(columns=membership.columns)
+
+    if membership.empty:
+        return all_frames, setin
+
+    active_groups = sorted(membership['cap_group'].unique())
+    if not active_groups:
+        return all_frames, setin
+
+    membership = membership.sort_values(['cap_group', 'region']).reset_index(drop=True)
+
+    membership_df = membership.copy()
+    membership_df['membership'] = 1.0
+    all_frames['CarbonCapGroupMembership'] = membership_df[
+        ['cap_group', 'region', 'membership']
+    ]
+
+    setin.cap_groups = active_groups
+    setin.cap_group_membership = membership[['cap_group', 'region']]
+    setin.active_carbon_cap_groups = {
+        group: configured_groups.get(group, {}) for group in active_groups
+    }
+
+    allowance_df = all_frames.get('CarbonAllowanceProcurement')
+    if allowance_df is not None and not allowance_df.empty:
+        if 'year' not in allowance_df.columns and allowance_df.index.name == 'year':
+            allowance_df = allowance_df.reset_index()
+        allowance_groups = _expand_frame_to_cap_groups(allowance_df, set(active_groups))
+        allowance_groups = _apply_cap_group_value_overrides(
+            allowance_groups,
+            setin.active_carbon_cap_groups,
+            'CarbonAllowanceProcurement',
+            ('allowances', 'allowance_procurement', 'carbon_allowance_procurement'),
+        )
+        allowance_groups = allowance_groups[
+            ['cap_group', 'year', 'CarbonAllowanceProcurement']
+        ]
+        all_frames['CarbonAllowanceProcurementByCapGroup'] = allowance_groups
+
+    price_df = all_frames.get('CarbonAllowancePrice')
+    if price_df is not None and not price_df.empty:
+        if 'year' not in price_df.columns and price_df.index.name == 'year':
+            price_df = price_df.reset_index()
+        price_groups = _expand_frame_to_cap_groups(price_df, set(active_groups))
+        price_groups = _apply_cap_group_value_overrides(
+            price_groups,
+            setin.active_carbon_cap_groups,
+            'CarbonPrice',
+            ('prices', 'price', 'carbon_price'),
+        )
+        price_groups = price_groups[['cap_group', 'year', 'CarbonPrice']]
+        all_frames['CarbonAllowancePriceByCapGroup'] = price_groups
+
+    return all_frames, setin
 
 
 def fill_values(row, subset_list):
@@ -936,6 +1127,8 @@ def preprocessor(setin):
     all_frames = subset_dfs(all_frames, setin, 'region')
     all_frames = subset_dfs(all_frames, setin, 'region1')
 
+    all_frames, setin = build_cap_group_inputs(all_frames, setin)
+
     setin.region_trade = all_frames['TranLimit']['region'].unique()
 
     # TEMPORALIZE DATA
@@ -1005,6 +1198,21 @@ def preprocessor(setin):
             ['cap_group', 'year']
         )
         all_frames['CarbonAllowanceProcurement'] = allowances_df
+    if 'CarbonAllowanceProcurementByCapGroup' in all_frames:
+        allowances_group_df = all_frames[
+            'CarbonAllowanceProcurementByCapGroup'
+        ].reset_index()
+        allowances_group_df = pd.merge(
+            allowances_group_df, setin.WeightYear, on='year', how='left'
+        ).fillna({'WeightYear': 1})
+        allowances_group_df['CarbonAllowanceProcurement'] = (
+            allowances_group_df['CarbonAllowanceProcurement']
+            * allowances_group_df['WeightYear']
+        )
+        allowances_group_df = allowances_group_df[
+            ['cap_group', 'year', 'CarbonAllowanceProcurement']
+        ]
+        all_frames['CarbonAllowanceProcurementByCapGroup'] = allowances_group_df
 
     # using same T_vre capacity factor for all model years and reordering columns
     all_frames['CapFactorVRE'] = pd.merge(
@@ -1092,6 +1300,23 @@ def preprocessor(setin):
     for key in all_frames:
         index = list(all_frames[key].columns[:-1])
         all_frames[key] = all_frames[key].set_index(index)
+
+    if 'CarbonCapGroupMembership' in all_frames:
+        setin.cap_group_membership = all_frames['CarbonCapGroupMembership']
+        if not getattr(setin, 'cap_groups', []):
+            setin.cap_groups = list(
+                all_frames['CarbonCapGroupMembership']
+                .index.get_level_values('cap_group')
+                .unique()
+            )
+    if 'CarbonAllowanceProcurementByCapGroup' in all_frames:
+        setin.carbon_allowance_by_cap_group = all_frames[
+            'CarbonAllowanceProcurementByCapGroup'
+        ]
+    if 'CarbonAllowancePriceByCapGroup' in all_frames:
+        setin.carbon_price_by_cap_group = all_frames[
+            'CarbonAllowancePriceByCapGroup'
+        ]
 
     # create more indices for the model
     setin = create_sc_sets(all_frames, setin)

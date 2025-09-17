@@ -69,6 +69,7 @@ start_bank = 0.0
 bank_enabled = true
 allow_borrowing = false
 
+
 ###################################################################################################
 # Carbon Policy Inputs
 
@@ -103,4 +104,8 @@ complex = true
 # Hydrogen Inputs
 
 h2_data_folder = "input/hydrogen/all_regions"
+
+# Carbon cap group definitions allow modeling multiple allowance pools.
+[carbon_cap_groups.national]
+description = "Default national carbon cap group"
 
