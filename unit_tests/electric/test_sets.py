@@ -95,3 +95,66 @@ def test_default_allowance_override_applies_to_remaining_groups():
     assert allowance_value('rggi', 2025) == pytest.approx(7.0)
     assert allowance_value('non_rggi', 2025) == pytest.approx(3.0)
     assert allowance_value('non_rggi', 2030) == pytest.approx(4.0)
+
+
+def test_carbon_cap_group_tables():
+    config_path = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
+    settings = config_setup.Config_settings(config_path, test=True)
+    settings.regions = [7, 8]
+    settings.years = [2025, 2030]
+
+    all_frames, setin = prep.preprocessor(prep.Sets(settings))
+
+    membership = all_frames['CarbonCapGroupMembership'].reset_index()
+    assert set(membership['region']) == set(settings.regions)
+    assert set(membership['cap_group']) == {'national'}
+
+    allowance_groups = all_frames['CarbonAllowanceProcurementByCapGroup'].reset_index()
+    assert set(allowance_groups['cap_group']) == {'national'}
+    weights = setin.WeightYear.set_index('year')['WeightYear']
+    for _, row in allowance_groups.iterrows():
+        year = int(row['year'])
+        expected = settings.carbon_allowance_procurement.get(year, 0.0) * float(
+            weights.get(year, 1)
+        )
+        assert row['CarbonAllowanceProcurement'] == pytest.approx(expected)
+
+    price_groups = all_frames['CarbonAllowancePriceByCapGroup'].reset_index()
+    assert set(price_groups['cap_group']) == {'national'}
+    base_prices = (
+        all_frames['CarbonAllowancePrice'].reset_index()
+        if 'CarbonAllowancePrice' in all_frames
+        else pd.DataFrame(columns=['year', 'CarbonPrice'])
+    )
+    base_price_lookup = {
+        int(row['year']): float(row['CarbonPrice']) for _, row in base_prices.iterrows()
+    }
+    for _, row in price_groups.iterrows():
+        year = int(row['year'])
+        assert row['CarbonPrice'] == pytest.approx(base_price_lookup.get(year, 0.0))
+
+    assert set(setin.cap_groups) == {'national'}
+    assert setin.cap_group_membership.index.names == ['cap_group', 'region']
+    assert setin.carbon_allowance_by_cap_group.index.names == ['cap_group', 'year']
+    assert setin.carbon_price_by_cap_group.index.names == ['cap_group', 'year']
+
+
+def test_carbon_cap_group_region_override():
+    config_path = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
+    settings = config_setup.Config_settings(config_path, test=True)
+    settings.regions = [7, 8]
+    settings.years = [2025, 2030]
+    settings.carbon_cap_groups = settings._normalize_carbon_cap_groups(
+        {'national': {'regions': [7]}}
+    )
+
+    all_frames, setin = prep.preprocessor(prep.Sets(settings))
+
+    membership = all_frames['CarbonCapGroupMembership'].reset_index()
+    assert set(membership['cap_group']) == {'national'}
+    assert set(membership['region']) == {7}
+
+    indexed_membership = setin.cap_group_membership.reset_index()
+    assert set(indexed_membership['region']) == {7}
+    assert set(setin.cap_groups) == {'national'}
+

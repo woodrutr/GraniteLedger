@@ -6,8 +6,13 @@ on:
 
 jobs:
   unit-tests:
-    name: Unit Tests
+    name: Unit Tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: [3.10, 3.11, 3.12]
+
     defaults:
       run:
         shell: bash -l {0}
@@ -19,6 +24,7 @@ jobs:
       - name: Set up Conda (with mamba)
         uses: conda-incubator/setup-miniconda@v2
         with:
+          python-version: ${{ matrix.python-version }}
           auto-activate-base: false
           auto-update-conda: false
           activate-environment: bsky
@@ -29,7 +35,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.conda/pkgs
-          key: ${{ runner.os }}-conda-${{ hashFiles('envs/conda_env.yml') }}
+          key: ${{ runner.os }}-conda-${{ matrix.python-version }}-${{ hashFiles('envs/conda_env.yml') }}
           restore-keys: |
             ${{ runner.os }}-conda-
 
@@ -47,5 +53,5 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: pytest-results
+          name: pytest-results-${{ matrix.python-version }}
           path: pytest.xml

@@ -2,7 +2,7 @@
 # This file is used to establish the main model configurations users can edit when running
 
 ###################################################################################################
-# Universial Inputs
+# Universal Inputs
 
 # Mode choices=['unified-combo','gs-combo','standalone']
 # 'standalone' runs each selected module independently
@@ -13,27 +13,27 @@ default_mode = "gs-combo"
 
 # Modules to run
 electricity = true # specify true or false (lowercase)
-hydrogen = true # specify true or false (lowercase)
+hydrogen = true    # specify true or false (lowercase)
 residential = true # specify true or false (lowercase)
 
 # Choices for combination solves
-force_10 = false  # forces 10 iterations in solves that iterate, specify true or false (lowercase)
-tol = 0.05  # percent tolerance allowed between iterations, specify a number less than 1
-max_iter = 12 # max number of iterations 
+force_10 = false   # forces 10 iterations in solves that iterate, specify true or false (lowercase)
+tol = 0.05         # percent tolerance allowed between iterations, specify a number less than 1
+max_iter = 12      # max number of iterations 
 
 # Temporal resolution (inter-annual) 
 # default = 16 representative (rep) days and 4 rep hours  
-# d8h12 = 8 rep days and 12 rep hours,  d4h24 = 4 rep days and 24 rep hours, or custom  
+# d8h12 = 8 rep days and 12 rep hours, d4h24 = 4 rep days and 24 rep hours, or custom  
 sw_temporal = "default"
 
 # Temporal resolution (annual)
 # list format, cannot be less than or greater than input data (e.g., 2023-2050)
 start_year = 2023 # start year only needed if sw_agg is turned on 
-years = [2025,2030] # representative year mapping switches
+years = [2025, 2030] # representative year mapping switches
 
 # Spatial resolution
 # list format, cannot be less than or greater than input data (e.g., 1-25)
-regions = [7,8,9] # representative region mapping switches
+regions = [7, 8, 9] # representative region mapping switches
 
 
 ###################################################################################################
@@ -42,23 +42,34 @@ regions = [7,8,9] # representative region mapping switches
 ## Electricity feature switches
 ## Unless otherwise specified, 0=off, 1=on
 
-sw_trade = 1 # Interregional trade switch
-sw_expansion = 1 # Capacity expansion/retirement switch
-sw_rm = 1 # Reserve margin requirement switch
-sw_ramp = 0 # Maximum ramping constraint switch
-sw_reserves = 1 # Operating reserve requirement switch
+sw_trade = 1       # Interregional trade switch
+sw_expansion = 1   # Capacity expansion/retirement switch
+sw_rm = 1          # Reserve margin requirement switch
+sw_ramp = 0        # Maximum ramping constraint switch
+sw_reserves = 1    # Operating reserve requirement switch
 
 # Carbon policy
 # Define one or more carbon cap groups that specify the cap and allowance
 # banking behaviour for the associated regions.
 [[carbon_cap_groups]]
 name = "default"
-cap = "none" # Set to "none" for no cap
-regions = [7,8,9]
+cap = "none" # Set to "none" for no cap, or numeric value for a cap
+regions = [7, 8, 9]
 allowance_procurement = { "2025" = 50000000.0, "2030" = 40000000.0 }
 start_bank = 0.0
 bank_enabled = true
 allow_borrowing = false
+
+# You can add more groups if needed, for example:
+# [[carbon_cap_groups]]
+# name = "industrial"
+# cap = 10000000.0
+# regions = [9]
+# allowance_procurement = { "2025" = 2500000.0 }
+# start_bank = 1.0
+# bank_enabled = false
+# allow_borrowing = true
+
 
 # Aggregate years switch
 # When on, representative years are aggregated and weighted based on unselected years
@@ -74,13 +85,14 @@ sw_learning = 0
 
 # Provide the carbon cap in short tons; values are converted to metric tons internally.
 # carbon_cap = 0
+# NOTE: These legacy keys are optional. If present, they will be folded into the default cap group.
 
 ###################################################################################################
 # Residential Inputs
 
 # Select the method for projecting future electricity demand (e.g., "annual" or "enduse")
 # "annual" will scale the base year electricity demand by an annual scalar value
-# "enduse" will scale th base year electricity demand by hourly enduse demand profiles
+# "enduse" will scale the base year electricity demand by hourly enduse demand profiles
 scale_load = "enduse"
 
 # Select the regions and years you want to graph at the end of the run.
@@ -96,7 +108,7 @@ sensitivity = true # Set to true to run estimates for changes in Load due to cha
 change_var = "price"
 percent_change = 5
 
-#Sensitivity Method: Choose analytical derivative method with false or complex step derivative with true
+# Sensitivity Method: Choose analytical derivative method with false or complex step derivative with true
 complex = true
 
 ###################################################################################################
@@ -104,3 +116,6 @@ complex = true
 
 h2_data_folder = "input/hydrogen/all_regions"
 
+# Example of nested carbon cap groups if needed
+[carbon_cap_groups.national]
+description = "Default national carbon cap group"

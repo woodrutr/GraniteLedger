@@ -204,131 +204,156 @@ class Config_settings:
         # __INIT__: Hydrogen Configs
         self.h2_data_folder = self.PROJECT_ROOT / config['h2_data_folder']
 
-    def _configure_carbon_policy(self, config: dict):
-        """Parse carbon policy configuration data into normalized attributes."""
+import types
 
-        def _normalize_cap_value(raw_value):
-            if raw_value in (None, ''):
+def _configure_carbon_policy(self, config: dict):
+    """Parse carbon policy configuration data into normalized attributes."""
+
+    def _normalize_cap_value(raw_value):
+        if raw_value in (None, ""):
+            return None
+        if isinstance(raw_value, str):
+            lowered = raw_value.strip().lower()
+            if lowered in {"none", "null"}:
                 return None
-            if isinstance(raw_value, str):
-                lowered = raw_value.strip().lower()
-                if lowered in {'none', 'null'}:
-                    return None
+        try:
+            return float(raw_value)
+        except (TypeError, ValueError) as err:
+            raise ValueError(f"Invalid carbon cap value: {raw_value!r}") from err
+
+    def _normalize_allowances(raw_allowances):
+        normalized = {}
+        for year, value in (raw_allowances or {}).items():
             try:
-                return float(raw_value)
+                year_key = int(year)
             except (TypeError, ValueError) as err:
-                raise ValueError(f'Invalid carbon cap value: {raw_value!r}') from err
+                raise ValueError(
+                    f"Allowance year keys must be integers, received {year!r}"
+                ) from err
+            normalized[year_key] = float(value)
+        return dict(sorted(normalized.items()))
 
-        def _normalize_allowances(raw_allowances):
-            normalized = {}
-            for year, value in (raw_allowances or {}).items():
-                try:
-                    year_key = int(year)
-                except (TypeError, ValueError) as err:
-                    raise ValueError(
-                        f'Allowance year keys must be integers, received {year!r}'
-                    ) from err
-                normalized[year_key] = float(value)
-            return dict(sorted(normalized.items()))
-
-        def _build_group(group_name: str, group_config: dict, legacy_cap: float | None):
-            if 'cap' in group_config:
-                cap_value = _normalize_cap_value(group_config.get('cap'))
-            else:
-                cap_value = legacy_cap
-
-            regions_setting = group_config.get('regions')
-            if regions_setting is None:
-                regions_tuple = tuple(self.regions)
-            elif isinstance(regions_setting, (list, tuple)):
-                try:
-                    regions_tuple = tuple(int(region) for region in regions_setting)
-                except (TypeError, ValueError) as err:
-                    raise ValueError(
-                        f'carbon_cap_groups[{group_name}].regions must contain integers'
-                    ) from err
-            else:
-                raise TypeError(
-                    f'carbon_cap_groups[{group_name}].regions must be provided as a list'
-                )
-
-            allowances = _normalize_allowances(
-                group_config.get('allowance_procurement', {})
-            )
-            start_bank_setting = group_config.get('start_bank', 0.0)
-            start_bank = float(start_bank_setting) if start_bank_setting is not None else 0.0
-            bank_enabled = bool(group_config.get('bank_enabled', True))
-            allow_borrowing = bool(group_config.get('allow_borrowing', False))
-
-            return types.SimpleNamespace(
-                name=group_name,
-                cap=cap_value,
-                regions=regions_tuple,
-                allowance_procurement=allowances,
-                start_bank=start_bank,
-                bank_enabled=bank_enabled,
-                allow_borrowing=allow_borrowing,
-            )
-
-        carbon_policy_section = config.get('carbon_policy')
-        legacy_cap_value = None
-        if isinstance(carbon_policy_section, dict):
-            policy_cap = carbon_policy_section.get('carbon_cap')
-            policy_cap_value = _normalize_cap_value(policy_cap)
-            if policy_cap_value is not None:
-                legacy_cap_value = policy_cap_value * SHORT_TON_TO_METRIC_TON
-
-        if legacy_cap_value is None:
-            legacy_cap_value = _normalize_cap_value(config.get('carbon_cap'))
-
-        groups_config = config.get('carbon_cap_groups')
-        carbon_cap_groups: list[types.SimpleNamespace] = []
-
-        if isinstance(groups_config, dict):
-            group_items = list(groups_config.items())
-        elif isinstance(groups_config, list):
-            group_items = [
-                (group.get('name') or f'group_{idx + 1}', group)
-                for idx, group in enumerate(groups_config)
-            ]
+    def _build_group(group_name: str, group_config: dict, legacy_cap: float | None):
+        # Cap
+        if "cap" in group_config:
+            cap_value = _normalize_cap_value(group_config.get("cap"))
         else:
-            group_items = []
+            cap_value = legacy_cap
 
-        for group_name, group_config in group_items:
-            if not isinstance(group_config, dict):
-                raise TypeError('Each carbon cap group must be defined as a table of settings')
-            carbon_cap_groups.append(_build_group(group_name, group_config, legacy_cap_value))
-
-        if not carbon_cap_groups:
-            fallback_group = {
-                'cap': legacy_cap_value,
-                'regions': self.regions,
-                'allowance_procurement': config.get('carbon_allowance_procurement', {}) or {},
-                'start_bank': config.get('carbon_allowance_start_bank', 0.0),
-                'bank_enabled': config.get('carbon_allowance_bank_enabled', True),
-                'allow_borrowing': config.get('carbon_allowance_allow_borrowing', False),
-            }
-            carbon_cap_groups.append(_build_group('default', fallback_group, legacy_cap_value))
-
-        self.carbon_cap_groups = tuple(carbon_cap_groups)
-        self.default_cap_group = self.carbon_cap_groups[0] if self.carbon_cap_groups else None
-
-        if self.default_cap_group is not None:
-            self.carbon_cap = self.default_cap_group.cap
-            self.carbon_allowance_procurement = dict(
-                self.default_cap_group.allowance_procurement
-            )
-            self.carbon_allowance_start_bank = self.default_cap_group.start_bank
-            self.carbon_allowance_bank_enabled = self.default_cap_group.bank_enabled
-            self.carbon_allowance_allow_borrowing = (
-                self.default_cap_group.allow_borrowing
-            )
+        # Regions
+        regions_setting = group_config.get("regions")
+        if regions_setting is None:
+            regions_tuple = tuple(self.regions)
+        elif isinstance(regions_setting, (list, tuple)):
+            try:
+                regions_tuple = tuple(int(region) for region in regions_setting)
+            except (TypeError, ValueError) as err:
+                raise ValueError(
+                    f"carbon_cap_groups[{group_name}].regions must contain integers"
+                ) from err
         else:
-            self.carbon_cap = None
-            self.carbon_allowance_procurement = {}
-            self.carbon_allowance_start_bank = 0.0
-            self.carbon_allowance_bank_enabled = True
-            self.carbon_allowance_allow_borrowing = False
+            raise TypeError(
+                f"carbon_cap_groups[{group_name}].regions must be provided as a list"
+            )
+
+        # Allowances
+        allowances = _normalize_allowances(
+            group_config.get("allowance_procurement", {})
+        )
+        start_bank_setting = group_config.get("start_bank", 0.0)
+        start_bank = (
+            float(start_bank_setting) if start_bank_setting is not None else 0.0
+        )
+        bank_enabled = bool(group_config.get("bank_enabled", True))
+        allow_borrowing = bool(group_config.get("allow_borrowing", False))
+
+        return types.SimpleNamespace(
+            name=group_name,
+            cap=cap_value,
+            regions=regions_tuple,
+            allowance_procurement=allowances,
+            start_bank=start_bank,
+            bank_enabled=bank_enabled,
+            allow_borrowing=allow_borrowing,
+        )
+
+    # --- Legacy cap (root or carbon_policy section) ---
+    carbon_policy_section = config.get("carbon_policy")
+    legacy_cap_value = None
+    if isinstance(carbon_policy_section, dict):
+        policy_cap = carbon_policy_section.get("carbon_cap")
+        policy_cap_value = _normalize_cap_value(policy_cap)
+        if policy_cap_value is not None:
+            legacy_cap_value = policy_cap_value * SHORT_TON_TO_METRIC_TON
+
+    if legacy_cap_value is None:
+        legacy_cap_value = _normalize_cap_value(config.get("carbon_cap"))
+
+    # --- Groups ---
+    groups_config = config.get("carbon_cap_groups")
+    carbon_cap_groups: list[types.SimpleNamespace] = []
+
+    if isinstance(groups_config, dict):
+        group_items = list(groups_config.items())
+    elif isinstance(groups_config, list):
+        group_items = [
+            (group.get("name") or f"group_{idx+1}", group)
+            for idx, group in enumerate(groups_config)
+        ]
+    else:
+        group_items = []
+
+    for group_name, group_config in group_items:
+        if not isinstance(group_config, dict):
+            raise TypeError(
+                "Each carbon cap group must be defined as a table of settings"
+            )
+        carbon_cap_groups.append(
+            _build_group(group_name, group_config, legacy_cap_value)
+        )
+
+    # --- Fallback default group ---
+    if not carbon_cap_groups:
+        fallback_group = {
+            "cap": legacy_cap_value,
+            "regions": self.regions,
+            "allowance_procurement": config.get(
+                "carbon_allowance_procurement", {}
+            )
+            or {},
+            "start_bank": config.get("carbon_allowance_start_bank", 0.0),
+            "bank_enabled": config.get("carbon_allowance_bank_enabled", True),
+            "allow_borrowing": config.get(
+                "carbon_allowance_allow_borrowing", False
+            ),
+        }
+        carbon_cap_groups.append(
+            _build_group("default", fallback_group, legacy_cap_value)
+        )
+
+    # --- Assign attributes ---
+    self.carbon_cap_groups = tuple(carbon_cap_groups)
+    self.default_cap_group = (
+        self.carbon_cap_groups[0] if self.carbon_cap_groups else None
+    )
+
+    if self.default_cap_group is not None:
+        self.carbon_cap = self.default_cap_group.cap
+        self.carbon_allowance_procurement = dict(
+            self.default_cap_group.allowance_procurement
+        )
+        self.carbon_allowance_start_bank = self.default_cap_group.start_bank
+        self.carbon_allowance_bank_enabled = self.default_cap_group.bank_enabled
+        self.carbon_allowance_allow_borrowing = (
+            self.default_cap_group.allow_borrowing
+        )
+    else:
+        self.carbon_cap = None
+        self.carbon_allowance_procurement = {}
+        self.carbon_allowance_start_bank = 0.0
+        self.carbon_allowance_bank_enabled = True
+        self.carbon_allowance_allow_borrowing = False
+
 
     ################################################################################################
     # Set Attributes Update
@@ -450,6 +475,182 @@ class Config_settings:
                 .reset_index()
                 .rename(columns={'Map_year': 'year', 'year': 'WeightYear'})
             )
+
+    def _normalize_carbon_cap_groups(self, groups_config):
+        """Standardize carbon cap group settings into dictionaries."""
+
+        normalized = {}
+        if isinstance(groups_config, dict):
+            items = groups_config.items()
+        elif isinstance(groups_config, list):
+            items = [(group_name, {}) for group_name in groups_config]
+        else:
+            items = []
+
+        for group_name, group_config in items:
+            normalized[str(group_name)] = self._normalize_single_cap_group(
+                group_config
+            )
+        return normalized
+
+    def _normalize_single_cap_group(self, group_config):
+        if group_config is None:
+            return {}
+        if not isinstance(group_config, dict):
+            return {'value': group_config}
+
+        normalized = {}
+
+        allowance_data = self._coalesce_group_value(
+            group_config,
+            'allowances',
+            'allowance_procurement',
+            'carbon_allowance_procurement',
+        )
+        if allowance_data is not None:
+            allowances = self._normalize_year_value_schedule(allowance_data)
+            if allowances:
+                normalized['allowances'] = allowances
+
+        price_data = self._coalesce_group_value(
+            group_config,
+            'prices',
+            'price',
+            'carbon_price',
+        )
+        if price_data is not None:
+            prices = self._normalize_year_value_schedule(price_data)
+            if prices:
+                normalized['prices'] = prices
+
+        if 'regions' in group_config:
+            regions = self._normalize_regions(group_config['regions'])
+            if regions:
+                normalized['regions'] = regions
+
+        for key, value in group_config.items():
+            if key in {
+                'allowances',
+                'allowance_procurement',
+                'carbon_allowance_procurement',
+                'prices',
+                'price',
+                'carbon_price',
+                'regions',
+            }:
+                continue
+            normalized[key] = value
+
+        return normalized
+
+    def _normalize_caps_by_group(self, caps_config):
+        """Normalize nested carbon cap schedules keyed by group name."""
+
+        normalized = {}
+        if isinstance(caps_config, dict):
+            for group_name, schedule in caps_config.items():
+                normalized_schedule = self._normalize_year_value_schedule(schedule)
+                if normalized_schedule:
+                    normalized[str(group_name)] = normalized_schedule
+        return normalized
+
+    def _normalize_year_value_schedule(self, schedule):
+        """Convert schedules keyed by year into int/float dictionaries."""
+
+        normalized = {}
+        if isinstance(schedule, dict):
+            iterator = schedule.items()
+        elif isinstance(schedule, list):
+            iterator = []
+            for item in schedule:
+                if isinstance(item, dict):
+                    year = item.get('year')
+                    value = item.get('value')
+                    if value is None:
+                        value = item.get('amount')
+                elif isinstance(item, (list, tuple)) and len(item) == 2:
+                    year, value = item
+                else:
+                    continue
+                iterator.append((year, value))
+        else:
+            iterator = []
+
+        for year, value in iterator:
+            try:
+                year_key = int(year)
+                value_float = float(value)
+            except (TypeError, ValueError):
+                continue
+            normalized[year_key] = value_float
+        return normalized
+
+    def _normalize_carbon_cap(self, value):
+        """Normalize carbon cap entries, handling disabled markers and units."""
+
+        if value in (None, ''):
+            return None
+        if isinstance(value, str) and value.strip().lower() in {'none', 'null'}:
+            return None
+        try:
+            return float(value) * SHORT_TON_TO_METRIC_TON
+        except (TypeError, ValueError):
+            return None
+
+    def _normalize_float(self, value, default=0.0):
+        """Coerce a value to float with a fallback default."""
+
+        if value in (None, ''):
+            return default
+        if isinstance(value, str) and value.strip().lower() in {'none', 'null'}:
+            return default
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _normalize_bool(self, value, default=False):
+        """Coerce an input to a boolean value."""
+
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            lowered = value.strip().lower()
+            if lowered in {'true', 't', 'yes', 'y', '1', 'on'}:
+                return True
+            if lowered in {'false', 'f', 'no', 'n', '0', 'off'}:
+                return False
+        if isinstance(value, (int, float)):
+            return bool(value)
+        return default
+
+    def _normalize_regions(self, regions):
+        """Normalize region lists to integer identifiers."""
+
+        if regions in (None, ''):
+            return []
+        normalized = []
+        if isinstance(regions, str):
+            candidates = [part.strip() for part in regions.split(',') if part.strip()]
+        elif isinstance(regions, (list, tuple, set)):
+            candidates = regions
+        else:
+            candidates = [regions]
+
+        for region in candidates:
+            try:
+                normalized.append(int(region))
+            except (TypeError, ValueError):
+                continue
+        return normalized
+
+    def _coalesce_group_value(self, group_config, *keys):
+        """Return the first value present in a group configuration for any key."""
+
+        for key in keys:
+            if key in group_config:
+                return group_config[key]
+        return None
 
     # TODO: no hard coded values! regions should be flexible, come up with a better check
     def _check_regions(self, name, value):
