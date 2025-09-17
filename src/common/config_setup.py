@@ -183,6 +183,11 @@ class Config_settings:
         else:
             carbon_cap_value = config.get('carbon_cap')
 
+        if isinstance(carbon_cap_value, str):
+            carbon_cap_value = carbon_cap_value.strip()
+            if carbon_cap_value.lower() in {'none', 'null'} or carbon_cap_value == '':
+                carbon_cap_value = None
+
         if carbon_cap_value in (None, ''):
             self.carbon_cap = None
         else:
@@ -197,13 +202,12 @@ class Config_settings:
         self.sw_learning = config['sw_learning']
         self.sw_expansion = config['sw_expansion']
         carbon_cap = config.get('carbon_cap')
-        if isinstance(carbon_cap, str) and carbon_cap.lower() in {'none', 'null'}:
-            carbon_cap_value = None
+        if isinstance(carbon_cap, str):
+            carbon_cap = carbon_cap.strip()
+            if carbon_cap.lower() in {'none', 'null'} or carbon_cap == '':
+                self.carbon_cap = None
         elif carbon_cap is None:
-            carbon_cap_value = None
-        else:
-            carbon_cap_value = float(carbon_cap)
-        self.carbon_cap = carbon_cap_value
+            self.carbon_cap = None
         allowance_procurement = config.get('carbon_allowance_procurement', {}) or {}
         self.carbon_allowance_procurement = {
             int(year): float(value) for year, value in allowance_procurement.items()
