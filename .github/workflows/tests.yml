@@ -24,11 +24,10 @@ jobs:
           environment-file: envs/conda_env.yml
           use-mamba: true
 
-      - name: Show conda info
-        run: conda info
-
-      - name: Show conda list
-        run: conda list
+      - name: Show conda diagnostics
+        run: |
+          conda info
+          conda list
 
       - name: Run tests
         run: pytest unit_tests
