@@ -832,9 +832,19 @@ def preprocessor(setin):
     emissions_df = emissions_df[emissions_df['tech'].isin(setin.T_gen)]
     all_frames['EmissionsRate'] = emissions_df
 
-    # Carbon allowance group membership mapping
-    membership_df = all_frames.pop('CarbonCapGroupMap', None)
-    if membership_df is not None and not membership_df.empty:
+# Carbon allowance group membership mapping
+membership_df = all_frames.pop('CarbonCapGroupMap', None)
+
+if membership_df is not None and not membership_df.empty:
+    membership_df = membership_df.copy()
+else:
+    fallback_df = all_frames.get('CarbonCapGroup')
+    if fallback_df is not None and not fallback_df.empty:
+        membership_df = fallback_df.copy()
+    else:
+        membership_df = pd.DataFrame(
+            {'cap_group': ['system'] * len(setin.region), 'region': setin.region}
+        )
         membership_df = membership_df.copy()
     else:
         fallback_df = all_frames.get('CarbonCapGroup')
