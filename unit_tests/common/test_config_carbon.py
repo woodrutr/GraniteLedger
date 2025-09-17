@@ -18,7 +18,10 @@ def test_carbon_cap_converts_short_tons_to_metric(tmp_path):
 
     short_ton_cap = 1234.5
     temp_config_path = tmp_path / 'run_config.toml'
-    temp_config_path.write_text(f"{config_contents}\ncarbon_cap = {short_ton_cap}\n")
+    updated_config = config_contents.replace(
+        'carbon_cap = "none"', f'carbon_cap = {short_ton_cap}'
+    )
+    temp_config_path.write_text(updated_config)
 
     settings = Config_settings(temp_config_path, test=True)
 
