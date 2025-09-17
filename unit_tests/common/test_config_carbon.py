@@ -10,6 +10,9 @@ from definitions import PROJECT_ROOT
 from src.common.config_setup import Config_settings, SHORT_TON_TO_METRIC_TON
 
 
+RUN_CONFIG_PATH = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
+
+
 def _write_temp_config(tmp_path, contents: str) -> Path:
     temp_config_path = tmp_path / 'run_config.toml'
     temp_config_path.write_text(contents)
@@ -36,8 +39,7 @@ def _remove_cap_group_tables(config_contents: str) -> list[str]:
 def test_carbon_cap_groups_from_table(tmp_path):
     """Carbon cap groups defined in the table should populate the default group."""
 
-    source_config = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
-    config_contents = source_config.read_text()
+    config_contents = RUN_CONFIG_PATH.read_text()
     config_contents = config_contents.replace(
         'cap = "none" # Set to "none" for no cap',
         'cap = 1234.5 # numeric cap for test',
@@ -62,8 +64,7 @@ def test_carbon_cap_groups_from_table(tmp_path):
 def test_carbon_cap_groups_from_nested_tables(tmp_path):
     """Carbon cap groups defined as nested tables should be parsed into named groups."""
 
-    source_config = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
-    filtered_lines = _remove_cap_group_tables(source_config.read_text())
+    filtered_lines = _remove_cap_group_tables(RUN_CONFIG_PATH.read_text())
 
     nested_block = [
         '',
@@ -124,8 +125,7 @@ def test_carbon_cap_groups_from_nested_tables(tmp_path):
 def test_carbon_cap_group_sentinels_disable_cap(tmp_path, raw_value):
     """Sentinel values in the cap group definition should disable the cap."""
 
-    source_config = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
-    config_contents = source_config.read_text()
+    config_contents = RUN_CONFIG_PATH.read_text()
     replacement = f'cap = "{raw_value}" # Set to "none" for no cap'
     config_contents = config_contents.replace(
         'cap = "none" # Set to "none" for no cap',
@@ -145,8 +145,7 @@ def test_carbon_cap_group_sentinels_disable_cap(tmp_path, raw_value):
 def test_legacy_carbon_keys_create_default_group(tmp_path):
     """Legacy carbon policy keys should build a default group representation."""
 
-    source_config = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
-    filtered_lines = _remove_cap_group_tables(source_config.read_text())
+    filtered_lines = _remove_cap_group_tables(RUN_CONFIG_PATH.read_text())
 
     short_ton_cap = 5432.1
     legacy_block = [
@@ -188,8 +187,7 @@ def test_legacy_carbon_keys_create_default_group(tmp_path):
 def test_legacy_carbon_cap_sentinels_disable_cap(tmp_path, raw_value):
     """Sentinel legacy carbon cap values should clear the cap configuration."""
 
-    source_config = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
-    filtered_lines = _remove_cap_group_tables(source_config.read_text())
+    filtered_lines = _remove_cap_group_tables(RUN_CONFIG_PATH.read_text())
 
     legacy_block = [
         '',
