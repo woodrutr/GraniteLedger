@@ -1,10 +1,13 @@
 """sequence of tests to prove out the price-demand interface"""
 
-import pyomo.environ as pyo
+import pytest
+
+pyo = pytest.importorskip(
+    'pyomo.environ', reason='Pyomo is required for hydrogen interface tests'
+)
+
 from logging import getLogger
 from pathlib import Path
-
-import pytest
 
 from definitions import PROJECT_ROOT
 from src.integrator.utilities import HI, poll_hydrogen_price
