@@ -6,16 +6,17 @@ on:
 
 jobs:
   unit-tests:
-    name: unit-tests
+    name: Unit Tests
     runs-on: ubuntu-latest
     defaults:
       run:
         shell: bash -l {0}
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up Conda
+      - name: Set up Conda (with mamba)
         uses: conda-incubator/setup-miniconda@v2
         with:
           auto-activate-base: false
@@ -24,10 +25,27 @@ jobs:
           environment-file: envs/conda_env.yml
           use-mamba: true
 
-      - name: Show conda diagnostics
+      - name: Cache Conda packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.conda/pkgs
+          key: ${{ runner.os }}-conda-${{ hashFiles('envs/conda_env.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-conda-
+
+      - name: Show Conda diagnostics
         run: |
           conda info
           conda list
+          python --version
 
       - name: Run unit tests
-        run: pytest unit_tests
+        run: |
+          pytest -vv --disable-warnings --maxfail=5 --junitxml=pytest.xml unit_tests
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-results
+          path: pytest.xml

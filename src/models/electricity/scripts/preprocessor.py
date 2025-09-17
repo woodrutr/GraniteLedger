@@ -832,16 +832,28 @@ def preprocessor(setin):
     emissions_df = emissions_df[emissions_df['tech'].isin(setin.T_gen)]
     all_frames['EmissionsRate'] = emissions_df
 
-    # Carbon allowance group membership mapping
-    membership_df = all_frames.pop('CarbonCapGroupMap', None)
-    if membership_df is None or membership_df.empty:
-        membership_df = all_frames.get('CarbonCapGroup')
-    if membership_df is None or membership_df.empty:
+# Carbon allowance group membership mapping
+membership_df = all_frames.pop('CarbonCapGroupMap', None)
+
+if membership_df is not None and not membership_df.empty:
+    membership_df = membership_df.copy()
+else:
+    fallback_df = all_frames.get('CarbonCapGroup')
+    if fallback_df is not None and not fallback_df.empty:
+        membership_df = fallback_df.copy()
+    else:
         membership_df = pd.DataFrame(
             {'cap_group': ['system'] * len(setin.region), 'region': setin.region}
         )
-    else:
         membership_df = membership_df.copy()
+    else:
+        fallback_df = all_frames.get('CarbonCapGroup')
+        if fallback_df is not None and not fallback_df.empty:
+            membership_df = fallback_df.copy()
+        else:
+            membership_df = pd.DataFrame(
+                {'cap_group': ['system'] * len(setin.region), 'region': setin.region}
+            )
     if 'cap_group' not in membership_df.columns:
         raise ValueError('CarbonCapGroup input must include a cap_group column')
     if 'region' not in membership_df.columns:
@@ -927,9 +939,9 @@ def preprocessor(setin):
             overrides,
             list(cap_groups),
         )
-        allowances_df['CarbonAllowanceProcurement'] = allowances_df[
-            'CarbonAllowanceProcurement'
-        ].astype(float)
+    allowances_df['CarbonAllowanceProcurement'] = allowances_df[
+        'CarbonAllowanceProcurement'
+    ].astype(float)
 
     allowances_df = allowances_df.set_index(['cap_group', 'year'])
     all_frames['CarbonAllowanceProcurement'] = allowances_df
