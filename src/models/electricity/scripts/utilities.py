@@ -159,7 +159,7 @@ def check_results(results, SolutionStatus, TerminationCondition):
     )
 
 
-def create_obj_df(mod_object):
+def create_obj_df(mod_object, instance=None):
     """takes pyomo component objects (e.g., variables, parameters, constraints) and processes the
     pyomo data and converts it to a dataframe and then writes the dataframe out to an output dir.
     The dataframe contains a key column which is the original way the pyomo data is structured,
@@ -176,17 +176,31 @@ def create_obj_df(mod_object):
         contains the pyomo model results for the component object
     """
     name = str(mod_object)
-    # print(name)
 
-    # creating a dataframe that reads in the paramater info
     df = pd.DataFrame()
-    df['Key'] = [str(i) for i in mod_object]
 
-    # add values associated with model objects that have values
-    if isinstance(mod_object, pyo.Set):
-        pass
-    else:
-        df[name] = [pyo.value(mod_object[i]) for i in mod_object]
+    indices = list(mod_object)
+    if not indices and hasattr(mod_object, 'is_indexed') and not mod_object.is_indexed():
+        indices = [None]
+
+    df['Key'] = [str(i) for i in indices]
+
+    if not isinstance(mod_object, pyo.Set):
+        if hasattr(mod_object, 'is_indexed') and not mod_object.is_indexed():
+            df[name] = [pyo.value(mod_object)]
+        else:
+            df[name] = [pyo.value(mod_object[i]) for i in indices]
+
+    if instance is not None and isinstance(mod_object, pyo.Constraint):
+        duals = []
+        for idx in indices:
+            constraint_data = mod_object if idx is None else mod_object[idx]
+            try:
+                dual = pyo.value(instance.dual[constraint_data])
+            except (KeyError, ValueError):
+                dual = float('nan')
+            duals.append(dual)
+        df['dual'] = duals
 
     if not df.empty:
         # breaking out the data from the mod_object info into multiple columns

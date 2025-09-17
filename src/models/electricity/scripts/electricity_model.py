@@ -9,6 +9,7 @@ constraints, plus additional misc support functions.
 # Import packages
 from collections import defaultdict
 from logging import getLogger
+import pandas as pd
 import pyomo.environ as pyo
 
 # Import python modules
@@ -20,6 +21,24 @@ from src.models.electricity.scripts.utilities import ElectricityMethods as em
 
 # Establish logger
 logger = getLogger(__name__)
+
+TECH_EMISSIONS_RATE_TON_PER_GWH = {
+    1: 1000.0,  # Coal Steam
+    2: 800.0,  # Oil Steam
+    3: 620.0,  # Natural Gas CT
+    4: 370.0,  # Natural Gas CC
+    5: 0.0,  # Hydrogen Turbine (assumed zero direct emissions)
+    6: 0.0,  # Nuclear
+    7: 0.0,  # Biomass (treated as carbon neutral)
+    8: 0.0,  # Geothermal
+    9: 0.0,  # Municipal Solid Waste
+    10: 0.0,  # Hydroelectric
+    11: 0.0,  # Pumped Hydroelectric Storage
+    12: 0.0,  # Battery Energy Storage
+    13: 0.0,  # Wind Offshore
+    14: 0.0,  # Wind Onshore
+    15: 0.0,  # Solar
+}
 
 ###################################################################################################
 # MODEL
@@ -50,6 +69,7 @@ class PowerModel(Model):
         self.sw_ramp = setA.sw_ramp
         self.sw_reserves = setA.sw_reserves
         self.sw_h2int = 0
+        self.carbon_cap = setA.carbon_cap
 
         # 0=no learning, 1=linear iterations, 2=nonlinear learning
         self.sw_learning = setA.sw_learning
@@ -189,6 +209,14 @@ class PowerModel(Model):
         self.declare_param('H2Price', self.H2Price_index, all_frames['H2Price'], mutable=True)
         self.declare_param('StorageLevelCost', None, 0.00000001)
         self.declare_param('H2Heatrate', None, setA.H2Heatrate)
+        emissions_series = pd.Series(
+            {tech: TECH_EMISSIONS_RATE_TON_PER_GWH.get(tech, 0.0) for tech in setA.T_gen},
+            name='EmissionsRate',
+        )
+        emissions_series.index.name = 'tech'
+        self.declare_param('EmissionsRate', self.T_gen, emissions_series)
+        if self.carbon_cap is not None:
+            self.declare_param('CarbonCap', None, self.carbon_cap)
 
         # if capacity expansion is on
         if self.sw_expansion:
@@ -394,6 +422,20 @@ class PowerModel(Model):
 
         self.unmet_load_cost = pyo.Expression(expr=unmet_load_cost)
 
+        def total_emissions(self):
+            """Total system CO2 emissions in metric tons."""
+
+            return sum(
+                self.WeightDay[self.MapHourDay[hr]]
+                * self.WeightYear[y]
+                * self.EmissionsRate[tech]
+                * self.generation_total[(tech, y, r, step, hr)]
+                for hr in self.hour
+                for (tech, y, r, step) in self.GenHour_index[hr]
+            )
+
+        self.total_emissions = pyo.Expression(expr=total_emissions)
+
         # if capacity expansion is on
         if self.sw_expansion:
             # TODO: choosing summer for capacity, may want to revisit this, fix hard coded value
@@ -570,6 +612,11 @@ class PowerModel(Model):
 
         ###########################################################################################
         # Constraints
+
+        if self.carbon_cap is not None:
+            self.total_emissions_cap = pyo.Constraint(
+                expr=self.total_emissions <= self.CarbonCap
+            )
 
         self.populate_demand_balance_sets = pyo.BuildAction(
             rule=em.populate_demand_balance_sets_rule

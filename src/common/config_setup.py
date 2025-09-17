@@ -180,6 +180,8 @@ class Config_settings:
         self.sw_reserves = config['sw_reserves']
         self.sw_learning = config['sw_learning']
         self.sw_expansion = config['sw_expansion']
+        carbon_cap = config.get('carbon_cap')
+        self.carbon_cap = float(carbon_cap) if carbon_cap is not None else None
 
         ############################################################################################
         # __INIT__: Residential Configs

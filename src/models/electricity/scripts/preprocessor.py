@@ -57,6 +57,7 @@ class Sets:
         self.sw_ramp = settings.sw_ramp
         self.sw_learning = settings.sw_learning
         self.sw_reserves = settings.sw_reserves
+        self.carbon_cap = settings.carbon_cap
 
         self.restypes = [
             'spinning',
