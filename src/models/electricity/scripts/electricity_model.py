@@ -138,8 +138,6 @@ class PowerModel(Model):
             config_cap_groups = {'system'}
         cap_groups = sorted(config_cap_groups | data_cap_groups) or ['system']
         self.cap_groups = cap_groups
-        self.declare_set('cap_group', cap_groups)
-        self.declare_set_with_sets('cap_group_year_index', self.cap_group, self.year)
 
         cap_group_map_df = all_frames.get('CarbonCapGroupMap')
         if cap_group_map_df is not None:
@@ -186,6 +184,15 @@ class PowerModel(Model):
         )
         cap_group_map_df = cap_group_map_df.sort_values('region').reset_index(drop=True)
         cap_group_map_df['cap_group'] = cap_group_map_df['cap_group'].astype(str)
+        cap_group_region_frame = (
+            cap_group_map_df[['cap_group', 'region']]
+            .drop_duplicates()
+            .set_index(['cap_group', 'region'])
+            .sort_index()
+        )
+        self.declare_set('cap_group', cap_groups)
+        self.declare_set('cap_group_region_index', cap_group_region_frame)
+        self.declare_set_with_sets('cap_group_year_index', self.cap_group, self.year)
         self.region_to_cap_group = {
             row.region: row.cap_group for row in cap_group_map_df.itertuples(index=False)
         }
@@ -336,6 +343,34 @@ class PowerModel(Model):
             'CarbonStartBank', self.cap_group, start_bank_df, mutable=True
         )
         self.cap_group_start_bank = cap_group_start_bank
+
+        membership_data = all_frames.get('CarbonCapGroupMembership')
+        if membership_data is None:
+            membership_data = cap_group_region_frame
+        if isinstance(membership_data, pd.Series):
+            membership_data = membership_data.to_frame(name='CarbonCapGroupMembership')
+        else:
+            membership_data = membership_data.copy()
+        if 'CarbonCapGroupMembership' not in membership_data.columns:
+            membership_data['CarbonCapGroupMembership'] = 1.0
+        if 'cap_group' in membership_data.columns and 'region' in membership_data.columns:
+            membership_data = membership_data.set_index(['cap_group', 'region'])
+        membership_data.index = membership_data.index.set_names(['cap_group', 'region'])
+        membership_index = list(self.cap_group_region_index)
+        if membership_index:
+            membership_multi_index = pd.MultiIndex.from_tuples(
+                membership_index, names=['cap_group', 'region']
+            )
+        else:
+            membership_multi_index = pd.MultiIndex.from_arrays(
+                [[], []], names=['cap_group', 'region']
+            )
+        membership_data = membership_data.reindex(membership_multi_index, fill_value=0.0)
+        self.declare_param(
+            'CarbonCapGroupMembership',
+            self.cap_group_region_index,
+            membership_data[['CarbonCapGroupMembership']],
+        )
 
         allowance_param = all_frames.get('CarbonAllowanceProcurement')
         if allowance_param is not None:
