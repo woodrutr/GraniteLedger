@@ -4,7 +4,24 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-import pandas as pd
+from typing import TYPE_CHECKING, Any, cast
+
+try:  # pragma: no cover - optional dependency
+    import pandas as pd
+except ImportError:  # pragma: no cover - optional dependency
+    pd = cast(Any, None)
+
+if TYPE_CHECKING:  # pragma: no cover
+    import pandas as pd
+
+
+def _ensure_pandas() -> None:
+    """Ensure :mod:`pandas` is available before working with outputs."""
+
+    if pd is None:  # pragma: no cover - helper exercised indirectly
+        raise ImportError(
+            "pandas is required for engine.outputs; install it with `pip install pandas`."
+        )
 
 
 @dataclass(frozen=True)
@@ -16,6 +33,9 @@ class EngineOutputs:
     price_by_region: pd.DataFrame
     flows: pd.DataFrame
 
+    def __post_init__(self) -> None:
+        _ensure_pandas()
+
     def to_csv(
         self,
         outdir: str | Path,
@@ -26,6 +46,8 @@ class EngineOutputs:
         flows_filename: str = 'flows.csv',
     ) -> None:
         """Persist the stored DataFrames to ``outdir`` as CSV files."""
+
+        _ensure_pandas()
 
         output_dir = Path(outdir)
         output_dir.mkdir(parents=True, exist_ok=True)

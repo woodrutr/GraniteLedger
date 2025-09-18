@@ -2,9 +2,24 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Set
+from typing import Dict, Set, TYPE_CHECKING, cast
 
-import pandas as pd
+try:  # pragma: no cover - exercised via ImportError handling
+    import pandas as pd
+except ImportError:  # pragma: no cover - optional dependency
+    pd = cast(object, None)
+
+if TYPE_CHECKING:  # pragma: no cover
+    import pandas as pd
+
+
+def _ensure_pandas() -> None:
+    """Raise a descriptive error if :mod:`pandas` is unavailable."""
+
+    if pd is None:  # pragma: no cover - helper exercised indirectly
+        raise ImportError(
+            "pandas is required for policy.allowance_annual; install it with `pip install pandas`."
+        )
 
 
 @dataclass
@@ -23,11 +38,15 @@ class RGGIPolicyAnnual:
     annual_surrender_frac: float = 0.5
     carry_pct: float = 1.0
 
+    def __post_init__(self) -> None:
+        _ensure_pandas()
+
 
 class AllowanceAnnual:
     """Clears annual allowance markets and tracks bank/compliance state."""
 
     def __init__(self, policy: RGGIPolicyAnnual):
+        _ensure_pandas()
         self.policy = policy
         self.carry_pct = float(policy.carry_pct)
         self.cp_state: Dict[str, Dict[str, float | list[int]]] = {}
