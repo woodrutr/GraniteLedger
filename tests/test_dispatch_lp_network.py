@@ -176,7 +176,8 @@ def test_leakage_percentage_helper() -> None:
         region_prices={'region': 30.0},
         emissions_tons=0.0,
         generation_by_region={'region': 80.0},
-        generation_by_coverage={'covered': 45.0, 'non_covered': 35.0})
+        generation_by_coverage={'covered': 45.0, 'non_covered': 35.0},
+    )
 
     expected = 100.0 * (35.0 - 20.0) / (80.0 - 60.0)
     assert scenario.leakage_percent(baseline) == pytest.approx(expected)
