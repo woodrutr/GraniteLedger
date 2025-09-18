@@ -208,6 +208,13 @@ class Config_settings:
     def _configure_carbon_policy(self, config: dict):
         """Parse carbon policy configuration data into normalized attributes."""
 
+        cfg = config.setdefault('electric', {})
+        if not isinstance(cfg, dict):
+            cfg = {}
+            config['electric'] = cfg
+        cfg.setdefault('scale_load', 1.0)
+        config.setdefault('scale_load', cfg['scale_load'])
+
         # Establish safe defaults so downstream code can rely on attributes existing.
         self.carbon_cap_groups = OrderedDict()
         self.default_cap_group = None

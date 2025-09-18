@@ -32,6 +32,10 @@ regions = [1]  # replace with valid region IDs
 ###################################################################################################
 # Electricity Inputs
 
+[electric]
+# Default scaling factor applied to electricity demand when no explicit value is provided.
+scale_load = 1.0
+
 # Switches (0 = off, 1 = on unless noted)
 sw_trade = 1
 sw_expansion = 1
