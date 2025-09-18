@@ -48,29 +48,6 @@ sw_rm = 1          # Reserve margin requirement switch
 sw_ramp = 0        # Maximum ramping constraint switch
 sw_reserves = 1    # Operating reserve requirement switch
 
-# Carbon policy
-# Define one or more carbon cap groups that specify the cap and allowance
-# banking behaviour for the associated regions.
-[[carbon_cap_groups]]
-name = "default"
-cap = "none" # Set to "none" for no cap, or numeric value for a cap
-regions = [7, 8, 9]
-allowance_procurement = { "2025" = 50000000.0, "2030" = 40000000.0 }
-start_bank = 0.0
-bank_enabled = true
-allow_borrowing = false
-
-# You can add more groups if needed, for example:
-# [[carbon_cap_groups]]
-# name = "industrial"
-# cap = 10000000.0
-# regions = [9]
-# allowance_procurement = { "2025" = 2500000.0 }
-# start_bank = 1.0
-# bank_enabled = false
-# allow_borrowing = true
-
-
 # Aggregate years switch
 # When on, representative years are aggregated and weighted based on unselected years
 sw_agg_years = 1
@@ -115,6 +92,31 @@ complex = true
 # Hydrogen Inputs
 
 h2_data_folder = "input/hydrogen/all_regions"
+
+
+###################################################################################################
+# Carbon Policy Group Definitions
+
+# Define one or more carbon cap groups that specify the cap and allowance
+# banking behaviour for the associated regions.
+[[carbon_cap_groups]]
+name = "default"
+cap = "none" # Set to "none" for no cap, or numeric value for a cap
+regions = [7, 8, 9]
+allowance_procurement = { "2025" = 50000000.0, "2030" = 40000000.0 }
+start_bank = 0.0
+bank_enabled = true
+allow_borrowing = false
+
+# You can add more groups if needed, for example:
+# [[carbon_cap_groups]]
+# name = "industrial"
+# cap = 10000000.0
+# regions = [9]
+# allowance_procurement = { "2025" = 2500000.0 }
+# start_bank = 1.0
+# bank_enabled = false
+# allow_borrowing = true
 
 # Example of nested carbon cap groups if needed
 [carbon_cap_groups.national]

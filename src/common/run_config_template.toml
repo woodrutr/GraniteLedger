@@ -47,6 +47,26 @@ sw_learning = 0
 
 
 ###################################################################################################
+# Residential Inputs
+
+scale_load = "enduse"
+view_regions = [1]
+view_years = [2025]
+
+# Sensitivity
+sensitivity = false
+change_var = "price"
+percent_change = 0
+complex = false
+
+
+###################################################################################################
+# Hydrogen Inputs
+
+h2_data_folder = "input/hydrogen/all_regions"
+
+
+###################################################################################################
 # Carbon Policy Inputs
 
 # Legacy root-level carbon cap (short tons, converted internally)
@@ -61,6 +81,10 @@ allowance_procurement = { "2025" = 0.0, "2030" = 0.0 }
 start_bank = 0.0
 bank_enabled = true
 allow_borrowing = false
+
+# Example of nested table format (alternative style)
+[carbon_cap_groups.national]
+description = "Default national carbon cap group"
 
 # Annual allowance market defaults (override per analysis as needed)
 [allowance_market]
@@ -77,7 +101,6 @@ annual_surrender_frac = 0.5
 carry_pct = 1.0
 full_compliance_years = []
 
-
 ###################################################################################################
 # Residential Inputs
 
@@ -90,7 +113,6 @@ sensitivity = false
 change_var = "price"
 percent_change = 0
 complex = false
-
 
 ###################################################################################################
 # Hydrogen Inputs

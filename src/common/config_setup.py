@@ -271,6 +271,8 @@ class Config_settings:
             or {}
         )
 
+        default_regions = tuple(int(region) for region in self.regions)
+
         known_dict_keys = {
             'allowances',
             'allowance_procurement',
@@ -284,36 +286,86 @@ class Config_settings:
             'carbon_caps',
         }
 
-        def _build_group(group_name: str, group_config: dict):
-            group_config = group_config or {}
-            if not isinstance(group_config, dict):
-                group_config = {'value': group_config}
+        def _parse_group_entries(groups):
+            """Return ordered (name, config) pairs from raw TOML structures."""
 
-            normalized = self._normalize_single_cap_group(group_config)
+            entries: list[tuple[str, dict]] = []
+            if isinstance(groups, dict):
+                for group_name, group_config in groups.items():
+                    entries.append((str(group_name), group_config))
+            elif isinstance(groups, list):
+                for idx, group_entry in enumerate(groups, start=1):
+                    if isinstance(group_entry, dict):
+                        entry = dict(group_entry)
+                        nested_groups: list[tuple[str, dict]] = []
+                        for key, value in list(entry.items()):
+                            if (
+                                isinstance(value, dict)
+                                and key not in known_dict_keys
+                            ):
+                                nested_groups.append((str(key), value))
+                                entry.pop(key)
+                        group_name = (
+                            entry.get('name')
+                            or entry.get('group')
+                            or entry.get('id')
+                            or f'group_{idx}'
+                        )
+                        entry.pop('name', None)
+                        entry.pop('group', None)
+                        entry.pop('id', None)
+                        entries.append((str(group_name), entry))
+                        entries.extend(nested_groups)
+                    elif group_entry is not None:
+                        entries.append((str(group_entry), {}))
+            elif groups is not None:
+                # Handle simple string/int names.
+                entries.append((str(groups), {}))
+            return entries
+
+        combined_group_configs = OrderedDict()
+        for source in (
+            config.get('carbon_cap_groups'),
+            carbon_policy_section.get('carbon_cap_groups'),
+        ):
+            for group_name, group_config in _parse_group_entries(source):
+                existing = combined_group_configs.get(group_name, {})
+                merged = dict(existing)
+                if isinstance(group_config, dict):
+                    merged.update(group_config)
+                combined_group_configs[group_name] = merged
+
+        if not combined_group_configs:
+            combined_group_configs['default'] = {'regions': list(self.regions)}
+
+        built_groups = OrderedDict()
+        for group_name, raw_config in combined_group_configs.items():
+            normalized = dict(self._normalize_single_cap_group(raw_config))
             normalized['name'] = group_name
 
-            raw_cap = normalized.get('cap', normalized.get('carbon_cap'))
-            cap_value = None
-            if isinstance(raw_cap, str):
-                if raw_cap.strip().lower() not in {'none', 'null', ''}:
+            cap_value = normalized.get('cap', normalized.get('carbon_cap'))
+            cap_float = None
+            if isinstance(cap_value, str):
+                lowered = cap_value.strip().lower()
+                if lowered not in {'none', 'null', ''}:
                     try:
-                        cap_value = float(raw_cap)
+                        cap_float = float(cap_value)
                     except (TypeError, ValueError):
-                        cap_value = None
-            elif raw_cap is not None:
+                        cap_float = None
+            elif cap_value is not None:
                 try:
-                    cap_value = float(raw_cap)
+                    cap_float = float(cap_value)
                 except (TypeError, ValueError):
-                    cap_value = None
-            if cap_value is None:
-                cap_value = legacy_cap_value
-            normalized['cap'] = cap_value
+                    cap_float = None
+            if cap_float is None:
+                cap_float = legacy_cap_value
+            normalized['cap'] = cap_float
 
             regions = normalized.get('regions')
             if regions:
                 regions = tuple(self._normalize_regions(regions))
             else:
-                regions = tuple(int(region) for region in self.regions)
+                regions = default_regions
             normalized['regions'] = regions
 
             allowance_schedule = (
@@ -323,8 +375,11 @@ class Config_settings:
             )
             allowances = (
                 self._normalize_year_value_schedule(allowance_schedule)
-                or dict(legacy_allowances)
+                if isinstance(allowance_schedule, (dict, list))
+                else allowance_schedule
             )
+            if not allowances:
+                allowances = dict(legacy_allowances)
             normalized['allowances'] = dict(allowances)
             normalized['allowance_procurement'] = dict(allowances)
             normalized['carbon_allowance_procurement'] = dict(allowances)
@@ -336,11 +391,25 @@ class Config_settings:
             )
             prices = (
                 self._normalize_year_value_schedule(price_schedule)
-                or dict(legacy_prices)
+                if isinstance(price_schedule, (dict, list))
+                else price_schedule
             )
+            if not prices:
+                prices = dict(legacy_prices)
             normalized['prices'] = dict(prices)
             normalized['price'] = dict(prices)
             normalized['carbon_price'] = dict(prices)
+
+            overrides_schedule = normalized.get('allowance_procurement_overrides')
+            overrides = (
+                self._normalize_year_value_schedule(overrides_schedule)
+                if isinstance(overrides_schedule, (dict, list))
+                else overrides_schedule
+            )
+            if not overrides:
+                overrides = dict(legacy_overrides)
+            normalized['allowance_procurement_overrides'] = dict(overrides)
+            normalized['carbon_allowance_procurement_overrides'] = dict(overrides)
 
             normalized['start_bank'] = self._normalize_float(
                 normalized.get('start_bank', normalized.get('carbon_allowance_start_bank')),
@@ -358,86 +427,9 @@ class Config_settings:
                 default=legacy_allow_borrowing,
             )
 
-            overrides_schedule = normalized.get('allowance_procurement_overrides')
-            overrides = (
-                self._normalize_year_value_schedule(overrides_schedule)
-                or dict(legacy_overrides)
-            )
-            normalized['allowance_procurement_overrides'] = dict(overrides)
+            built_groups[group_name] = normalized
 
-            return normalized
-
-        groups_config = config.get('carbon_cap_groups')
-        group_order: list[str] = []
-        built_groups: dict[str, dict] = {}
-
-        if isinstance(groups_config, dict):
-            for group_name, group_config in groups_config.items():
-                name_str = str(group_name)
-                built_groups[name_str] = _build_group(name_str, group_config)
-                group_order.append(name_str)
-        elif isinstance(groups_config, list):
-            for idx, group_entry in enumerate(groups_config, start=1):
-                if not isinstance(group_entry, dict):
-                    continue
-                entry = dict(group_entry)
-                nested_groups = []
-                for key, value in list(entry.items()):
-                    if (
-                        isinstance(value, dict)
-                        and key not in known_dict_keys
-                    ):
-                        nested_groups.append((str(key), value))
-                        entry.pop(key)
-                group_name = (
-                    entry.get('name')
-                    or entry.get('group')
-                    or entry.get('id')
-                    or f'group_{idx}'
-                )
-                entry.pop('name', None)
-                entry.pop('group', None)
-                entry.pop('id', None)
-                name_str = str(group_name)
-                built_groups[name_str] = _build_group(name_str, entry)
-                group_order.append(name_str)
-                for nested_name, nested_config in nested_groups:
-                    if nested_name in built_groups:
-                        continue
-                    built_groups[nested_name] = _build_group(
-                        nested_name, nested_config
-                    )
-                    group_order.append(nested_name)
-
-        if not built_groups:
-            fallback_name = 'default'
-            built_groups[fallback_name] = _build_group(
-                fallback_name,
-                {
-                    'regions': list(self.regions),
-                    'allowance_procurement': legacy_allowances,
-                    'prices': legacy_prices,
-                    'start_bank': legacy_start_bank,
-                    'bank_enabled': legacy_bank_enabled,
-                    'allow_borrowing': legacy_allow_borrowing,
-                    'cap': legacy_cap_value,
-                    'allowance_procurement_overrides': legacy_overrides,
-                },
-            )
-            group_order.append(fallback_name)
-
-        ordered_names: list[str] = []
-        for name in group_order:
-            if name not in ordered_names and name in built_groups:
-                ordered_names.append(name)
-
-        for name in built_groups:
-            if name not in ordered_names:
-                ordered_names.append(name)
-
-        self.carbon_cap_groups = OrderedDict(
-            (name, built_groups[name]) for name in ordered_names
-        )
+        self.carbon_cap_groups = OrderedDict(built_groups.items())
 
         if self.carbon_cap_groups:
             default_name, default_config = next(iter(self.carbon_cap_groups.items()))
@@ -461,7 +453,7 @@ class Config_settings:
             self.default_cap_group = types.SimpleNamespace(
                 name=default_name,
                 cap=self.carbon_cap,
-                regions=tuple(default_config.get('regions', tuple(self.regions))),
+                regions=tuple(default_config.get('regions', default_regions)),
                 allowance_procurement=self.carbon_allowance_procurement,
                 prices=dict(default_config.get('prices', {})),
                 start_bank=self.carbon_allowance_start_bank,
@@ -471,6 +463,7 @@ class Config_settings:
             )
         else:
             self.default_cap_group = None
+
 
 
     ################################################################################################
