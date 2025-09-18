@@ -164,11 +164,11 @@ class Config_settings:
         self.regions = config['regions']
 
         # __INIT__:  Temporal Configs
-        self.sw_temporal = config['sw_temporal']
+        self.sw_temporal = config.get('sw_temporal', 'default')
         self.cw_temporal = create_temporal_mapping(self.sw_temporal)
 
         # __INIT__:  Temporal Configs -
-        self.sw_agg_years = config['sw_agg_years']
+        self.sw_agg_years = int(config.get('sw_agg_years', 0))
         self.years = config['years']
         if self.sw_agg_years == 1:
             self.start_year = config['start_year']
@@ -181,12 +181,12 @@ class Config_settings:
 
         ############################################################################################
         # __INIT__:  Electricity Configs
-        self.sw_trade = config['sw_trade']
-        self.sw_rm = config['sw_rm']
-        self.sw_ramp = config['sw_ramp']
-        self.sw_reserves = config['sw_reserves']
-        self.sw_learning = config['sw_learning']
-        self.sw_expansion = config['sw_expansion']
+        self.sw_trade = int(config.get('sw_trade', 0))
+        self.sw_rm = int(config.get('sw_rm', 0))
+        self.sw_ramp = int(config.get('sw_ramp', 0))
+        self.sw_reserves = int(config.get('sw_reserves', 0))
+        self.sw_learning = int(config.get('sw_learning', 0))
+        self.sw_expansion = int(config.get('sw_expansion', 0))
 
         ############################################################################################
         # __INIT__: Residential Configs
