@@ -47,6 +47,26 @@ sw_learning = 0
 
 
 ###################################################################################################
+# Residential Inputs
+
+scale_load = "enduse"
+view_regions = [1]
+view_years = [2025]
+
+# Sensitivity
+sensitivity = false
+change_var = "price"
+percent_change = 0
+complex = false
+
+
+###################################################################################################
+# Hydrogen Inputs
+
+h2_data_folder = "input/hydrogen/all_regions"
+
+
+###################################################################################################
 # Carbon Policy Inputs
 
 # Legacy root-level carbon cap (short tons, converted internally)
@@ -65,23 +85,3 @@ allow_borrowing = false
 # Example of nested table format (alternative style)
 [carbon_cap_groups.national]
 description = "Default national carbon cap group"
-
-
-###################################################################################################
-# Residential Inputs
-
-scale_load = "enduse"
-view_regions = [1]
-view_years = [2025]
-
-# Sensitivity
-sensitivity = false
-change_var = "price"
-percent_change = 0
-complex = false
-
-
-###################################################################################################
-# Hydrogen Inputs
-
-h2_data_folder = "input/hydrogen/all_regions"

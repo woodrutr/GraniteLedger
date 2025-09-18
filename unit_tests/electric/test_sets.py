@@ -1,8 +1,10 @@
 from logging import getLogger
 from pathlib import Path
 
-import pandas as pd
 import pytest
+
+pytest.importorskip('pandas')
+import pandas as pd
 
 from src.common import config_setup
 from src.models.electricity.scripts.utilities import annual_count
@@ -97,6 +99,7 @@ def test_default_allowance_override_applies_to_remaining_groups():
     assert allowance_value('non_rggi', 2030) == pytest.approx(4.0)
 
 
+@pytest.mark.usefixtures('minimal_carbon_policy_inputs')
 def test_carbon_cap_group_tables():
     config_path = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
     settings = config_setup.Config_settings(config_path, test=True)
@@ -139,6 +142,7 @@ def test_carbon_cap_group_tables():
     assert setin.carbon_price_by_cap_group.index.names == ['cap_group', 'year']
 
 
+@pytest.mark.usefixtures('minimal_carbon_policy_inputs')
 def test_carbon_cap_group_region_override():
     config_path = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
     settings = config_setup.Config_settings(config_path, test=True)
