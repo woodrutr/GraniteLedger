@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+import importlib
 import pytest
 
-pd = pytest.importorskip('pandas')
+pd = pytest.importorskip("pandas")
 
-from engine.run_loop import run_fixed_point_from_frames
-from io_loader import Frames
-from tests.fixtures.annual_minimal import policy_frame_three_year
-from tests.fixtures.dispatch_single_minimal import baseline_frames
-
+run_fixed_point_from_frames = importlib.import_module(
+    "engine.run_loop"
+).run_fixed_point_from_frames
+Frames = importlib.import_module("io_loader").Frames
+policy_frame_three_year = importlib.import_module(
+    "tests.fixtures.annual_minimal"
+).policy_frame_three_year
+baseline_frames = importlib.import_module(
+    "tests.fixtures.dispatch_single_minimal"
+).baseline_frames
 
 def test_demand_validation_requires_unique_pairs() -> None:
     """Duplicate region-year entries should raise a clear validation error."""

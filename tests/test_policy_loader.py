@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import importlib
 import pytest
 
-pd = pytest.importorskip('pandas')
+pd = pytest.importorskip("pandas")
 
-from config.policy_loader import load_annual_policy, series_from_year_map
-
+policy_loader = importlib.import_module("config.policy_loader")
+load_annual_policy = policy_loader.load_annual_policy
+series_from_year_map = policy_loader.series_from_year_map
 
 def test_series_from_year_map_basic():
     cfg = {

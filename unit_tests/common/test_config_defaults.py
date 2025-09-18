@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import importlib
 import textwrap
-
 import pytest
 
-pytest.importorskip('pandas')
+pytest.importorskip("pandas")
 
-from src.common.config_setup import Config_settings
-from src.models.electricity.scripts import preprocessor as elec_preprocessor
+Config_settings = importlib.import_module("src.common.config_setup").Config_settings
+elec_preprocessor = importlib.import_module(
+    "src.models.electricity.scripts.preprocessor"
+)
 
 
 def test_missing_electric_switches_use_defaults(tmp_path):

@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import importlib
 import math
 
 import pytest
 
-pd = pytest.importorskip('pandas')
+pd = pytest.importorskip("pandas")
 
-from dispatch.interface import DispatchResult
-from dispatch.lp_network import solve_from_frames
-from dispatch.lp_single import HOURS_PER_YEAR
-from io_loader import Frames
+dispatch_interface = importlib.import_module("dispatch.interface")
+DispatchResult = dispatch_interface.DispatchResult
+lp_network = importlib.import_module("dispatch.lp_network")
+solve_from_frames = lp_network.solve_from_frames
+HOURS_PER_YEAR = importlib.import_module("dispatch.lp_single").HOURS_PER_YEAR
+Frames = importlib.import_module("io_loader").Frames
 
 
 def test_congestion_leads_to_price_separation() -> None:
