@@ -85,3 +85,36 @@ allow_borrowing = false
 # Example of nested table format (alternative style)
 [carbon_cap_groups.national]
 description = "Default national carbon cap group"
+
+# Annual allowance market defaults (override per analysis as needed)
+[allowance_market]
+type = "annual"
+cap = {}
+floor = {}
+ccr1_trigger = {}
+ccr1_qty = {}
+ccr2_trigger = {}
+ccr2_qty = {}
+cp_id = {}
+bank0 = 0.0
+annual_surrender_frac = 0.5
+carry_pct = 1.0
+full_compliance_years = []
+
+###################################################################################################
+# Residential Inputs
+
+scale_load = "enduse"
+view_regions = [1]
+view_years = [2025]
+
+# Sensitivity
+sensitivity = false
+change_var = "price"
+percent_change = 0
+complex = false
+
+###################################################################################################
+# Hydrogen Inputs
+
+h2_data_folder = "input/hydrogen/all_regions"
