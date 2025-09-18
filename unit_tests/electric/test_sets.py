@@ -1,8 +1,8 @@
 from logging import getLogger
 from pathlib import Path
-
 import importlib
 import pytest
+
 from definitions import PROJECT_ROOT
 
 pd = pytest.importorskip("pandas")
@@ -13,7 +13,6 @@ runner = importlib.import_module("src.models.electricity.scripts.runner")
 prep = importlib.import_module("src.models.electricity.scripts.preprocessor")
 
 logger = getLogger(__name__)
-
 
 def test_years_set():
     """test to ensure the years set is injested properly"""

@@ -196,59 +196,45 @@ def _build_engine_outputs(
         if summary_raw is None:
             continue
         summary = dict(summary_raw)
-        price = float(summary.get('p_co2', 0.0))
+        price = float(summary.get("p_co2", 0.0))
         dispatch_result = dispatch_solver(year, price)
         emissions_total = _extract_emissions(dispatch_result)
 
-        finalize = summary.get('finalize') or {}
-        bank_value = float(summary.get('bank_new', 0.0))
-        surrendered = float(summary.get('surrendered', 0.0))
-        obligation = float(summary.get('obligation_new', 0.0))
-        shortage_flag = bool(summary.get('shortage_flag', False))
-        finalized = bool(finalize.get('finalized', False))
+        finalize = summary.get("finalize") or {}
+        bank_value = float(summary.get("bank_new", 0.0))
+        surrendered = float(summary.get("surrendered", 0.0))
+        obligation = float(summary.get("obligation_new", 0.0))
+        shortage_flag = bool(summary.get("shortage_flag", False))
+        finalized = bool(finalize.get("finalized", False))
         if finalized:
-            bank_value = float(finalize.get('bank_final', bank_value))
-            surrendered += float(finalize.get('surrendered_additional', 0.0))
-            obligation = float(finalize.get('remaining_obligation', obligation))
-            shortage_flag = shortage_flag or bool(finalize.get('shortage_flag', False))
+            bank_value = float(finalize.get("bank_final", bank_value))
+            surrendered += float(finalize.get("surrendered_additional", 0.0))
+            obligation = float(finalize.get("remaining_obligation", obligation))
+            shortage_flag = shortage_flag or bool(finalize.get("shortage_flag", False))
 
-        iterations_value = summary.get('iterations', 0)
+        iterations_value = summary.get("iterations", 0)
         try:
             iterations = int(iterations_value)
         except (TypeError, ValueError):
             iterations = 0
 
-        emissions_by_region = getattr(dispatch_result, 'emissions_by_region', None)
+        emissions_by_region = getattr(dispatch_result, "emissions_by_region", None)
         if isinstance(emissions_by_region, Mapping):
             for region, value in emissions_by_region.items():
                 emissions_rows.append(
-                    {
-                        'year': year,
-                        'region': str(region),
-                        'emissions_tons': float(value),
-                    }
+                    {"year": year, "region": str(region), "emissions_tons": float(value)}
                 )
         else:
             emissions_rows.append(
-                {
-                    'year': year,
-                    'region': 'system',
-                    'emissions_tons': float(emissions_total),
-                }
+                {"year": year, "region": "system", "emissions_tons": float(emissions_total)}
             )
 
-        region_prices = getattr(dispatch_result, 'region_prices', {})
+        region_prices = getattr(dispatch_result, "region_prices", {})
         if isinstance(region_prices, Mapping):
             for region, value in region_prices.items():
-                price_rows.append(
-                    {
-                        'year': year,
-                        'region': str(region),
-                        'price': float(value),
-                    }
-                )
+                price_rows.append({"year": year, "region": str(region), "price": float(value)})
 
-        flows = getattr(dispatch_result, 'flows', {})
+        flows = getattr(dispatch_result, "flows", {})
         if isinstance(flows, Mapping):
             for key, flow_value in flows.items():
                 if not isinstance(key, tuple) or len(key) != 2:
@@ -258,49 +244,49 @@ def _build_engine_outputs(
                 if flow_float >= 0.0:
                     flow_rows.append(
                         {
-                            'year': year,
-                            'from_region': str(region_a),
-                            'to_region': str(region_b),
-                            'flow_mwh': flow_float,
+                            "year": year,
+                            "from_region": str(region_a),
+                            "to_region": str(region_b),
+                            "flow_mwh": flow_float,
                         }
                     )
                 else:
                     flow_rows.append(
                         {
-                            'year': year,
-                            'from_region': str(region_b),
-                            'to_region': str(region_a),
-                            'flow_mwh': -flow_float,
+                            "year": year,
+                            "from_region": str(region_b),
+                            "to_region": str(region_a),
+                            "flow_mwh": -flow_float,
                         }
                     )
 
         annual_rows.append(
             {
-                'year': year,
-                'p_co2': price,
-                'iterations': iterations,
-                'emissions_tons': float(emissions_total),
-                'bank': bank_value,
-                'surrendered': surrendered,
-                'obligation': obligation,
-                'finalized': finalized,
-                'shortage_flag': shortage_flag,
+                "year": year,
+                "p_co2": price,
+                "iterations": iterations,
+                "emissions_tons": float(emissions_total),
+                "bank": bank_value,
+                "surrendered": surrendered,
+                "obligation": obligation,
+                "finalized": finalized,
+                "shortage_flag": shortage_flag,
             }
         )
 
     annual_df = pd.DataFrame(annual_rows)
     if not annual_df.empty:
-        annual_df = annual_df.sort_values('year').reset_index(drop=True)
+        annual_df = annual_df.sort_values("year").reset_index(drop=True)
 
-    emissions_df = pd.DataFrame(emissions_rows, columns=['year', 'region', 'emissions_tons'])
+    emissions_df = pd.DataFrame(emissions_rows, columns=["year", "region", "emissions_tons"])
     if not emissions_df.empty:
-        emissions_df = emissions_df.sort_values(['year', 'region']).reset_index(drop=True)
+        emissions_df = emissions_df.sort_values(["year", "region"]).reset_index(drop=True)
 
-    price_df = pd.DataFrame(price_rows, columns=['year', 'region', 'price'])
+    price_df = pd.DataFrame(price_rows, columns=["year", "region", "price"])
     if not price_df.empty:
-        price_df = price_df.sort_values(['year', 'region']).reset_index(drop=True)
+        price_df = price_df.sort_values(["year", "region"]).reset_index(drop=True)
 
-    flows_columns = ['year', 'from_region', 'to_region', 'flow_mwh']
+    flows_columns = ["year", "from_region", "to_region", "flow_mwh"]
     flows_df = pd.DataFrame(flow_rows, columns=flows_columns)
     if not flows_df.empty:
         flows_df = flows_df.sort_values(flows_columns[:-1]).reset_index(drop=True)

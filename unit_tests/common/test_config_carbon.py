@@ -6,11 +6,18 @@ from pathlib import Path
 import pytest
 from definitions import PROJECT_ROOT
 
+import importlib
+import pytest
+
 pytest.importorskip("pandas")
+
+from definitions import PROJECT_ROOT
 
 _config_setup = importlib.import_module("src.common.config_setup")
 Config_settings = _config_setup.Config_settings
 SHORT_TON_TO_METRIC_TON = _config_setup.SHORT_TON_TO_METRIC_TON
+
+pytest.importorskip('pandas')
 
 
 def test_carbon_cap_groups_from_table(tmp_path):
