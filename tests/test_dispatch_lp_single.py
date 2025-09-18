@@ -87,10 +87,11 @@ def test_infeasible_load_reports_shortfall_and_price() -> None:
     """Loads above total capability return the correct price and shortfall."""
 
     frames = infeasible_frames()
-    year = next(iter(frames.load_mwh))
-    load = frames.load_mwh[year]
+    demand = frames.demand()
+    year = int(demand.iloc[0]['year'])
+    load = float(demand.loc[demand['year'] == year, 'demand_mwh'].sum())
 
-    summary = _dispatch_merit_order(frames.units, load, allowance_cost=10.0)
+    summary = _dispatch_merit_order(frames.units(), load, allowance_cost=10.0)
     caps = summary["units"]["cap_mwh"]
     total_cap = caps.sum()
     shortfall_expected = load - total_cap

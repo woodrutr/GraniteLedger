@@ -6,6 +6,8 @@ from typing import Mapping, Optional
 
 import pandas as pd
 
+from io_loader import Frames
+
 from .interface import DispatchResult
 
 HOURS_PER_YEAR: float = 8760.0
@@ -137,22 +139,20 @@ def _aggregate_generation_by_fuel(generation: pd.Series, units: pd.DataFrame) ->
     return {str(label): float(value) for label, value in grouped.items()}
 
 
-def solve(year: int, allowance_cost: float, frames: Optional[object] = None) -> DispatchResult:
+def solve(
+    year: int,
+    allowance_cost: float,
+    frames: Optional[Frames | Mapping[str, pd.DataFrame]] = None,
+) -> DispatchResult:
     """Solve the single-region dispatch problem using the provided frame data."""
 
     if frames is None:
-        raise ValueError("frames providing units and load_mwh must be supplied")
+        raise ValueError("frames providing demand and units must be supplied")
 
-    try:
-        units = getattr(frames, "units")
-        load_lookup = getattr(frames, "load_mwh")
-    except AttributeError as exc:  # pragma: no cover - defensive programming
-        raise AttributeError("frames must supply 'units' and 'load_mwh'") from exc
-
-    try:
-        load_value = load_lookup[year]
-    except KeyError as exc:
-        raise KeyError(f"load for year {year} is unavailable") from exc
+    frames_obj = Frames.coerce(frames)
+    units = frames_obj.units()
+    demand = frames_obj.demand_for_year(year)
+    load_value = sum(demand.values())
 
     dispatch = _dispatch_merit_order(units, float(load_value), allowance_cost)
 

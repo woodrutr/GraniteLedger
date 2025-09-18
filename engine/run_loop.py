@@ -3,7 +3,12 @@ from __future__ import annotations
 
 from typing import Callable, Iterable, Mapping
 
+import pandas as pd
+
+from dispatch.lp_network import solve_from_frames
 from policy.allowance_annual import AllowanceAnnual, RGGIPolicyAnnual
+
+from io_loader import Frames
 
 
 def _coerce_years(policy: RGGIPolicyAnnual, years: Iterable[int] | None) -> list[int]:
@@ -86,3 +91,42 @@ def run_annual_fixed_point(
         previous_price = price_guess
 
     return results
+
+
+def _dispatch_from_frames(frames: Frames) -> Callable[[int, float], float]:
+    """Build a dispatch callback that solves using the frame container."""
+
+    frames_obj = Frames.coerce(frames)
+
+    def dispatch(year: int, allowance_cost: float) -> float:
+        result = solve_from_frames(frames_obj, year, allowance_cost)
+        return float(result.emissions_tons)
+
+    return dispatch
+
+
+def run_fixed_point_from_frames(
+    frames: Frames | Mapping[str, pd.DataFrame],
+    *,
+    years: Iterable[int] | None = None,
+    price_initial: float | Mapping[int, float] = 0.0,
+    tol: float = 1e-3,
+    max_iter: int = 25,
+    relaxation: float = 0.5,
+) -> dict[int, dict]:
+    """Run the annual fixed-point integration using in-memory frames."""
+
+    frames_obj = Frames.coerce(frames)
+    policy_spec = frames_obj.policy()
+    policy = policy_spec.to_policy()
+    dispatch_model = _dispatch_from_frames(frames_obj)
+
+    return run_annual_fixed_point(
+        policy,
+        dispatch_model,
+        years=years,
+        price_initial=price_initial,
+        tol=tol,
+        max_iter=max_iter,
+        relaxation=relaxation,
+    )

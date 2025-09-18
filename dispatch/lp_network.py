@@ -6,7 +6,12 @@ from dataclasses import dataclass
 from itertools import combinations, product
 from typing import Dict, Iterable, List, Mapping, Sequence, Tuple
 
+import pandas as pd
+
+from io_loader import Frames
+
 from .interface import DispatchResult
+from .lp_single import HOURS_PER_YEAR
 
 _TOL = 1e-9
 
@@ -358,4 +363,54 @@ def solve(
     )
 
 
-__all__ = ['GeneratorSpec', 'solve']
+def solve_from_frames(
+    frames: Frames | Mapping[str, pd.DataFrame],
+    year: int,
+    allowance_cost: float,
+) -> DispatchResult:
+    """Solve the dispatch problem using frame-based inputs."""
+
+    frames_obj = Frames.coerce(frames)
+
+    load_mapping = {
+        str(region): float(value)
+        for region, value in frames_obj.demand_for_year(year).items()
+    }
+
+    units = frames_obj.units()
+    fuels = frames_obj.fuels()
+    coverage_lookup = {
+        str(row.fuel): bool(row.covered) for row in fuels.itertuples(index=False)
+    }
+
+    generators: List[GeneratorSpec] = []
+    for row in units.itertuples(index=False):
+        region_raw = row.region
+        region = str(region_raw) if region_raw is not None and not pd.isna(region_raw) else 'default'
+        fuel = str(row.fuel)
+        covered = coverage_lookup.get(fuel, True)
+        capacity = float(row.cap_mw) * float(row.availability) * HOURS_PER_YEAR
+        variable_cost = float(row.vom_per_mwh) + float(row.hr_mmbtu_per_mwh) * float(row.fuel_price_per_mmbtu)
+        emission_rate = float(row.ef_ton_per_mwh)
+
+        generators.append(
+            GeneratorSpec(
+                name=str(row.unit_id),
+                region=region,
+                fuel=fuel,
+                variable_cost=variable_cost,
+                capacity=capacity,
+                emission_rate=emission_rate,
+                covered=bool(covered),
+            )
+        )
+
+    interfaces = {}
+    for row in frames_obj.transmission().itertuples(index=False):
+        limit = float(row.limit_mw) * HOURS_PER_YEAR
+        interfaces[(str(row.from_region), str(row.to_region))] = limit
+
+    return solve(load_mapping, generators, interfaces, allowance_cost)
+
+
+__all__ = ['GeneratorSpec', 'solve', 'solve_from_frames']
