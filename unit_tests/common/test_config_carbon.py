@@ -4,10 +4,10 @@ from pathlib import Path
 
 import pytest
 
-pytest.importorskip('pandas')
-
 from definitions import PROJECT_ROOT
 from src.common.config_setup import Config_settings, SHORT_TON_TO_METRIC_TON
+
+pytest.importorskip('pandas')
 
 
 def test_carbon_cap_groups_from_table(tmp_path):

@@ -130,3 +130,24 @@ def run_fixed_point_from_frames(
         max_iter=max_iter,
         relaxation=relaxation,
     )
+
+
+def run_end_to_end_from_frames(
+    frames: Frames | Mapping[str, pd.DataFrame],
+    *,
+    years: Iterable[int] | None = None,
+    price_initial: float | Mapping[int, float] = 0.0,
+    tol: float = 1e-3,
+    max_iter: int = 25,
+    relaxation: float = 0.5,
+) -> dict[int, dict]:
+    """Backward-compatible alias for :func:`run_fixed_point_from_frames`."""
+
+    return run_fixed_point_from_frames(
+        frames,
+        years=years,
+        price_initial=price_initial,
+        tol=tol,
+        max_iter=max_iter,
+        relaxation=relaxation,
+    )

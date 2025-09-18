@@ -4,10 +4,10 @@ import textwrap
 
 import pytest
 
-pytest.importorskip('pandas')
-
 from src.common.config_setup import Config_settings
 from src.models.electricity.scripts import preprocessor as elec_preprocessor
+
+pytest.importorskip('pandas')
 
 
 def test_missing_electric_switches_use_defaults(tmp_path):
