@@ -192,4 +192,3 @@ def test_leakage_percentage_helper() -> None:
 
     expected = 100.0 * (35.0 - 20.0) / (80.0 - 60.0)
     assert scenario.leakage_percent(baseline) == pytest.approx(expected)
-    )
