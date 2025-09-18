@@ -162,10 +162,20 @@ def solve(
 
     region_prices = {_DEFAULT_REGION: float(dispatch["price"])}
 
+    emissions_series = generation * unit_data["ef_ton_per_mwh"]
+    emissions_by_region_series = emissions_series.groupby(unit_data["region"]).sum()
+    emissions_by_region = {
+        str(region): float(value) for region, value in emissions_by_region_series.items()
+    }
+    if not emissions_by_region:
+        emissions_by_region = {_DEFAULT_REGION: 0.0}
+
     return DispatchResult(
         gen_by_fuel=gen_by_fuel,
         region_prices=region_prices,
         emissions_tons=float(dispatch["emissions_tons"]),
+        emissions_by_region=emissions_by_region,
+        flows={},
     )
 
 

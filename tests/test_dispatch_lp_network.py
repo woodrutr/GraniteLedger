@@ -6,7 +6,7 @@ import math
 
 import pytest
 
-import pandas as pd
+pd = pytest.importorskip('pandas')
 
 from dispatch.lp_network import solve_from_frames
 from dispatch.lp_single import HOURS_PER_YEAR
@@ -76,6 +76,9 @@ def test_congestion_leads_to_price_separation() -> None:
     assert result.gen_by_fuel['north_supply'] == pytest.approx(55.0 * HOURS_PER_YEAR)
     assert result.gen_by_fuel['south_supply'] == pytest.approx(45.0 * HOURS_PER_YEAR)
     assert math.isclose(result.emissions_tons, 0.0)
+    assert ('north', 'south') in result.flows
+    assert result.flows[('north', 'south')] == pytest.approx(15.0 * HOURS_PER_YEAR)
+    assert sum(result.emissions_by_region.values()) == pytest.approx(result.emissions_tons)
 
 
 def test_imports_increase_with_carbon_price() -> None:
@@ -144,3 +147,4 @@ def test_imports_increase_with_carbon_price() -> None:
     assert high_price.region_prices['covered'] == pytest.approx(30.0, rel=1e-4)
     assert high_price.region_prices['external'] == pytest.approx(30.0, rel=1e-4)
     assert high_price.emissions_tons < low_price.emissions_tons
+    assert sum(high_price.emissions_by_region.values()) == pytest.approx(high_price.emissions_tons)

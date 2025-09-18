@@ -42,6 +42,8 @@ def test_merit_order_shifts_with_allowance_cost() -> None:
 
     assert isinstance(result, DispatchResult)
     assert set(result.gen_by_fuel) == {"wind", "coal", "gas"}
+    assert result.emissions_by_region["default"] == pytest.approx(result.emissions_tons)
+    assert result.flows == {}
 
 
 def test_price_matches_marginal_cost_of_marginal_unit() -> None:

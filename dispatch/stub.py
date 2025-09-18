@@ -53,6 +53,8 @@ def solve(year: int, allowance_cost: float) -> DispatchResult:
         gen_by_fuel=gen_by_fuel,
         region_prices=dict(_REGION_PRICES),
         emissions_tons=emissions,
+        emissions_by_region={'system': emissions},
+        flows={},
     )
 
 

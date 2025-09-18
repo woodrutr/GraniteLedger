@@ -302,6 +302,7 @@ def solve(
     costs: List[float] = []
     generator_refs: List[GeneratorSpec | None] = []
     generator_indices: List[int] = []
+    flow_indices: Dict[int, Tuple[str, str]] = {}
 
     for generator in generators:
         if generator.region not in region_index:
@@ -325,6 +326,7 @@ def solve(
         upper_bounds.append(limit)
         costs.append(0.0)
         generator_refs.append(None)
+        flow_indices[len(matrix_columns) - 1] = (region_a, region_b)
 
     matrix = [[column[idx] for column in matrix_columns] for idx in range(len(region_list))]
     rhs = [float(load_by_region.get(region, 0.0)) for region in region_list]
@@ -333,6 +335,7 @@ def solve(
 
     gen_by_fuel: Dict[str, float] = {}
     emissions_tons = 0.0
+    emissions_by_region_totals: Dict[str, float] = {region: 0.0 for region in region_list}
     for idx in generator_indices:
         generator = generator_refs[idx]
         assert generator is not None
@@ -340,6 +343,7 @@ def solve(
         gen_by_fuel.setdefault(generator.fuel, 0.0)
         gen_by_fuel[generator.fuel] += output
         emissions_tons += generator.emission_rate * output
+        emissions_by_region_totals[generator.region] += generator.emission_rate * output
 
     delta = 1e-4
     region_prices: Dict[str, float] = {}
@@ -356,10 +360,20 @@ def solve(
             price = (objective - objective_down) / delta
         region_prices[region] = price
 
+    emissions_by_region = {
+        region: float(total) for region, total in emissions_by_region_totals.items()
+    }
+
+    flows: Dict[Tuple[str, str], float] = {
+        pair: float(solution[idx]) for idx, pair in flow_indices.items()
+    }
+
     return DispatchResult(
         gen_by_fuel=gen_by_fuel,
         region_prices=region_prices,
         emissions_tons=emissions_tons,
+        emissions_by_region=emissions_by_region,
+        flows=flows,
     )
 
 
