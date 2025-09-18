@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import pytest
 
+pytest.importorskip('pandas')
+
 from policy.allowance_annual import AllowanceAnnual
 from tests.fixtures.annual_minimal import LinearDispatch, policy_for_shortage, policy_three_year
 

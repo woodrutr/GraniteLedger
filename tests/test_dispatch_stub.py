@@ -6,6 +6,8 @@ import math
 
 import pytest
 
+pd = pytest.importorskip('pandas')
+
 from dispatch.interface import DispatchResult
 from dispatch.stub import EMISSIONS_INTERCEPT, EMISSIONS_SLOPE, solve
 

@@ -6,6 +6,8 @@ from typing import Iterable
 
 import pytest
 
+pd = pytest.importorskip('pandas')
+
 from dispatch.interface import DispatchResult
 from dispatch.lp_single import _dispatch_merit_order, solve
 from tests.fixtures.dispatch_single_minimal import baseline_frames, baseline_units, infeasible_frames

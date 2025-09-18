@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import pandas as pd
 import pytest
+
+pd = pytest.importorskip('pandas')
 
 from engine.run_loop import run_fixed_point_from_frames
 from io_loader import Frames

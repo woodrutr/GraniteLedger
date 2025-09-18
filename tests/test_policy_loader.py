@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import pandas as pd
 import pytest
+
+pd = pytest.importorskip('pandas')
 
 from config.policy_loader import load_annual_policy, series_from_year_map
 

@@ -426,3 +426,66 @@ def solve(
         exports_from_covered=exports_from_covered,
         region_coverage=region_coverage_result,
     )
+
+
+def solve_from_frames(
+    frames: Frames | Mapping[str, pd.DataFrame],
+    year: int,
+    allowance_cost: float,
+) -> DispatchResult:
+    """Solve the network dispatch problem using a :class:`Frames` container."""
+
+    frames_obj = Frames.coerce(frames)
+
+    demand = frames_obj.demand_for_year(int(year))
+    coverage_map = {str(region): bool(flag) for region, flag in frames_obj.coverage_for_year(int(year)).items()}
+
+    units = frames_obj.units()
+    fuels = frames_obj.fuels()
+    transmission = frames_obj.transmission()
+
+    fuel_coverage = {str(row.fuel): bool(row.covered) for row in fuels.itertuples(index=False)}
+
+    generators: List[GeneratorSpec] = []
+    for row in units.itertuples(index=False):
+        fuel_label = getattr(row, 'fuel', str(row.unit_id))
+        region = str(getattr(row, 'region', 'default'))
+        fuel_flag = bool(fuel_coverage.get(str(fuel_label), True))
+        region_flag = bool(coverage_map.get(region, True))
+        unit_flag = getattr(row, 'covered', None)
+        if unit_flag is not None:
+            region_flag = region_flag and bool(unit_flag)
+        variable_cost = float(
+            row.vom_per_mwh + row.hr_mmbtu_per_mwh * row.fuel_price_per_mmbtu
+        )
+        capacity = float(row.cap_mw) * float(row.availability) * HOURS_PER_YEAR
+        generators.append(
+            GeneratorSpec(
+                name=str(row.unit_id),
+                region=region,
+                fuel=str(fuel_label),
+                variable_cost=variable_cost,
+                capacity=capacity,
+                emission_rate=float(row.ef_ton_per_mwh),
+                covered=fuel_flag and region_flag,
+            )
+        )
+
+    interfaces: Dict[Tuple[str, str], float] = {}
+    for row in transmission.itertuples(index=False):
+        limit_value = float(row.limit_mw)
+        if pd.isna(limit_value) or limit_value < 0.0:
+            continue
+        limit_mwh = limit_value * HOURS_PER_YEAR
+        interfaces[(str(row.from_region), str(row.to_region))] = limit_mwh
+
+    return solve(
+        load_by_region=demand,
+        generators=generators,
+        interfaces=interfaces,
+        allowance_cost=float(allowance_cost),
+        region_coverage=coverage_map,
+    )
+
+
+__all__ = ['DispatchResult', 'GeneratorSpec', 'solve', 'solve_from_frames']
