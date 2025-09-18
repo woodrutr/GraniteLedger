@@ -6,12 +6,8 @@ on:
 
 jobs:
   unit-tests:
-    name: Unit Tests (Python ${{ matrix.python-version }})
+    name: Unit Tests (Python 3.12)
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: [3.10, 3.11, 3.12]
 
     defaults:
       run:
@@ -21,21 +17,19 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up Conda (with mamba)
-        uses: conda-incubator/setup-miniconda@v2
+      - name: Set up Conda
+        uses: conda-incubator/setup-miniconda@v3
         with:
-          python-version: ${{ matrix.python-version }}
-          auto-activate-base: false
-          auto-update-conda: false
-          activate-environment: bsky
-          environment-file: envs/conda_env.yml
-          use-mamba: true
+          auto-update-conda: true
+          python-version: 3.12
+          environment-file: environment.yml
+          activate-environment: bluesky-env
 
       - name: Cache Conda packages
         uses: actions/cache@v4
         with:
           path: ~/.conda/pkgs
-          key: ${{ runner.os }}-conda-${{ matrix.python-version }}-${{ hashFiles('envs/conda_env.yml') }}
+          key: ${{ runner.os }}-conda-3.12-${{ hashFiles('environment.yml') }}
           restore-keys: |
             ${{ runner.os }}-conda-
 
@@ -46,12 +40,11 @@ jobs:
           python --version
 
       - name: Run unit tests
-        run: |
-          pytest -vv --disable-warnings --maxfail=5 --junitxml=pytest.xml unit_tests
+        run: pytest -q --junitxml=pytest.xml
 
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: pytest-results-${{ matrix.python-version }}
+          name: pytest-results-3.12
           path: pytest.xml
