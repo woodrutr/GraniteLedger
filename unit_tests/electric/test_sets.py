@@ -1,16 +1,16 @@
 from logging import getLogger
 from pathlib import Path
 
+import importlib
 import pytest
-
-pytest.importorskip('pandas')
-import pandas as pd
-
-from src.common import config_setup
-from src.models.electricity.scripts.utilities import annual_count
-from src.models.electricity.scripts.runner import run_elec_model
-import src.models.electricity.scripts.preprocessor as prep
 from definitions import PROJECT_ROOT
+
+pd = pytest.importorskip("pandas")
+
+config_setup = importlib.import_module("src.common.config_setup")
+utilities = importlib.import_module("src.models.electricity.scripts.utilities")
+runner = importlib.import_module("src.models.electricity.scripts.runner")
+prep = importlib.import_module("src.models.electricity.scripts.preprocessor")
 
 logger = getLogger(__name__)
 
@@ -25,12 +25,12 @@ def test_years_set():
     settings.regions = regions
     settings.years = years
 
-    elec_model = run_elec_model(settings, solve=False)
+    elec_model = runner.run_elec_model(settings, solve=False)
 
     # quick helper for annualizations....
     # quick test....  the aggregate weight of all the rep hours must = 8760
     assert (
-        sum(annual_count(t, elec_model) for t in elec_model.hour) == 8760
+        sum(utilities.annual_count(t, elec_model) for t in elec_model.hour) == 8760
     ), 'Annualized hours do not add up!'
 
     # the xor of the sets should be empty...
