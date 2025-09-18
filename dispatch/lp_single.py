@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Mapping, Optional
+from typing import Any, Dict, Mapping, Optional, cast
 
-import pandas as pd
+try:  # pragma: no cover - exercised when pandas missing
+    import pandas as pd
+except ImportError:  # pragma: no cover - optional dependency
+    pd = cast(Any, None)
 
 from io_loader import Frames
 
@@ -25,8 +28,19 @@ _REQUIRED_COLUMNS = {
 }
 
 
+def _ensure_pandas() -> None:
+    """Ensure :mod:`pandas` is available before continuing."""
+
+    if pd is None:  # pragma: no cover - helper exercised indirectly
+        raise ImportError(
+            "pandas is required for dispatch.lp_single; install it with `pip install pandas`."
+        )
+
+
 def _validate_units_df(units_df: pd.DataFrame) -> pd.DataFrame:
     """Return a cleaned copy of the units data with numeric columns enforced."""
+
+    _ensure_pandas()
 
     if not isinstance(units_df, pd.DataFrame):
         raise TypeError("units must be provided as a pandas DataFrame")
@@ -69,6 +83,8 @@ def _dispatch_merit_order(
     allowance_covered: bool = True,
 ) -> dict:
     """Run the merit-order dispatch returning detailed information for testing."""
+
+    _ensure_pandas()
 
     units = _validate_units_df(units_df)
 
@@ -126,6 +142,8 @@ def _dispatch_merit_order(
 def _aggregate_generation_by_fuel(generation: pd.Series, units: pd.DataFrame) -> Mapping[str, float]:
     """Aggregate dispatch by fuel label if available, falling back to unit IDs."""
 
+    _ensure_pandas()
+
     tol_filtered = generation[generation > _DISPATCH_TOLERANCE]
 
     if tol_filtered.empty:
@@ -147,6 +165,8 @@ def _aggregate_generation_by_region(
     generation: pd.Series, units: pd.DataFrame
 ) -> Mapping[str, float]:
     """Aggregate dispatch by region label if available."""
+
+    _ensure_pandas()
 
     tol_filtered = generation[generation > _DISPATCH_TOLERANCE]
     if tol_filtered.empty:
@@ -171,6 +191,8 @@ def solve(
     frames: Optional[Frames | Mapping[str, pd.DataFrame]] = None,
 ) -> DispatchResult:
     """Solve the single-region dispatch problem using the provided frame data."""
+
+    _ensure_pandas()
 
     if frames is None:
         raise ValueError("frames providing demand and units must be supplied")
@@ -209,14 +231,24 @@ def solve(
 
     region_prices = {_DEFAULT_REGION: float(dispatch["price"])}
 
+    # emissions by region (codex branch)
+    emissions_series = generation * unit_data["ef_ton_per_mwh"]
+    emissions_by_region_series = emissions_series.groupby(unit_data["region"]).sum()
+    emissions_by_region = {
+        str(region): float(value) for region, value in emissions_by_region_series.items()
+    }
+    if not emissions_by_region:
+        emissions_by_region = {_DEFAULT_REGION: 0.0}
+
+    # coverage and imports/exports (main branch)
     total_generation = float(generation.sum())
-    generation_by_coverage = {'covered': 0.0, 'non_covered': 0.0}
-    coverage_key = 'covered' if allowance_covered else 'non_covered'
+    generation_by_coverage = {"covered": 0.0, "non_covered": 0.0}
+    coverage_key = "covered" if allowance_covered else "non_covered"
     generation_by_coverage[coverage_key] = total_generation
 
     imports_to_covered = 0.0
     exports_from_covered = 0.0
-    region_coverage = {}
+    region_coverage: Dict[str, bool] = {}
     for region, load in demand.items():
         region_str = str(region)
         covered = bool(coverage_map.get(region_str, allowance_covered))
@@ -233,6 +265,8 @@ def solve(
         gen_by_fuel=gen_by_fuel,
         region_prices=region_prices,
         emissions_tons=float(dispatch["emissions_tons"]),
+        emissions_by_region=emissions_by_region,
+        flows={},  # no transmission flows tracked in this solver path
         generation_by_region=gen_by_region,
         generation_by_coverage=generation_by_coverage,
         imports_to_covered=imports_to_covered,
