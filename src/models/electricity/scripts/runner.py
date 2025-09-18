@@ -198,7 +198,7 @@ def run_elec_model(settings: Config_settings, solve=True) -> PowerModel:
 
     logger.info('Preprocessing')
 
-    all_frames, setin = prep.preprocessor(prep.Sets(settings))
+    all_frames, setin = prep.preprocessor(prep.Sets(settings), frames_override=None)
 
     logger.debug(
         f'Proceeding to build model for years: {settings.years} and regions: {settings.regions}'

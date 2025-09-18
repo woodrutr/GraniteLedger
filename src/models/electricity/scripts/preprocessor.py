@@ -957,7 +957,10 @@ def create_other_sets(all_frames, setin):
 
 
 ###################################################################################################
-def preprocessor(setin):
+def preprocessor(
+    setin,
+    frames_override: dict[str, pd.DataFrame] | None = None,
+):
     """main preprocessor function that generates the final dataframes and sets sent over to the
     electricity model. This function reads in the input data, modifies it based on the temporal
     and regional mapping specified in the inputs, and gets it into the final formatting needed.
@@ -967,6 +970,10 @@ def preprocessor(setin):
     ----------
     setin : Sets
         an initial batch of sets that are used to solve electricity model
+    frames_override : dict[str, pd.DataFrame], optional
+        Mapping of frame names to replacement data that should be injected into
+        the preprocessing pipeline before any downstream transformations are
+        applied.
 
     Returns
     -------
@@ -986,6 +993,18 @@ def preprocessor(setin):
     elif db_switch == 1:
         # add sql db tables to all frames
         all_frames = readin_sql(all_frames)
+
+    if frames_override:
+        override_frames: dict[str, pd.DataFrame] = {}
+        for name, frame in frames_override.items():
+            if not isinstance(frame, pd.DataFrame):
+                raise TypeError(
+                    'frames_override values must be pandas DataFrame instances '
+                    f"(key {name!r} received {type(frame).__name__})"
+                )
+            override_frames[name] = frame.copy(deep=True)
+        if override_frames:
+            all_frames.update(override_frames)
 
     # Ensure emissions data are available for all generation technologies
     emissions_df = all_frames.get('EmissionsRate')
@@ -1524,7 +1543,7 @@ def output_inputs(OUTPUT_ROOT):
     setA = Sets(years, regions)
 
     # creates the initial data
-    all_frames, setB = preprocessor(setA)
+    all_frames, setB = preprocessor(setA, frames_override=None)
     for key in all_frames:
         # print(key, list(all_frames[key].reset_index().columns))
         fname = key + '.csv'
