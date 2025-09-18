@@ -74,3 +74,28 @@ def policy_for_shortage() -> RGGIPolicyAnnual:
         annual_surrender_frac=0.5,
         carry_pct=1.0,
     )
+
+
+def policy_frame_three_year() -> pd.DataFrame:
+    """Return a DataFrame compatible with :class:`io.frames_api.Frames`."""
+
+    years = [2025, 2026, 2027]
+    records = []
+    for year in years:
+        records.append(
+            {
+                'year': year,
+                'cap_tons': 100.0 if year == 2025 else (90.0 if year == 2026 else 250.0),
+                'floor_dollars': 4.0,
+                'ccr1_trigger': 7.0,
+                'ccr1_qty': 30.0,
+                'ccr2_trigger': 13.0,
+                'ccr2_qty': 60.0,
+                'cp_id': 'CP1',
+                'full_compliance': year == 2027,
+                'bank0': 10.0,
+                'annual_surrender_frac': 0.5,
+                'carry_pct': 1.0,
+            }
+        )
+    return pd.DataFrame(records)

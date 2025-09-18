@@ -2,20 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Dict
-
 import pandas as pd
 
+from io_loader import Frames
+
 HOURS_PER_YEAR = 8760.0
-
-
-@dataclass
-class Frames:
-    """Minimal container mimicking the frames input expected by the solver."""
-
-    units: pd.DataFrame
-    load_mwh: Dict[int, float]
 
 
 def baseline_units() -> pd.DataFrame:
@@ -25,6 +16,7 @@ def baseline_units() -> pd.DataFrame:
         {
             "unit_id": "wind-1",
             "fuel": "wind",
+            "region": "default",
             "cap_mw": 50.0,
             "availability": 0.5,
             "hr_mmbtu_per_mwh": 0.0,
@@ -35,6 +27,7 @@ def baseline_units() -> pd.DataFrame:
         {
             "unit_id": "coal-1",
             "fuel": "coal",
+            "region": "default",
             "cap_mw": 80.0,
             "availability": 0.9,
             "hr_mmbtu_per_mwh": 9.0,
@@ -45,6 +38,7 @@ def baseline_units() -> pd.DataFrame:
         {
             "unit_id": "gas-1",
             "fuel": "gas",
+            "region": "default",
             "cap_mw": 70.0,
             "availability": 0.85,
             "hr_mmbtu_per_mwh": 7.0,
@@ -60,16 +54,36 @@ def baseline_units() -> pd.DataFrame:
 def baseline_frames(year: int = 2030, load_mwh: float = 1_000_000.0) -> Frames:
     """Construct frames with the baseline unit data and supplied load."""
 
-    return Frames(units=baseline_units(), load_mwh={year: load_mwh})
+    demand = pd.DataFrame([
+        {"year": year, "region": "default", "demand_mwh": float(load_mwh)}
+    ])
+    fuels = pd.DataFrame(
+        [
+            {"fuel": "wind", "covered": False},
+            {"fuel": "coal", "covered": True},
+            {"fuel": "gas", "covered": True},
+        ]
+    )
+    transmission = pd.DataFrame(columns=["from_region", "to_region", "limit_mw"])
+
+    return Frames(
+        {
+            "units": baseline_units(),
+            "demand": demand,
+            "fuels": fuels,
+            "transmission": transmission,
+        }
+    )
 
 
 def infeasible_frames(year: int = 2030) -> Frames:
     """Frames with load exceeding the total available generation."""
 
-    units = baseline_units()
+    base = baseline_frames(year=year)
+    units = base.units()
     total_cap = float((units["cap_mw"] * units["availability"] * HOURS_PER_YEAR).sum())
-    # Exceed total capacity by ten thousand megawatt-hours.
-    excessive_load = total_cap + 10_000.0
+    demand = base.demand()
+    demand.loc[demand["year"] == year, "demand_mwh"] = total_cap + 10_000.0
 
-    return Frames(units=units, load_mwh={year: excessive_load})
+    return base.with_frame("demand", demand)
 
