@@ -80,7 +80,8 @@ jobs:
       - name: Ensure Conda test dependencies
         if: steps.env-select.outputs.use-conda == 'true'
         run: |
-          conda install -n bluesky-env -y pandas pytest pytest-cov
+          conda install -n base -y mamba
+          mamba install -n bluesky-env -y pandas pytest pytest-cov
 
       - name: Show Python diagnostics
         run: |
