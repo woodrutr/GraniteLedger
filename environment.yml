@@ -1,0 +1,15 @@
+name: bluesky-env
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pandas
+  - pytest
+  - pyomo
+  - sympy
+  - matplotlib
+  - networkx
+  - pip
+  - pip:
+      - mypy
+      - ruff
