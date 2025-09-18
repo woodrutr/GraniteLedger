@@ -5,19 +5,37 @@ on:
   pull_request:
 
 jobs:
-  unit-tests:
-    name: Unit Tests (Python 3.12)
+  lint-test:
+    name: Lint and Test (Python 3.12)
     runs-on: ubuntu-latest
-
     defaults:
       run:
         shell: bash -l {0}
+    env:
+      PIP_CACHE_DIR: ${{ github.workspace }}/.pip
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up Conda
+      - name: Prepare cache directories
+        run: |
+          mkdir -p .pip
+          mkdir -p .pytest_cache
+
+      - name: Restore pip and pytest caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            .pip
+            .pytest_cache
+          key: ${{ runner.os }}-py312-${{ hashFiles('pyproject.toml', 'environment.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-py312-
+
+      - name: Set up Conda environment
+        id: setup-conda
+        continue-on-error: true
         uses: conda-incubator/setup-miniconda@v3
         with:
           auto-update-conda: true
@@ -25,26 +43,36 @@ jobs:
           environment-file: environment.yml
           activate-environment: bluesky-env
 
-      - name: Cache Conda packages
-        uses: actions/cache@v4
-        with:
-          path: ~/.conda/pkgs
-          key: ${{ runner.os }}-conda-3.12-${{ hashFiles('environment.yml') }}
-          restore-keys: |
-            ${{ runner.os }}-conda-
-
       - name: Show Conda diagnostics
+        if: steps.setup-conda.outcome == 'success'
         run: |
           conda info
           conda list
           python --version
 
-      - name: Run unit tests
-        run: pytest -q --junitxml=pytest.xml
-
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v4
+      - name: Set up Python fallback
+        if: steps.setup-conda.outcome != 'success'
+        id: setup-python-fallback
+        uses: actions/setup-python@v5
         with:
-          name: pytest-results-3.12
-          path: pytest.xml
+          python-version: '3.12'
+
+      - name: Install fallback dependencies
+        if: steps.setup-conda.outcome != 'success'
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas pytest pytest-cov pyomo sympy matplotlib networkx mypy ruff
+
+      - name: Run ruff
+        if: steps.setup-conda.outcome == 'success' || steps.setup-python-fallback.outcome == 'success'
+        run: ruff check .
+
+      - name: Run mypy
+        if: steps.setup-conda.outcome == 'success' || steps.setup-python-fallback.outcome == 'success'
+        run: mypy --config-file pyproject.toml
+
+      - name: Run pytest with coverage
+        if: steps.setup-conda.outcome == 'success' || steps.setup-python-fallback.outcome == 'success'
+        env:
+          PYTHONWARNINGS: error
+        run: pytest -q --cov=engine --cov=dispatch --cov=policy --cov-report=term-missing --cov-fail-under=80

@@ -5,6 +5,7 @@ dependencies:
   - python=3.12
   - pandas
   - pytest
+  - pytest-cov
   - pyomo
   - sympy
   - matplotlib
