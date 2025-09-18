@@ -8,6 +8,7 @@ import pytest
 
 pd = pytest.importorskip('pandas')
 
+from dispatch.interface import DispatchResult
 from dispatch.lp_network import solve_from_frames
 from dispatch.lp_single import HOURS_PER_YEAR
 from io_loader import Frames
@@ -54,6 +55,12 @@ def test_congestion_leads_to_price_separation() -> None:
             {'fuel': 'south_supply', 'covered': True},
         ]
     )
+    coverage = pd.DataFrame(
+        [
+            {'region': 'north', 'covered': True},
+            {'region': 'south', 'covered': True},
+        ]
+    )
     transmission = pd.DataFrame(
         [{'from_region': 'north', 'to_region': 'south', 'limit_mw': 15.0}]
     )
@@ -64,6 +71,7 @@ def test_congestion_leads_to_price_separation() -> None:
             'units': units,
             'fuels': fuels,
             'transmission': transmission,
+            'coverage': coverage,
         }
     )
 
@@ -122,6 +130,12 @@ def test_imports_increase_with_carbon_price() -> None:
             {'fuel': 'external_supply', 'covered': False},
         ]
     )
+    coverage = pd.DataFrame(
+        [
+            {'region': 'covered', 'covered': True},
+            {'region': 'external', 'covered': False},
+        ]
+    )
     transmission = pd.DataFrame(
         [{'from_region': 'covered', 'to_region': 'external', 'limit_mw': 200.0}]
     )
@@ -132,19 +146,50 @@ def test_imports_increase_with_carbon_price() -> None:
             'units': units,
             'fuels': fuels,
             'transmission': transmission,
+            'coverage': coverage,
         }
     )
 
     low_price = solve_from_frames(frames, 2030, allowance_cost=0.0)
     high_price = solve_from_frames(frames, 2030, allowance_cost=40.0)
 
-    covered_load = demand.loc[demand['region'] == 'covered', 'demand_mwh'].iloc[0]
-    imports_low = covered_load - low_price.gen_by_fuel['covered_supply']
-    imports_high = covered_load - high_price.gen_by_fuel['covered_supply']
-
-    assert imports_low == pytest.approx(0.0, abs=1e-6)
-    assert imports_high > imports_low
+    assert low_price.imports_to_covered == pytest.approx(0.0, abs=1e-6)
+    assert high_price.imports_to_covered > low_price.imports_to_covered
+    assert high_price.exports_from_covered == pytest.approx(0.0, abs=1e-6)
+    assert high_price.region_coverage['covered'] is True
+    assert high_price.region_coverage['external'] is False
     assert high_price.region_prices['covered'] == pytest.approx(30.0, rel=1e-4)
     assert high_price.region_prices['external'] == pytest.approx(30.0, rel=1e-4)
     assert high_price.emissions_tons < low_price.emissions_tons
-    assert sum(high_price.emissions_by_region.values()) == pytest.approx(high_price.emissions_tons)
+    # codex branch assertion
+    assert sum(high_price.emissions_by_region.values()) == pytest.approx(
+        high_price.emissions_tons
+    )
+
+
+def test_leakage_percentage_helper() -> None:
+    """The convenience leakage calculator should follow the documented formula."""
+
+    baseline = DispatchResult(
+        gen_by_fuel={"coal": 60.0},
+        region_prices={"region": 25.0},
+        emissions_tons=0.0,
+        emissions_by_region={"region": 0.0},
+        flows={},
+        generation_by_region={"region": 60.0},
+        generation_by_coverage={"covered": 40.0, "non_covered": 20.0},
+    )
+
+    scenario = DispatchResult(
+        gen_by_fuel={"coal": 50.0, "gas": 30.0},
+        region_prices={"region": 30.0},
+        emissions_tons=0.0,
+        emissions_by_region={"region": 0.0},
+        flows={},
+        generation_by_region={"region": 80.0},
+        generation_by_coverage={"covered": 45.0, "non_covered": 35.0},
+    )
+
+    expected = 100.0 * (35.0 - 20.0) / (80.0 - 60.0)
+    assert scenario.leakage_percent(baseline) == pytest.approx(expected)
+    )

@@ -62,7 +62,11 @@ def _validate_units_df(units_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _dispatch_merit_order(
-    units_df: pd.DataFrame, load_mwh: float, allowance_cost: float
+    units_df: pd.DataFrame,
+    load_mwh: float,
+    allowance_cost: float,
+    *,
+    allowance_covered: bool = True,
 ) -> dict:
     """Run the merit-order dispatch returning detailed information for testing."""
 
@@ -78,7 +82,7 @@ def _dispatch_merit_order(
         marginal_cost=(
             units["vom_per_mwh"]
             + units["hr_mmbtu_per_mwh"] * units["fuel_price_per_mmbtu"]
-            + units["ef_ton_per_mwh"] * allowance
+            + (units["ef_ton_per_mwh"] * allowance if allowance_covered else 0.0)
         )
     )
 
@@ -139,6 +143,28 @@ def _aggregate_generation_by_fuel(generation: pd.Series, units: pd.DataFrame) ->
     return {str(label): float(value) for label, value in grouped.items()}
 
 
+def _aggregate_generation_by_region(
+    generation: pd.Series, units: pd.DataFrame
+) -> Mapping[str, float]:
+    """Aggregate dispatch by region label if available."""
+
+    tol_filtered = generation[generation > _DISPATCH_TOLERANCE]
+    if tol_filtered.empty:
+        return {}
+
+    if "region" in units.columns:
+        regions = units.loc[tol_filtered.index, "region"]
+        if regions.isna().any():
+            fallback = pd.Series(_DEFAULT_REGION, index=tol_filtered.index)
+            regions = regions.fillna(fallback)
+        regions = regions.astype(str)
+    else:
+        regions = pd.Series(_DEFAULT_REGION, index=tol_filtered.index)
+
+    grouped = tol_filtered.groupby(regions).sum()
+    return {str(label): float(value) for label, value in grouped.items()}
+
+
 def solve(
     year: int,
     allowance_cost: float,
@@ -152,16 +178,38 @@ def solve(
     frames_obj = Frames.coerce(frames)
     units = frames_obj.units()
     demand = frames_obj.demand_for_year(year)
+    coverage_map = frames_obj.coverage_for_year(year)
+
+    if "region" in units.columns and not units["region"].isna().all():
+        unit_regions = {str(region) for region in units["region"].unique()}
+    else:
+        unit_regions = {_DEFAULT_REGION}
+
+    coverage_flags = {region: bool(coverage_map.get(region, True)) for region in unit_regions}
+    allowance_covered = True
+    if coverage_flags:
+        unique_flags = set(coverage_flags.values())
+        if len(unique_flags) > 1:
+            raise ValueError('single-region dispatch requires uniform coverage status')
+        allowance_covered = unique_flags.pop()
+
     load_value = sum(demand.values())
 
-    dispatch = _dispatch_merit_order(units, float(load_value), allowance_cost)
+    dispatch = _dispatch_merit_order(
+        units,
+        float(load_value),
+        allowance_cost,
+        allowance_covered=allowance_covered,
+    )
 
     generation = dispatch["generation"]
     unit_data = dispatch["units"]
     gen_by_fuel = _aggregate_generation_by_fuel(generation, unit_data)
+    gen_by_region = _aggregate_generation_by_region(generation, unit_data)
 
     region_prices = {_DEFAULT_REGION: float(dispatch["price"])}
 
+    # emissions by region (codex branch)
     emissions_series = generation * unit_data["ef_ton_per_mwh"]
     emissions_by_region_series = emissions_series.groupby(unit_data["region"]).sum()
     emissions_by_region = {
@@ -170,12 +218,38 @@ def solve(
     if not emissions_by_region:
         emissions_by_region = {_DEFAULT_REGION: 0.0}
 
+    # coverage and imports/exports (main branch)
+    total_generation = float(generation.sum())
+    generation_by_coverage = {"covered": 0.0, "non_covered": 0.0}
+    coverage_key = "covered" if allowance_covered else "non_covered"
+    generation_by_coverage[coverage_key] = total_generation
+
+    imports_to_covered = 0.0
+    exports_from_covered = 0.0
+    region_coverage: Dict[str, bool] = {}
+    for region, load in demand.items():
+        region_str = str(region)
+        covered = bool(coverage_map.get(region_str, allowance_covered))
+        region_coverage[region_str] = covered
+        generation_region = gen_by_region.get(region_str, 0.0)
+        net_import = load - generation_region
+        if covered:
+            if net_import > _DISPATCH_TOLERANCE:
+                imports_to_covered += net_import
+            elif net_import < -_DISPATCH_TOLERANCE:
+                exports_from_covered += -net_import
+
     return DispatchResult(
         gen_by_fuel=gen_by_fuel,
         region_prices=region_prices,
         emissions_tons=float(dispatch["emissions_tons"]),
         emissions_by_region=emissions_by_region,
-        flows={},
+        flows={},  # no transmission flows tracked in this solver path
+        generation_by_region=gen_by_region,
+        generation_by_coverage=generation_by_coverage,
+        imports_to_covered=imports_to_covered,
+        exports_from_covered=exports_from_covered,
+        region_coverage=region_coverage,
     )
 
 
@@ -183,6 +257,7 @@ __all__ = [
     "DispatchResult",
     "HOURS_PER_YEAR",
     "_aggregate_generation_by_fuel",
+    "_aggregate_generation_by_region",
     "_dispatch_merit_order",
     "_validate_units_df",
     "solve",

@@ -29,6 +29,27 @@ def test_demand_validation_requires_unique_pairs() -> None:
         frames.demand()
 
 
+def test_region_coverage_defaults_and_overrides() -> None:
+    """Coverage defaults should apply unless a year-specific override exists."""
+
+    coverage = pd.DataFrame(
+        [
+            {'region': 'north', 'covered': True},
+            {'region': 'south', 'covered': False},
+            {'region': 'south', 'year': 2035, 'covered': True},
+        ]
+    )
+
+    frames = Frames({'coverage': coverage})
+
+    default = frames.coverage_for_year(2030)
+    override = frames.coverage_for_year(2035)
+
+    assert default['north'] is True
+    assert default['south'] is False
+    assert override['south'] is True
+
+
 def test_policy_spec_round_trip() -> None:
     """The policy accessor should convert to an :class:`RGGIPolicyAnnual`."""
 
