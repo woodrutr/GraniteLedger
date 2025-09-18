@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Mapping, Optional
+from typing import Any, Dict, Mapping, Optional, cast
 
-import pandas as pd
+try:  # pragma: no cover - exercised when pandas missing
+    import pandas as pd
+except ImportError:  # pragma: no cover - optional dependency
+    pd = cast(Any, None)
 
 from io_loader import Frames
 
@@ -25,8 +28,19 @@ _REQUIRED_COLUMNS = {
 }
 
 
+def _ensure_pandas() -> None:
+    """Ensure :mod:`pandas` is available before continuing."""
+
+    if pd is None:  # pragma: no cover - helper exercised indirectly
+        raise ImportError(
+            "pandas is required for dispatch.lp_single; install it with `pip install pandas`."
+        )
+
+
 def _validate_units_df(units_df: pd.DataFrame) -> pd.DataFrame:
     """Return a cleaned copy of the units data with numeric columns enforced."""
+
+    _ensure_pandas()
 
     if not isinstance(units_df, pd.DataFrame):
         raise TypeError("units must be provided as a pandas DataFrame")
@@ -69,6 +83,8 @@ def _dispatch_merit_order(
     allowance_covered: bool = True,
 ) -> dict:
     """Run the merit-order dispatch returning detailed information for testing."""
+
+    _ensure_pandas()
 
     units = _validate_units_df(units_df)
 
@@ -126,6 +142,8 @@ def _dispatch_merit_order(
 def _aggregate_generation_by_fuel(generation: pd.Series, units: pd.DataFrame) -> Mapping[str, float]:
     """Aggregate dispatch by fuel label if available, falling back to unit IDs."""
 
+    _ensure_pandas()
+
     tol_filtered = generation[generation > _DISPATCH_TOLERANCE]
 
     if tol_filtered.empty:
@@ -147,6 +165,8 @@ def _aggregate_generation_by_region(
     generation: pd.Series, units: pd.DataFrame
 ) -> Mapping[str, float]:
     """Aggregate dispatch by region label if available."""
+
+    _ensure_pandas()
 
     tol_filtered = generation[generation > _DISPATCH_TOLERANCE]
     if tol_filtered.empty:
@@ -171,6 +191,8 @@ def solve(
     frames: Optional[Frames | Mapping[str, pd.DataFrame]] = None,
 ) -> DispatchResult:
     """Solve the single-region dispatch problem using the provided frame data."""
+
+    _ensure_pandas()
 
     if frames is None:
         raise ValueError("frames providing demand and units must be supplied")

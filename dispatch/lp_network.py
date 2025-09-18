@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from itertools import combinations, product
-from typing import Dict, Iterable, List, Mapping, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple, cast
 
-import pandas as pd
+try:  # pragma: no cover - optional dependency guard
+    import pandas as pd
+except ImportError:  # pragma: no cover - optional dependency
+    pd = cast(Any, None)
 
 from io_loader import Frames
 
@@ -14,6 +17,15 @@ from .interface import DispatchResult
 from .lp_single import HOURS_PER_YEAR
 
 _TOL = 1e-9
+
+
+def _ensure_pandas() -> None:
+    """Ensure :mod:`pandas` is available before executing pandas-dependent logic."""
+
+    if pd is None:  # pragma: no cover - helper exercised indirectly
+        raise ImportError(
+            "pandas is required for dispatch.lp_network; install it with `pip install pandas`."
+        )
 
 
 @dataclass(frozen=True)
@@ -433,59 +445,63 @@ def solve_from_frames(
     year: int,
     allowance_cost: float,
 ) -> DispatchResult:
-    """Solve the network dispatch problem using a :class:`Frames` container."""
+    """Solve the dispatch problem using frame-based inputs."""
+
+    _ensure_pandas()
 
     frames_obj = Frames.coerce(frames)
 
-    demand = frames_obj.demand_for_year(int(year))
-    coverage_map = {str(region): bool(flag) for region, flag in frames_obj.coverage_for_year(int(year)).items()}
+    load_mapping = {
+        str(region): float(value)
+        for region, value in frames_obj.demand_for_year(year).items()
+    }
 
     units = frames_obj.units()
     fuels = frames_obj.fuels()
-    transmission = frames_obj.transmission()
+    coverage_by_fuel = {
+        str(row.fuel): bool(row.covered) for row in fuels.itertuples(index=False)
+    }
+    coverage_by_region = frames_obj.coverage_for_year(year)
 
-    fuel_coverage = {str(row.fuel): bool(row.covered) for row in fuels.itertuples(index=False)}
-
-    generators: List[GeneratorSpec] = []
+    generators: list[GeneratorSpec] = []
     for row in units.itertuples(index=False):
-        fuel_label = getattr(row, 'fuel', str(row.unit_id))
-        region = str(getattr(row, 'region', 'default'))
-        fuel_flag = bool(fuel_coverage.get(str(fuel_label), True))
-        region_flag = bool(coverage_map.get(region, True))
-        unit_flag = getattr(row, 'covered', None)
-        if unit_flag is not None:
-            region_flag = region_flag and bool(unit_flag)
-        variable_cost = float(
-            row.vom_per_mwh + row.hr_mmbtu_per_mwh * row.fuel_price_per_mmbtu
-        )
+        region_raw = row.region
+        region = str(region_raw) if region_raw is not None and not pd.isna(region_raw) else "default"
+        fuel = str(row.fuel)
+        if coverage_by_region:
+            covered = bool(coverage_by_region.get(region, True))
+        else:
+            covered = coverage_by_fuel.get(fuel, True)
         capacity = float(row.cap_mw) * float(row.availability) * HOURS_PER_YEAR
+        variable_cost = float(row.vom_per_mwh) + float(row.hr_mmbtu_per_mwh) * float(
+            row.fuel_price_per_mmbtu
+        )
+        emission_rate = float(row.ef_ton_per_mwh)
+
         generators.append(
             GeneratorSpec(
                 name=str(row.unit_id),
                 region=region,
-                fuel=str(fuel_label),
+                fuel=fuel,
                 variable_cost=variable_cost,
                 capacity=capacity,
-                emission_rate=float(row.ef_ton_per_mwh),
-                covered=fuel_flag and region_flag,
+                emission_rate=emission_rate,
+                covered=bool(covered),
             )
         )
 
-    interfaces: Dict[Tuple[str, str], float] = {}
-    for row in transmission.itertuples(index=False):
-        limit_value = float(row.limit_mw)
-        if pd.isna(limit_value) or limit_value < 0.0:
-            continue
-        limit_mwh = limit_value * HOURS_PER_YEAR
-        interfaces[(str(row.from_region), str(row.to_region))] = limit_mwh
+    interfaces: dict[tuple[str, str], float] = {}
+    for row in frames_obj.transmission().itertuples(index=False):
+        limit = float(row.limit_mw) * HOURS_PER_YEAR
+        interfaces[(str(row.from_region), str(row.to_region))] = limit
 
     return solve(
-        load_by_region=demand,
-        generators=generators,
-        interfaces=interfaces,
-        allowance_cost=float(allowance_cost),
-        region_coverage=coverage_map,
+        load_mapping,
+        generators,
+        interfaces,
+        allowance_cost,
+        region_coverage=coverage_by_region,
     )
 
 
-__all__ = ['DispatchResult', 'GeneratorSpec', 'solve', 'solve_from_frames']
+__all__ = ["GeneratorSpec", "solve", "solve_from_frames"]
