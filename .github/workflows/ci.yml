@@ -9,31 +9,111 @@ on:
 jobs:
   lint-test:
     runs-on: ubuntu-latest
-
+    env:
+      PIP_CACHE_DIR: ${{ github.workspace }}/.pip
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Prepare cache directories
+        run: |
+          mkdir -p .pip
+          mkdir -p .pytest_cache
+
+      - name: Cache pip and pytest data
+        uses: actions/cache@v4
+        with:
+          path: |
+            ./.pip
+            ./.pytest_cache
+          key: ${{ runner.os }}-pip-py312-${{ hashFiles('environment.yml', 'pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Cache Conda packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.conda/pkgs
+          key: ${{ runner.os }}-conda-${{ hashFiles('environment.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-conda-
+
+      - name: Set up Conda environment
+        id: setup-conda
+        continue-on-error: true
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          auto-update-conda: true
+          environment-file: environment.yml
+          activate-environment: bluesky-env
+
+      - name: Choose execution environment
+        id: env-select
+        run: |
+          if [ "${{ steps.setup-conda.outcome }}" = "success" ]; then
+            echo "use-conda=true" >> "$GITHUB_OUTPUT"
+            echo "USING_CONDA=true" >> "$GITHUB_ENV"
+            echo "CMD_PREFIX=conda run --no-capture-output -n bluesky-env" >> "$GITHUB_ENV"
+            echo "Using Conda environment"
+          else
+            echo "use-conda=false" >> "$GITHUB_OUTPUT"
+            echo "USING_CONDA=false" >> "$GITHUB_ENV"
+            echo "CMD_PREFIX=" >> "$GITHUB_ENV"
+            echo "Falling back to pip environment"
+          fi
+
+      - name: Set up Python fallback
+        if: steps.env-select.outputs.use-conda == 'false'
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-          cache: 'pip'
-          cache-dependency-path: |
-            pyproject.toml
+          python-version: '3.12'
 
-      - name: Install dependencies
+      - name: Install dependencies (pip fallback)
+        if: steps.env-select.outputs.use-conda == 'false'
         run: |
           python -m pip install --upgrade pip
-          pip install mypy ruff pytest
+          python -m pip install numpy pandas pyomo sympy matplotlib networkx scipy pytest pytest-cov mypy ruff
 
-      - name: ruff lint
-        run: ruff check .
+      - name: Show Python diagnostics
+        run: |
+          if [ "$USING_CONDA" = "true" ]; then
+            conda run --no-capture-output -n bluesky-env python --version
+            conda run --no-capture-output -n bluesky-env pip --version
+          else
+            python --version
+            pip --version
+          fi
 
-      - name: mypy
-        run: mypy --config-file pyproject.toml
+      - name: Ruff lint
+        run: |
+          if [ "$USING_CONDA" = "true" ]; then
+            conda run --no-capture-output -n bluesky-env ruff check .
+          else
+            ruff check .
+          fi
 
-      - name: pytest
+      - name: Mypy
+        run: |
+          if [ "$USING_CONDA" = "true" ]; then
+            conda run --no-capture-output -n bluesky-env mypy --config-file pyproject.toml
+          else
+            mypy --config-file pyproject.toml
+          fi
+
+      - name: Pytest
         env:
           PYTHONWARNINGS: error
-        run: pytest
+        run: |
+          if [ "$USING_CONDA" = "true" ]; then
+            conda run --no-capture-output -n bluesky-env pytest -q --cov=engine --cov=dispatch --cov=policy --cov-report=term-missing --cov-fail-under=80
+          else
+            pytest -q --cov=engine --cov=dispatch --cov=policy --cov-report=term-missing --cov-fail-under=80
+          fi
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: .coverage
+          if-no-files-found: ignore
