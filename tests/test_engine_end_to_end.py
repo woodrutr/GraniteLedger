@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import importlib
+
 import pytest
 
 pd = pytest.importorskip('pandas')
 
-from engine.run_loop import run_end_to_end_from_frames
-from tests.fixtures.dispatch_single_minimal import baseline_frames
+run_end_to_end_from_frames = importlib.import_module('engine.run_loop').run_end_to_end_from_frames
+baseline_frames = importlib.import_module('tests.fixtures.dispatch_single_minimal').baseline_frames
 
 
 YEARS = [2025, 2026, 2027]

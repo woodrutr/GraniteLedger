@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
+import importlib
 from typing import Iterable
 
 import pytest
 
-from dispatch.interface import DispatchResult
-from dispatch.lp_single import _dispatch_merit_order, solve
-from tests.fixtures.dispatch_single_minimal import baseline_frames, baseline_units, infeasible_frames
+pd = pytest.importorskip('pandas')
+
+DispatchResult = importlib.import_module('dispatch.interface').DispatchResult
+_lp_single = importlib.import_module('dispatch.lp_single')
+_dispatch_merit_order = _lp_single._dispatch_merit_order
+solve = _lp_single.solve
+_dispatch_fixtures = importlib.import_module('tests.fixtures.dispatch_single_minimal')
+baseline_frames = _dispatch_fixtures.baseline_frames
+baseline_units = _dispatch_fixtures.baseline_units
+infeasible_frames = _dispatch_fixtures.infeasible_frames
 
 
 def _collect_emissions(costs: Iterable[float]) -> list[float]:

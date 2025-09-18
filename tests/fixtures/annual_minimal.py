@@ -4,7 +4,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Iterable, Mapping
 
-import pandas as pd
+import pytest
+
+pd = pytest.importorskip('pandas')
 
 from policy.allowance_annual import RGGIPolicyAnnual
 

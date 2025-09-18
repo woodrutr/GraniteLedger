@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
+import importlib
 import math
 
 import pytest
 
 pd = pytest.importorskip('pandas')
 
-from dispatch.interface import DispatchResult
-from dispatch.lp_network import solve_from_frames
-from dispatch.lp_single import HOURS_PER_YEAR
-from io_loader import Frames
+DispatchResult = importlib.import_module('dispatch.interface').DispatchResult
+solve_from_frames = importlib.import_module('dispatch.lp_network').solve_from_frames
+HOURS_PER_YEAR = importlib.import_module('dispatch.lp_single').HOURS_PER_YEAR
+Frames = importlib.import_module('io_loader').Frames
 
 
 def test_congestion_leads_to_price_separation() -> None:
@@ -167,6 +168,74 @@ def test_imports_increase_with_carbon_price() -> None:
     )
 
 
+def test_region_coverage_overrides_fuel_flags() -> None:
+    """Units in uncovered regions should not pay allowance costs even if their fuel is covered."""
+
+    demand = pd.DataFrame(
+        [
+            {'year': 2035, 'region': 'covered', 'demand_mwh': 80.0 * HOURS_PER_YEAR},
+            {'year': 2035, 'region': 'external', 'demand_mwh': 0.0},
+        ]
+    )
+    units = pd.DataFrame(
+        [
+            {
+                'unit_id': 'covered_clean',
+                'region': 'covered',
+                'fuel': 'clean',
+                'cap_mw': 200.0,
+                'availability': 1.0,
+                'hr_mmbtu_per_mwh': 0.0,
+                'vom_per_mwh': 25.0,
+                'fuel_price_per_mmbtu': 0.0,
+                'ef_ton_per_mwh': 0.0,
+            },
+            {
+                'unit_id': 'external_coal',
+                'region': 'external',
+                'fuel': 'coal',
+                'cap_mw': 200.0,
+                'availability': 1.0,
+                'hr_mmbtu_per_mwh': 0.0,
+                'vom_per_mwh': 15.0,
+                'fuel_price_per_mmbtu': 0.0,
+                'ef_ton_per_mwh': 1.0,
+            },
+        ]
+    )
+    fuels = pd.DataFrame(
+        [
+            {'fuel': 'clean', 'covered': True},
+            {'fuel': 'coal', 'covered': True},
+        ]
+    )
+    coverage = pd.DataFrame(
+        [
+            {'region': 'covered', 'covered': True},
+            {'region': 'external', 'covered': False},
+        ]
+    )
+    transmission = pd.DataFrame(
+        [{'from_region': 'external', 'to_region': 'covered', 'limit_mw': 500.0}]
+    )
+
+    frames = Frames(
+        {
+            'demand': demand,
+            'units': units,
+            'fuels': fuels,
+            'transmission': transmission,
+            'coverage': coverage,
+        }
+    )
+
+    result = solve_from_frames(frames, 2035, allowance_cost=50.0)
+
+    assert result.region_prices['covered'] == pytest.approx(15.0, rel=1e-4)
+    assert result.generation_by_region['external'] > 0.0
+    assert result.generation_by_coverage['non_covered'] > 0.0
+
+
 def test_leakage_percentage_helper() -> None:
     """The convenience leakage calculator should follow the documented formula."""
 
@@ -192,4 +261,3 @@ def test_leakage_percentage_helper() -> None:
 
     expected = 100.0 * (35.0 - 20.0) / (80.0 - 60.0)
     assert scenario.leakage_percent(baseline) == pytest.approx(expected)
-    )

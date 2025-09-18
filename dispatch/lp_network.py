@@ -4,9 +4,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from itertools import combinations, product
-from typing import Dict, Iterable, List, Mapping, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple, TYPE_CHECKING
 
-import pandas as pd
+try:  # pragma: no cover - optional dependency
+    import pandas as _PANDAS_MODULE  # type: ignore[import-not-found]
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    _PANDAS_MODULE = None
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    import pandas as pd
 
 from io_loader import Frames
 
@@ -14,6 +20,16 @@ from .interface import DispatchResult
 from .lp_single import HOURS_PER_YEAR
 
 _TOL = 1e-9
+
+PANDAS_REQUIRED_MESSAGE = 'pandas is required to operate the network dispatch engine.'
+
+
+def _ensure_pandas() -> Any:
+    """Return the pandas module or raise an informative error."""
+
+    if _PANDAS_MODULE is None:  # pragma: no cover - exercised via tests
+        raise ModuleNotFoundError(PANDAS_REQUIRED_MESSAGE)
+    return _PANDAS_MODULE
 
 
 @dataclass(frozen=True)
@@ -426,3 +442,74 @@ def solve(
         exports_from_covered=exports_from_covered,
         region_coverage=region_coverage_result,
     )
+
+
+def solve_from_frames(
+    frames: Frames | Mapping[str, 'pd.DataFrame'],
+    year: int,
+    allowance_cost: float,
+) -> DispatchResult:
+    """Solve the dispatch problem using frame-based inputs."""
+
+    pd = _ensure_pandas()
+
+    frames_obj = Frames.coerce(frames)
+
+    load_mapping = {
+        str(region): float(value)
+        for region, value in frames_obj.demand_for_year(year).items()
+    }
+
+    units = frames_obj.units()
+    fuels = frames_obj.fuels()
+    coverage_by_fuel = {
+        str(row.fuel): bool(row.covered) for row in fuels.itertuples(index=False)
+    }
+    coverage_by_region = frames_obj.coverage_for_year(year)
+
+    generators: list[GeneratorSpec] = []
+    for row in units.itertuples(index=False):
+        region_raw = row.region
+        region = (
+            str(region_raw)
+            if region_raw is not None and not pd.isna(region_raw)
+            else 'default'
+        )
+        fuel = str(row.fuel)
+        if coverage_by_region:
+            covered = bool(coverage_by_region.get(region, True))
+        else:
+            covered = coverage_by_fuel.get(fuel, True)
+        capacity = float(row.cap_mw) * float(row.availability) * HOURS_PER_YEAR
+        variable_cost = float(row.vom_per_mwh) + float(row.hr_mmbtu_per_mwh) * float(
+            row.fuel_price_per_mmbtu
+        )
+        emission_rate = float(row.ef_ton_per_mwh)
+
+        generators.append(
+            GeneratorSpec(
+                name=str(row.unit_id),
+                region=region,
+                fuel=fuel,
+                variable_cost=variable_cost,
+                capacity=capacity,
+                emission_rate=emission_rate,
+                covered=bool(covered),
+            )
+        )
+
+    interfaces: dict[tuple[str, str], float] = {}
+    for row in frames_obj.transmission().itertuples(index=False):
+        limit = float(row.limit_mw) * HOURS_PER_YEAR
+        interfaces[(str(row.from_region), str(row.to_region))] = limit
+
+    return solve(
+        load_mapping,
+        generators,
+        interfaces,
+        allowance_cost,
+        region_coverage=coverage_by_region,
+    )
+
+
+__all__ = ['GeneratorSpec', 'solve', 'solve_from_frames']

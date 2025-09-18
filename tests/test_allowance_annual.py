@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+import importlib
+
 import pytest
 
-from policy.allowance_annual import AllowanceAnnual
-from tests.fixtures.annual_minimal import LinearDispatch, policy_for_shortage, policy_three_year
+pd = pytest.importorskip('pandas')
+
+AllowanceAnnual = importlib.import_module('policy.allowance_annual').AllowanceAnnual
+_fixtures = importlib.import_module('tests.fixtures.annual_minimal')
+LinearDispatch = _fixtures.LinearDispatch
+policy_for_shortage = _fixtures.policy_for_shortage
+policy_three_year = _fixtures.policy_three_year
+run_annual_fixed_point = importlib.import_module('engine.run_loop').run_annual_fixed_point
 
 
 def test_clear_year_respects_floor_and_tracks_bank():
@@ -82,8 +90,6 @@ def test_true_up_shortage_if_bank_insufficient():
 def test_run_loop_iterates_fixed_point():
     policy = policy_three_year()
     dispatch = LinearDispatch(base={2025: 260.0, 2026: 240.0, 2027: 180.0}, slope={2025: 5.0, 2026: 4.0, 2027: 3.0})
-
-    from engine.run_loop import run_annual_fixed_point
 
     outputs = run_annual_fixed_point(policy, dispatch, years=[2025, 2026, 2027], price_initial=0.0)
 
