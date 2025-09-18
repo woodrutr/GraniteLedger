@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from itertools import combinations, product
-from typing import Dict, Iterable, List, Mapping, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple, cast
 
-import pandas as pd
+try:  # pragma: no cover - optional dependency guard
+    import pandas as pd
+except ImportError:  # pragma: no cover - optional dependency
+    pd = cast(Any, None)
 
 from io_loader import Frames
 
@@ -14,6 +17,15 @@ from .interface import DispatchResult
 from .lp_single import HOURS_PER_YEAR
 
 _TOL = 1e-9
+
+
+def _ensure_pandas() -> None:
+    """Ensure :mod:`pandas` is available before executing pandas-dependent logic."""
+
+    if pd is None:  # pragma: no cover - helper exercised indirectly
+        raise ImportError(
+            "pandas is required for dispatch.lp_network; install it with `pip install pandas`."
+        )
 
 
 @dataclass(frozen=True)
@@ -434,6 +446,8 @@ def solve_from_frames(
     allowance_cost: float,
 ) -> DispatchResult:
     """Solve the dispatch problem using frame-based inputs."""
+
+    _ensure_pandas()
 
     frames_obj = Frames.coerce(frames)
 

@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+import importlib
+
 import pytest
 
 from policy.allowance_annual import AllowanceAnnual
-from tests.fixtures.annual_minimal import LinearDispatch, policy_for_shortage, policy_three_year
+
+pytest.importorskip("pandas")
+
+fixtures = importlib.import_module("tests.fixtures.annual_minimal")
+LinearDispatch = fixtures.LinearDispatch
+policy_for_shortage = fixtures.policy_for_shortage
+policy_three_year = fixtures.policy_three_year
 
 
 def test_clear_year_respects_floor_and_tracks_bank():

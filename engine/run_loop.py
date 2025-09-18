@@ -1,9 +1,14 @@
 """Annual fixed-point integration between dispatch and allowance market."""
 from __future__ import annotations
 
-from typing import Callable, Iterable, Mapping, Sequence
+from __future__ import annotations
 
-import pandas as pd
+from typing import Callable, Iterable, Mapping, Sequence, cast
+
+try:  # pragma: no cover - optional dependency guard
+    import pandas as pd
+except ImportError:  # pragma: no cover - optional dependency
+    pd = cast(object, None)
 
 from dispatch.lp_network import solve_from_frames as solve_network_from_frames
 from dispatch.lp_single import solve as solve_single
@@ -11,6 +16,15 @@ from engine.outputs import EngineOutputs
 from policy.allowance_annual import AllowanceAnnual, RGGIPolicyAnnual
 
 from io_loader import Frames
+
+
+def _ensure_pandas() -> None:
+    """Ensure :mod:`pandas` is available before running the engine."""
+
+    if pd is None:  # pragma: no cover - helper exercised indirectly
+        raise ImportError(
+            "pandas is required for engine.run_loop; install it with `pip install pandas`."
+        )
 
 
 def _coerce_years(policy: RGGIPolicyAnnual, years: Iterable[int] | None) -> list[int]:
@@ -54,6 +68,8 @@ def run_annual_fixed_point(
     relaxation: float = 0.5,
 ) -> dict[int, dict]:
     """Iterate annually to find a fixed-point between dispatch and allowance cost."""
+
+    _ensure_pandas()
 
     if not callable(dispatch_model):
         raise TypeError('dispatch_model must be callable with signature (year, price) -> emissions')
@@ -114,6 +130,8 @@ def _dispatch_from_frames(
 ) -> Callable[[int, float], object]:
     """Build a dispatch callback that solves using the frame container."""
 
+    _ensure_pandas()
+
     frames_obj = Frames.coerce(frames)
 
     if use_network:
@@ -137,6 +155,8 @@ def run_fixed_point_from_frames(
     use_network: bool = False,
 ) -> dict[int, dict]:
     """Run the annual fixed-point integration using in-memory frames."""
+
+    _ensure_pandas()
 
     frames_obj = Frames.coerce(frames)
     policy_spec = frames_obj.policy()
@@ -163,6 +183,8 @@ def _build_engine_outputs(
     dispatch_solver: Callable[[int, float], object],
 ) -> EngineOutputs:
     """Convert annual fixed-point results into structured engine outputs."""
+
+    _ensure_pandas()
 
     annual_rows: list[dict[str, object]] = []
     emissions_rows: list[dict[str, object]] = []
@@ -302,6 +324,8 @@ def run_end_to_end_from_frames(
     use_network: bool = False,
 ) -> EngineOutputs:
     """Run the integrated dispatch and allowance engine returning structured outputs."""
+
+    _ensure_pandas()
 
     frames_obj = Frames.coerce(frames)
     policy = frames_obj.policy().to_policy()
