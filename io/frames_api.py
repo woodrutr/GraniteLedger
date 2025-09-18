@@ -14,6 +14,7 @@ _DEMAND_KEY = "demand"
 _UNITS_KEY = "units"
 _FUELS_KEY = "fuels"
 _TRANSMISSION_KEY = "transmission"
+_COVERAGE_KEY = "coverage"
 _POLICY_KEY = "policy"
 
 
@@ -250,6 +251,57 @@ class Frames(Mapping[str, pd.DataFrame]):
             key = (str(row.from_region), str(row.to_region))
             limits[key] = float(row.limit_mw)
         return limits
+
+    def coverage(self) -> pd.DataFrame:
+        """Return validated coverage flags by region and (optionally) year."""
+
+        if _COVERAGE_KEY not in self._frames:
+            return pd.DataFrame(columns=['region', 'year', 'covered'])
+
+        df = self[_COVERAGE_KEY]
+        df = _validate_columns('coverage', df, ['region', 'covered'])
+
+        df['region'] = df['region'].astype(str)
+        df['covered'] = df['covered'].astype(bool)
+
+        if 'year' in df.columns:
+            year_series = df['year']
+            default_mask = year_series.isna()
+            if default_mask.any():
+                df.loc[default_mask, 'year'] = -1
+            df['year'] = _require_numeric('coverage', 'year', df['year']).astype(int)
+        else:
+            df = df.assign(year=-1)
+
+        duplicates = df.duplicated(subset=['region', 'year'])
+        if duplicates.any():
+            dupes = df.loc[duplicates, ['region', 'year']].to_records(index=False)
+            raise ValueError(
+                'coverage frame contains duplicate region/year combinations: '
+                + ', '.join(f'({region}, {year})' for region, year in dupes)
+            )
+
+        return df[['region', 'year', 'covered']].reset_index(drop=True)
+
+    def coverage_for_year(self, year: int) -> Dict[str, bool]:
+        """Return coverage flags for ``year`` keyed by model region."""
+
+        coverage = self.coverage()
+        if coverage.empty:
+            return {}
+
+        year = int(year)
+        mapping = {
+            str(row.region): bool(row.covered)
+            for row in coverage.itertuples(index=False)
+            if int(row.year) == -1
+        }
+
+        for row in coverage.itertuples(index=False):
+            if int(row.year) == year:
+                mapping[str(row.region)] = bool(row.covered)
+
+        return mapping
 
     def policy(self) -> PolicySpec:
         """Return the allowance policy specification."""
