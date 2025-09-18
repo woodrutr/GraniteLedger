@@ -1,7 +1,7 @@
-"""Dispatch engine interfaces and stub implementations."""
+"""Dispatch engine interfaces and implementations."""
 
 from .interface import DispatchResult
-from .stub import solve
+from .lp_single import solve
 
 __all__ = ['DispatchResult', 'solve']
 
