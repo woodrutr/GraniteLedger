@@ -11,6 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PIP_CACHE_DIR: ${{ github.workspace }}/.pip
+      CONDA_NO_PLUGINS: true
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -26,7 +27,7 @@ jobs:
           path: |
             ./.pip
             ./.pytest_cache
-          key: ${{ runner.os }}-pip-py312-${{ hashFiles('environment.yml', 'pyproject.toml') }}
+          key: ${{ runner.os }}-pip-py312-${{ hashFiles('environment.yml', 'pyproject.toml', 'requirements-dev.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-
 
@@ -43,7 +44,8 @@ jobs:
         continue-on-error: true
         uses: conda-incubator/setup-miniconda@v3
         with:
-          auto-update-conda: true
+          auto-update-conda: false
+          miniforge-version: "24.9.2-0"
           environment-file: environment.yml
           activate-environment: bluesky-env
 
@@ -72,7 +74,13 @@ jobs:
         if: steps.env-select.outputs.use-conda == 'false'
         run: |
           python -m pip install --upgrade pip
-          python -m pip install numpy pandas pyomo sympy matplotlib networkx scipy pytest pytest-cov mypy ruff
+          python -m pip install -r requirements-dev.txt
+          python -m pip install numpy pyomo sympy matplotlib networkx scipy
+
+      - name: Ensure Conda test dependencies
+        if: steps.env-select.outputs.use-conda == 'true'
+        run: |
+          conda install -n bluesky-env -y pandas pytest pytest-cov
 
       - name: Show Python diagnostics
         run: |
