@@ -308,6 +308,7 @@ def solve(
     costs: List[float] = []
     generator_refs: List[GeneratorSpec | None] = []
     generator_indices: List[int] = []
+    flow_indices: Dict[int, Tuple[str, str]] = {}
 
     inferred_region_coverage: Dict[str, bool] = {}
 
@@ -338,6 +339,7 @@ def solve(
         upper_bounds.append(limit)
         costs.append(0.0)
         generator_refs.append(None)
+        flow_indices[len(matrix_columns) - 1] = (region_a, region_b)
 
     matrix = [[column[idx] for column in matrix_columns] for idx in range(len(region_list))]
     rhs = [float(load_by_region.get(region, 0.0)) for region in region_list]
@@ -346,8 +348,12 @@ def solve(
 
     gen_by_fuel: Dict[str, float] = {}
     emissions_tons = 0.0
+    # initialize accumulators
+    emissions_by_region_totals: Dict[str, float] = {region: 0.0 for region in region_list}
     generation_by_region: Dict[str, float] = {region: 0.0 for region in region_list}
-    generation_by_coverage: Dict[str, float] = {'covered': 0.0, 'non_covered': 0.0}
+    generation_by_coverage: Dict[str, float] = {"covered": 0.0, "non_covered": 0.0}
+
+    # loop over generators
     for idx in generator_indices:
         generator = generator_refs[idx]
         assert generator is not None
@@ -355,10 +361,12 @@ def solve(
         gen_by_fuel.setdefault(generator.fuel, 0.0)
         gen_by_fuel[generator.fuel] += output
         emissions_tons += generator.emission_rate * output
+        emissions_by_region_totals[generator.region] += generator.emission_rate * output
         generation_by_region[generator.region] += output
-        coverage_key = 'covered' if generator.covered else 'non_covered'
+        coverage_key = "covered" if generator.covered else "non_covered"
         generation_by_coverage[coverage_key] += output
 
+    # compute coverage flags and trade flows
     region_coverage_result: Dict[str, bool] = {}
     imports_to_covered = 0.0
     exports_from_covered = 0.0
@@ -378,91 +386,43 @@ def solve(
             elif net_import < -_TOL:
                 exports_from_covered += -net_import
 
+    # region marginal prices
     delta = 1e-4
     region_prices: Dict[str, float] = {}
     for region, row_idx in region_index.items():
         rhs_up = rhs[:]
         rhs_up[row_idx] += delta
         try:
-            _, objective_up = _solve_dispatch_problem(matrix, rhs_up, lower_bounds, upper_bounds, costs)
+            _, objective_up = _solve_dispatch_problem(
+                matrix, rhs_up, lower_bounds, upper_bounds, costs
+            )
             price = (objective_up - objective) / delta
         except RuntimeError:
             rhs_down = rhs[:]
             rhs_down[row_idx] -= delta
-            _, objective_down = _solve_dispatch_problem(matrix, rhs_down, lower_bounds, upper_bounds, costs)
+            _, objective_down = _solve_dispatch_problem(
+                matrix, rhs_down, lower_bounds, upper_bounds, costs
+            )
             price = (objective - objective_down) / delta
         region_prices[region] = price
+
+    emissions_by_region = {
+        region: float(total) for region, total in emissions_by_region_totals.items()
+    }
+
+    flows: Dict[Tuple[str, str], float] = {
+        pair: float(solution[idx]) for idx, pair in flow_indices.items()
+    }
 
     return DispatchResult(
         gen_by_fuel=gen_by_fuel,
         region_prices=region_prices,
         emissions_tons=emissions_tons,
+        emissions_by_region=emissions_by_region,
+        flows=flows,
         generation_by_region=generation_by_region,
         generation_by_coverage=generation_by_coverage,
         imports_to_covered=imports_to_covered,
         exports_from_covered=exports_from_covered,
         region_coverage=region_coverage_result,
     )
-
-
-def solve_from_frames(
-    frames: Frames | Mapping[str, pd.DataFrame],
-    year: int,
-    allowance_cost: float,
-) -> DispatchResult:
-    """Solve the dispatch problem using frame-based inputs."""
-
-    frames_obj = Frames.coerce(frames)
-
-    load_mapping = {
-        str(region): float(value)
-        for region, value in frames_obj.demand_for_year(year).items()
-    }
-
-    units = frames_obj.units()
-    fuels = frames_obj.fuels()
-    coverage_by_fuel = {
-        str(row.fuel): bool(row.covered) for row in fuels.itertuples(index=False)
-    }
-    coverage_by_region = frames_obj.coverage_for_year(year)
-
-    generators: List[GeneratorSpec] = []
-    for row in units.itertuples(index=False):
-        region_raw = row.region
-        region = str(region_raw) if region_raw is not None and not pd.isna(region_raw) else 'default'
-        fuel = str(row.fuel)
-        if coverage_by_region:
-            covered = bool(coverage_by_region.get(region, True))
-        else:
-            covered = coverage_by_fuel.get(fuel, True)
-        capacity = float(row.cap_mw) * float(row.availability) * HOURS_PER_YEAR
-        variable_cost = float(row.vom_per_mwh) + float(row.hr_mmbtu_per_mwh) * float(row.fuel_price_per_mmbtu)
-        emission_rate = float(row.ef_ton_per_mwh)
-
-        generators.append(
-            GeneratorSpec(
-                name=str(row.unit_id),
-                region=region,
-                fuel=fuel,
-                variable_cost=variable_cost,
-                capacity=capacity,
-                emission_rate=emission_rate,
-                covered=bool(covered),
-            )
-        )
-
-    interfaces = {}
-    for row in frames_obj.transmission().itertuples(index=False):
-        limit = float(row.limit_mw) * HOURS_PER_YEAR
-        interfaces[(str(row.from_region), str(row.to_region))] = limit
-
-    return solve(
-        load_mapping,
-        generators,
-        interfaces,
-        allowance_cost,
-        region_coverage=coverage_by_region,
-    )
-
-
-__all__ = ['GeneratorSpec', 'solve', 'solve_from_frames']

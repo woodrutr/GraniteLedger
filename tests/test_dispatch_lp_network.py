@@ -6,7 +6,7 @@ import math
 
 import pytest
 
-import pandas as pd
+pd = pytest.importorskip('pandas')
 
 from dispatch.interface import DispatchResult
 from dispatch.lp_network import solve_from_frames
@@ -84,6 +84,9 @@ def test_congestion_leads_to_price_separation() -> None:
     assert result.gen_by_fuel['north_supply'] == pytest.approx(55.0 * HOURS_PER_YEAR)
     assert result.gen_by_fuel['south_supply'] == pytest.approx(45.0 * HOURS_PER_YEAR)
     assert math.isclose(result.emissions_tons, 0.0)
+    assert ('north', 'south') in result.flows
+    assert result.flows[('north', 'south')] == pytest.approx(15.0 * HOURS_PER_YEAR)
+    assert sum(result.emissions_by_region.values()) == pytest.approx(result.emissions_tons)
 
 
 def test_imports_increase_with_carbon_price() -> None:
@@ -158,26 +161,35 @@ def test_imports_increase_with_carbon_price() -> None:
     assert high_price.region_prices['covered'] == pytest.approx(30.0, rel=1e-4)
     assert high_price.region_prices['external'] == pytest.approx(30.0, rel=1e-4)
     assert high_price.emissions_tons < low_price.emissions_tons
+    # codex branch assertion
+    assert sum(high_price.emissions_by_region.values()) == pytest.approx(
+        high_price.emissions_tons
+    )
 
 
 def test_leakage_percentage_helper() -> None:
     """The convenience leakage calculator should follow the documented formula."""
 
     baseline = DispatchResult(
-        gen_by_fuel={'coal': 60.0},
-        region_prices={'region': 25.0},
+        gen_by_fuel={"coal": 60.0},
+        region_prices={"region": 25.0},
         emissions_tons=0.0,
-        generation_by_region={'region': 60.0},
-        generation_by_coverage={'covered': 40.0, 'non_covered': 20.0},
+        emissions_by_region={"region": 0.0},
+        flows={},
+        generation_by_region={"region": 60.0},
+        generation_by_coverage={"covered": 40.0, "non_covered": 20.0},
     )
 
     scenario = DispatchResult(
-        gen_by_fuel={'coal': 50.0, 'gas': 30.0},
-        region_prices={'region': 30.0},
+        gen_by_fuel={"coal": 50.0, "gas": 30.0},
+        region_prices={"region": 30.0},
         emissions_tons=0.0,
-        generation_by_region={'region': 80.0},
-        generation_by_coverage={'covered': 45.0, 'non_covered': 35.0},
+        emissions_by_region={"region": 0.0},
+        flows={},
+        generation_by_region={"region": 80.0},
+        generation_by_coverage={"covered": 45.0, "non_covered": 35.0},
     )
 
     expected = 100.0 * (35.0 - 20.0) / (80.0 - 60.0)
     assert scenario.leakage_percent(baseline) == pytest.approx(expected)
+    )

@@ -1,9 +1,8 @@
 """Interfaces for the simplified dispatch engine."""
 
 from __future__ import annotations
-
 from dataclasses import dataclass, field
-from typing import Dict
+from typing import Dict, Tuple
 
 
 @dataclass(frozen=True)
@@ -19,6 +18,13 @@ class DispatchResult:
         dollars per megawatt-hour.
     emissions_tons:
         Total carbon dioxide emissions from the dispatch solution measured in tons.
+    emissions_by_region:
+        Mapping of model region identifiers to their contribution to total
+        emissions measured in tons.
+    flows:
+        Net energy transfers between regions measured in megawatt-hours. Keys
+        are tuples ``(region_a, region_b)`` where positive values indicate a
+        flow from ``region_a`` to ``region_b``.
     generation_by_region:
         Mapping of regions to total generation produced within the region.
     generation_by_coverage:
@@ -35,6 +41,8 @@ class DispatchResult:
     gen_by_fuel: Dict[str, float]
     region_prices: Dict[str, float]
     emissions_tons: float
+    emissions_by_region: Dict[str, float] = field(default_factory=dict)
+    flows: Dict[Tuple[str, str], float] = field(default_factory=dict)
     generation_by_region: Dict[str, float] = field(default_factory=dict)
     generation_by_coverage: Dict[str, float] = field(default_factory=dict)
     imports_to_covered: float = 0.0
@@ -44,22 +52,19 @@ class DispatchResult:
     @property
     def total_generation(self) -> float:
         """Return the total dispatched generation in megawatt-hours."""
-
         return float(sum(self.gen_by_fuel.values()))
 
     @property
     def covered_generation(self) -> float:
         """Return total generation attributed to covered regions."""
-
-        return float(self.generation_by_coverage.get('covered', 0.0))
+        return float(self.generation_by_coverage.get("covered", 0.0))
 
     @property
     def non_covered_generation(self) -> float:
         """Return total generation attributed to non-covered regions."""
+        return float(self.generation_by_coverage.get("non_covered", 0.0))
 
-        return float(self.generation_by_coverage.get('non_covered', 0.0))
-
-    def leakage_percent(self, baseline: 'DispatchResult') -> float:
+    def leakage_percent(self, baseline: "DispatchResult") -> float:
         """Return leakage relative to ``baseline`` as a percentage.
 
         Leakage is defined as the ratio of the change in non-covered
@@ -67,7 +72,6 @@ class DispatchResult:
         ``baseline``. A positive value indicates that uncovered generation grew
         faster than total generation, signalling leakage.
         """
-
         delta_total = self.total_generation - baseline.total_generation
         if abs(delta_total) <= 1e-9:
             return 0.0
@@ -76,4 +80,3 @@ class DispatchResult:
             self.non_covered_generation - baseline.non_covered_generation
         )
         return 100.0 * delta_uncovered / delta_total
-
