@@ -15,6 +15,7 @@ import base64
 import io
 import ast
 import subprocess
+import atexit
 from pathlib import Path
 from datetime import datetime
 import os
@@ -39,13 +40,44 @@ app.title = 'BlueSky Model Runner'
 
 docs_dir = os.path.abspath('docs/build/html')
 
-# use the current python interpreter to run the html docs in the background
-with open(os.devnull, 'w') as devnull:
-    http_server_process = subprocess.Popen(
-        [sys.executable, '-m', 'http.server', '8000', '--directory', docs_dir],
-        stdout=devnull,
-        stderr=devnull,
-    )
+
+def start_docs_server():
+    """Start a lightweight HTTP server for serving documentation."""
+
+    devnull = open(os.devnull, 'w')
+    try:
+        process = subprocess.Popen(
+            [sys.executable, '-m', 'http.server', '8000', '--directory', docs_dir],
+            stdout=devnull,
+            stderr=devnull,
+        )
+    except Exception:
+        devnull.close()
+        raise
+
+    def _cleanup():
+        stop_docs_server(process, devnull)
+
+    atexit.register(_cleanup)
+    return process, devnull
+
+
+def stop_docs_server(process, devnull):
+    """Stop the documentation HTTP server and release resources."""
+
+    if process is None:
+        return
+
+    try:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+    finally:
+        if devnull and not devnull.closed:
+            devnull.close()
 
 # blusesky image in assets folder
 image_src = app.get_asset_url('ProjectBlueSkywebheaderimageblack.jpg')
@@ -245,7 +277,10 @@ def run_mode(n_clicks, selected_mode):
 
 
 if __name__ == '__main__':
+    docs_server_process = None
+    devnull = None
     try:
+        docs_server_process, devnull = start_docs_server()
         app.run_server(debug=True, host='localhost', port=8080)
     finally:
-        http_server_process.terminate()
+        stop_docs_server(docs_server_process, devnull)
