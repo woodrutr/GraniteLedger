@@ -8,6 +8,9 @@
 # Default solve mode
 default_mode = "gs-combo"  # choices: ["unified-combo", "gs-combo", "standalone"]
 
+# Optional: override the deterministic output directory name used for results
+# output_name = "my_run_label"
+
 # Modules to run
 electricity = true
 hydrogen = true
