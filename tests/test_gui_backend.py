@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+"""GUI backend tests (skipped automatically if Streamlit is not installed)."""
+
 import importlib
 import shutil
 
 import pytest
 
+streamlit = pytest.importorskip("streamlit")
 pd = pytest.importorskip('pandas')
 
 run_policy_simulation = importlib.import_module('gui.app').run_policy_simulation
