@@ -2,11 +2,23 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from typing import Any
+from typing import Any, cast
 
-import pandas as pd
+try:  # pragma: no cover - optional dependency
+    import pandas as pd
+except ImportError:  # pragma: no cover - optional dependency
+    pd = cast(object, None)
 
 from policy.allowance_annual import RGGIPolicyAnnual
+
+
+def _ensure_pandas() -> None:
+    """Ensure :mod:`pandas` is available before accessing policy loader helpers."""
+
+    if pd is None:  # pragma: no cover - helper exercised indirectly
+        raise ImportError(
+            "pandas is required for config.policy_loader; install it with `pip install pandas`."
+        )
 
 _FILL_DIRECTIVES = {"forward", "ffill", "pad"}
 
@@ -65,6 +77,8 @@ def _extract_year_map(entry: Any) -> tuple[Any, bool]:
 
 def _normalize_year_value_pairs(year_map: Any, key: str) -> dict[int, Any]:
     """Convert supported year-value structures into an integer keyed dictionary."""
+
+    _ensure_pandas()
 
     if isinstance(year_map, Mapping):
         iterator = year_map.items()
@@ -139,6 +153,8 @@ def _validate_year_alignment(series_map: Mapping[str, pd.Series]) -> list[int]:
 def _coerce_numeric_series(series: pd.Series, key: str) -> pd.Series:
     """Cast a series to float values, raising a descriptive error on failure."""
 
+    _ensure_pandas()
+
     try:
         numeric = series.astype(float)
     except (TypeError, ValueError) as exc:
@@ -148,6 +164,8 @@ def _coerce_numeric_series(series: pd.Series, key: str) -> pd.Series:
 
 def series_from_year_map(cfg: Mapping[str, Any], key: str) -> pd.Series:
     """Extract a pandas Series keyed by year from ``cfg`` for ``key``."""
+
+    _ensure_pandas()
 
     if not isinstance(cfg, Mapping):
         raise TypeError("cfg must be a mapping")
@@ -190,6 +208,8 @@ def series_from_year_map(cfg: Mapping[str, Any], key: str) -> pd.Series:
 
 def load_annual_policy(cfg: Mapping[str, Any]) -> RGGIPolicyAnnual:
     """Construct an :class:`RGGIPolicyAnnual` from a configuration mapping."""
+
+    _ensure_pandas()
 
     cap_series = _coerce_numeric_series(series_from_year_map(cfg, "cap"), "cap")
     years = [int(year) for year in cap_series.index]

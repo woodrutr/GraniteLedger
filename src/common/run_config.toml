@@ -11,6 +11,9 @@
 # The default mode is only used when --mode argument is not passed by the user when running main.py
 default_mode = "gs-combo"
 
+# Optional: override the deterministic output directory name used for results
+# output_name = "my_run_label"
+
 # Modules to run
 electricity = true # specify true or false (lowercase)
 hydrogen = true    # specify true or false (lowercase)
@@ -121,3 +124,17 @@ allow_borrowing = false
 # Example of nested carbon cap groups if needed
 [carbon_cap_groups.national]
 description = "Default national carbon cap group"
+
+[allowance_market]
+type = "annual"
+cap = {}
+floor = {}
+ccr1_trigger = {}
+ccr1_qty = {}
+ccr2_trigger = {}
+ccr2_qty = {}
+cp_id = {}
+bank0 = 0.0
+annual_surrender_frac = 0.5
+carry_pct = 1.0
+full_compliance_years = []

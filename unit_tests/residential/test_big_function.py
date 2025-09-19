@@ -1,6 +1,8 @@
 from pathlib import Path
+
 import pytest
-import pandas as pd
+
+pd = pytest.importorskip("pandas")
 
 from definitions import PROJECT_ROOT
 

@@ -15,14 +15,7 @@ logger = getLogger(__name__)
 
 
 def make_dir(dir_name):
-    """generates an output directory to write model results, output directory is the date/time
-    at the time this function executes. It includes subdirs for vars, params, constraints.
-
-    Returns
-    -------
-    string
-        the name of the output directory
-    """
+    """Ensure the provided directory exists."""
     if not os.path.exists(dir_name):
         os.makedirs(dir_name)
     else:
@@ -95,6 +88,13 @@ def get_args():
         'residential: run the residential module standalone, solves updated load based on new given prices\n\n'
         'Mode can be set either via --mode command or in run_config.toml.\n'
         'If no --mode option is provided, default_mode in run_config.toml is used.',
+    )
+    parser.add_argument(
+        '--output-name',
+        dest='output_name',
+        help='Optional custom name for the output directory.\n'
+        'If omitted, the directory name is derived from the selected mode and the configuration hash.\n'
+        'When the directory already exists a numeric suffix will be appended.',
     )
     parser.add_argument('--debug', action='store_true', help='set logging level to DEBUG')
 

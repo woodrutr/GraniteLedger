@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import importlib
-
 import pytest
 
-pd = pytest.importorskip('pandas')
+pd = pytest.importorskip("pandas")
 
-run_end_to_end_from_frames = importlib.import_module('engine.run_loop').run_end_to_end_from_frames
-baseline_frames = importlib.import_module('tests.fixtures.dispatch_single_minimal').baseline_frames
-
+run_end_to_end_from_frames = importlib.import_module(
+    "engine.run_loop"
+).run_end_to_end_from_frames
+baseline_frames = importlib.import_module(
+    "tests.fixtures.dispatch_single_minimal"
+).baseline_frames
 
 YEARS = [2025, 2026, 2027]
 
@@ -31,18 +33,18 @@ def _policy_frame(
     for idx, year in enumerate(YEARS):
         records.append(
             {
-                'year': year,
-                'cap_tons': caps[idx],
-                'floor_dollars': float(floor),
-                'ccr1_trigger': 10.0,
-                'ccr1_qty': ccr1_qty,
-                'ccr2_trigger': 18.0,
-                'ccr2_qty': ccr2_qty,
-                'cp_id': 'CP1',
-                'full_compliance': year == YEARS[-1],
-                'bank0': bank0,
-                'annual_surrender_frac': float(annual_surrender_frac),
-                'carry_pct': float(carry_pct),
+                "year": year,
+                "cap_tons": caps[idx],
+                "floor_dollars": float(floor),
+                "ccr1_trigger": 10.0,
+                "ccr1_qty": ccr1_qty,
+                "ccr2_trigger": 18.0,
+                "ccr2_qty": ccr2_qty,
+                "cp_id": "CP1",
+                "full_compliance": year == YEARS[-1],
+                "bank0": bank0,
+                "annual_surrender_frac": float(annual_surrender_frac),
+                "carry_pct": float(carry_pct),
             }
         )
     return pd.DataFrame(records)
@@ -64,17 +66,17 @@ def _three_year_frames(
     frames = baseline_frames(year=YEARS[0], load_mwh=loads[0])
     demand = pd.DataFrame(
         [
-            {'year': year, 'region': 'default', 'demand_mwh': float(load)}
+            {"year": year, "region": "default", "demand_mwh": float(load)}
             for year, load in zip(YEARS, loads)
         ]
     )
-    frames = frames.with_frame('demand', demand)
+    frames = frames.with_frame("demand", demand)
 
     units = frames.units()
-    units.loc[units['fuel'] == 'gas', 'cap_mw'] = 200.0
-    frames = frames.with_frame('units', units)
+    units.loc[units["fuel"] == "gas", "cap_mw"] = 200.0
+    frames = frames.with_frame("units", units)
     frames = frames.with_frame(
-        'policy',
+        "policy",
         _policy_frame(
             floor=floor,
             cap_scale=cap_scale,
@@ -100,7 +102,7 @@ def three_year_outputs():
 def test_three_year_control_period_converges(three_year_outputs):
     """The coupled dispatch/allowance engine should converge quickly."""
 
-    iterations = three_year_outputs.annual['iterations']
+    iterations = three_year_outputs.annual["iterations"]
     assert not iterations.empty
     assert int(iterations.max()) <= 10
 
@@ -110,7 +112,7 @@ def test_bank_non_negative_after_compliance(three_year_outputs):
 
     cp_year = YEARS[-1]
     bank = three_year_outputs.annual.loc[
-        three_year_outputs.annual['year'] == cp_year, 'bank'
+        three_year_outputs.annual["year"] == cp_year, "bank"
     ].iloc[0]
     assert bank >= -1e-9
 
@@ -126,8 +128,7 @@ def test_emissions_decline_with_stricter_policy():
         tol=1e-4,
         relaxation=0.8,
     )
-
-    base_emissions = base_outputs.annual['emissions_tons'].sum()
+    base_emissions = base_outputs.annual["emissions_tons"].sum()
 
     higher_floor_outputs = run_end_to_end_from_frames(
         _three_year_frames(floor=14.0, carry_pct=0.0, annual_surrender_frac=1.0),
@@ -136,19 +137,13 @@ def test_emissions_decline_with_stricter_policy():
         tol=1e-4,
         relaxation=0.8,
     )
-
-    assert higher_floor_outputs.annual['emissions_tons'].sum() < base_emissions
+    assert higher_floor_outputs.annual["emissions_tons"].sum() < base_emissions
 
     lower_cap_outputs = run_end_to_end_from_frames(
-        _three_year_frames(
-            cap_scale=0.35,
-            carry_pct=0.0,
-            annual_surrender_frac=1.0,
-        ),
+        _three_year_frames(cap_scale=0.35, carry_pct=0.0, annual_surrender_frac=1.0),
         years=YEARS,
         price_initial=0.0,
         tol=1e-4,
         relaxation=0.8,
     )
-
-    assert lower_cap_outputs.annual['emissions_tons'].sum() < base_emissions
+    assert lower_cap_outputs.annual["emissions_tons"].sum() < base_emissions

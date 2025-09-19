@@ -13,3 +13,4 @@ dependencies:
   - pip:
       - mypy
       - ruff
+      - pytest-cov

@@ -7,16 +7,15 @@ from typing import Iterable
 
 import pytest
 
-pd = pytest.importorskip('pandas')
+pytest.importorskip("pandas")
 
-DispatchResult = importlib.import_module('dispatch.interface').DispatchResult
-_lp_single = importlib.import_module('dispatch.lp_single')
-_dispatch_merit_order = _lp_single._dispatch_merit_order
-solve = _lp_single.solve
-_dispatch_fixtures = importlib.import_module('tests.fixtures.dispatch_single_minimal')
-baseline_frames = _dispatch_fixtures.baseline_frames
-baseline_units = _dispatch_fixtures.baseline_units
-infeasible_frames = _dispatch_fixtures.infeasible_frames
+from dispatch.interface import DispatchResult
+from dispatch.lp_single import _dispatch_merit_order, solve
+
+_fixtures = importlib.import_module("tests.fixtures.dispatch_single_minimal")
+baseline_frames = _fixtures.baseline_frames
+baseline_units = _fixtures.baseline_units
+infeasible_frames = _fixtures.infeasible_frames
 
 
 def _collect_emissions(costs: Iterable[float]) -> list[float]:
@@ -98,8 +97,8 @@ def test_infeasible_load_reports_shortfall_and_price() -> None:
 
     frames = infeasible_frames()
     demand = frames.demand()
-    year = int(demand.iloc[0]['year'])
-    load = float(demand.loc[demand['year'] == year, 'demand_mwh'].sum())
+    year = int(demand.iloc[0]["year"])
+    load = float(demand.loc[demand["year"] == year, "demand_mwh"].sum())
 
     summary = _dispatch_merit_order(frames.units(), load, allowance_cost=10.0)
     caps = summary["units"]["cap_mwh"]
