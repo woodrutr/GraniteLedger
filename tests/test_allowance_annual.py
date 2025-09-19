@@ -4,9 +4,9 @@ import importlib
 
 import pytest
 
-from policy.allowance_annual import AllowanceAnnual
-
 pytest.importorskip("pandas")
+
+from policy.allowance_annual import AllowanceAnnual
 
 fixtures = importlib.import_module("tests.fixtures.annual_minimal")
 LinearDispatch = fixtures.LinearDispatch

@@ -9,31 +9,83 @@ on:
 jobs:
   lint-test:
     runs-on: ubuntu-latest
-
+    env:
+      PIP_CACHE_DIR: ${{ github.workspace }}/.pip
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Prepare cache directories
+        run: |
+          mkdir -p .pip
+          mkdir -p .pytest_cache
+
+      - name: Cache pip and pytest data
+        uses: actions/cache@v4
+        with:
+          path: |
+            ./.pip
+            ./.pytest_cache
+          key: ${{ runner.os }}-pip-py312-${{ hashFiles('requirements-dev.txt', 'pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-          cache: 'pip'
-          cache-dependency-path: |
-            pyproject.toml
+          python-version: '3.12'
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install mypy ruff pytest
+          python -m pip install -r requirements-dev.txt
 
-      - name: ruff lint
+      - name: Show Python diagnostics
+        run: |
+          python --version
+          pip --version
+
+      - name: Ruff lint
         run: ruff check .
 
-      - name: mypy
+      - name: Mypy
         run: mypy --config-file pyproject.toml
 
-      - name: pytest
+      - name: Pytest
         env:
           PYTHONWARNINGS: error
-        run: pytest
+        run: pytest -q --cov=engine --cov=dispatch --cov=policy --cov-report=term-missing --cov-fail-under=80
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: .coverage
+          if-no-files-found: ignore
+
+# Option B (Conda with pinned Python 3.11) sample configuration:
+# jobs:
+#   lint-test:
+#     runs-on: ubuntu-latest
+#     steps:
+#       - uses: actions/checkout@v4
+#       - uses: conda-incubator/setup-miniconda@v3
+#         with:
+#           python-version: 3.11
+#           environment-name: bluesky-env
+#           auto-activate-base: false
+#       - name: Install Conda dependencies
+#         env:
+#           CONDA_NO_PLUGINS: true
+#         run: |
+#           conda install -n bluesky-env -y pandas pytest pytest-cov --solver=classic
+#       - name: Run checks with Conda
+#         env:
+#           PYTHONWARNINGS: error
+#         run: |
+#           conda run --no-capture-output -n bluesky-env ruff check .
+#           conda run --no-capture-output -n bluesky-env mypy --config-file pyproject.toml
+#           conda run --no-capture-output -n bluesky-env pytest -q \
+#             --cov=engine --cov=dispatch --cov=policy \
+#             --cov-report=term-missing --cov-fail-under=80

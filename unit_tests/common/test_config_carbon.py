@@ -4,7 +4,6 @@ import importlib
 from pathlib import Path
 
 import pytest
-from definitions import PROJECT_ROOT
 
 import importlib
 import pytest
