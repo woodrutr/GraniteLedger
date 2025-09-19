@@ -289,6 +289,10 @@ class Config_settings:
         self.carbon_allowance_start_bank = 0.0
         self.carbon_allowance_bank_enabled = True
         self.carbon_allowance_allow_borrowing = False
+        self.carbon_policy_enabled = True
+        self.carbon_ccr1_enabled = True
+        self.carbon_ccr2_enabled = True
+        self.carbon_control_period_years = None
 
         carbon_policy_section = config.get('carbon_policy')
         if not isinstance(carbon_policy_section, dict):
@@ -306,6 +310,36 @@ class Config_settings:
                     if value not in (None, ''):
                         return value
             return default
+
+        self.carbon_policy_enabled = self._normalize_bool(
+            _get_policy_value('enabled', 'policy_enabled', 'carbon_policy_enabled'),
+            default=True,
+        )
+        self.carbon_ccr1_enabled = self._normalize_bool(
+            _get_policy_value('ccr1_enabled'),
+            default=True,
+        )
+        self.carbon_ccr2_enabled = self._normalize_bool(
+            _get_policy_value('ccr2_enabled'),
+            default=True,
+        )
+        control_period_raw = _get_policy_value('control_period_years')
+        if control_period_raw not in (None, ''):
+            try:
+                control_period_value = int(control_period_raw)
+            except (TypeError, ValueError):
+                control_period_value = None
+            else:
+                if control_period_value <= 0:
+                    control_period_value = None
+        else:
+            control_period_value = None
+        self.carbon_control_period_years = control_period_value
+
+        if not self.carbon_policy_enabled:
+            self.carbon_cap_groups = OrderedDict()
+            self.default_cap_group = None
+            return
 
         legacy_cap_value = self._normalize_carbon_cap(
             _get_policy_value('carbon_cap')
@@ -570,6 +604,9 @@ class Config_settings:
                 'complex',
                 'carbon_allowance_bank_enabled',
                 'carbon_allowance_allow_borrowing',
+                'carbon_policy_enabled',
+                'carbon_ccr1_enabled',
+                'carbon_ccr2_enabled',
             },
             '_check_zero_one': {
                 'sw_trade',

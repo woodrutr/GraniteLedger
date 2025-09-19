@@ -106,6 +106,10 @@ class PolicySpec:
     full_compliance_years: set[int]
     annual_surrender_frac: float
     carry_pct: float
+    enabled: bool = True
+    ccr1_enabled: bool = True
+    ccr2_enabled: bool = True
+    control_period_years: int | None = None
 
     def to_policy(self) -> RGGIPolicyAnnual:
         """Instantiate :class:`RGGIPolicyAnnual` from the stored specification."""
@@ -122,14 +126,26 @@ class PolicySpec:
             full_compliance_years=self.full_compliance_years,
             annual_surrender_frac=self.annual_surrender_frac,
             carry_pct=self.carry_pct,
+            enabled=self.enabled,
+            ccr1_enabled=self.ccr1_enabled,
+            ccr2_enabled=self.ccr2_enabled,
+            control_period_length=self.control_period_years,
         )
 
 
 class Frames(Mapping[str, pd.DataFrame]):
     """Light-weight container offering validated access to model data frames."""
 
-    def __init__(self, frames: Mapping[str, pd.DataFrame] | None = None):
+    def __init__(
+        self,
+        frames: Mapping[str, pd.DataFrame] | None = None,
+        *,
+        carbon_policy_enabled: bool | None = None,
+    ):
         self._frames: Dict[str, pd.DataFrame] = {}
+        self._carbon_policy_enabled = True if carbon_policy_enabled is None else bool(
+            carbon_policy_enabled
+        )
         if frames:
             for name, df in frames.items():
                 key = _normalize_name(name)
@@ -170,7 +186,16 @@ class Frames(Mapping[str, pd.DataFrame]):
 
         updated = dict(self._frames)
         updated[_normalize_name(name)] = _ensure_dataframe(name, df)
-        return Frames(updated)
+        return Frames(updated, carbon_policy_enabled=self._carbon_policy_enabled)
+
+    # ------------------------------------------------------------------
+    # Metadata accessors
+    # ------------------------------------------------------------------
+    @property
+    def carbon_policy_enabled(self) -> bool:
+        """Return the cached carbon policy enabled flag."""
+
+        return bool(self._carbon_policy_enabled)
 
     # ------------------------------------------------------------------
     # Accessors with schema validation
@@ -344,7 +369,7 @@ class Frames(Mapping[str, pd.DataFrame]):
     def policy(self) -> PolicySpec:
         """Return the allowance policy specification."""
 
-        df = self[_POLICY_KEY]
+        df = self[_POLICY_KEY].copy(deep=True)
         required = [
             'year',
             'cap_tons',
@@ -359,6 +384,42 @@ class Frames(Mapping[str, pd.DataFrame]):
             'annual_surrender_frac',
             'carry_pct',
         ]
+        missing_columns = [column for column in required if column not in df.columns]
+        if 'year' in missing_columns:
+            raise ValueError("policy frame is missing required columns: year")
+
+        policy_enabled = True
+        if 'policy_enabled' in df.columns:
+            enabled_series = _coerce_bool(df['policy_enabled'], 'policy', 'policy_enabled')
+            unique_enabled = enabled_series.dropna().unique()
+            if len(unique_enabled) == 0:
+                policy_enabled = bool(self._carbon_policy_enabled)
+            elif len(unique_enabled) != 1:
+                raise ValueError(
+                    'policy frame must provide a single policy_enabled value shared across years'
+                )
+            else:
+                policy_enabled = bool(unique_enabled[0])
+
+        if policy_enabled and missing_columns:
+            missing_list = ', '.join(sorted(missing_columns))
+            raise ValueError(f'policy frame is missing required columns: {missing_list}')
+
+        if missing_columns:
+            for column in missing_columns:
+                if column == 'cp_id':
+                    df[column] = 'NoPolicy'
+                elif column == 'full_compliance':
+                    df[column] = False
+                elif column == 'bank0':
+                    df[column] = 0.0
+                elif column == 'annual_surrender_frac':
+                    df[column] = 0.0
+                elif column == 'carry_pct':
+                    df[column] = 1.0
+                else:
+                    df[column] = 0.0
+
         df = _validate_columns('policy', df, required)
 
         df['year'] = _require_numeric('policy', 'year', df['year']).astype(int)
@@ -384,19 +445,64 @@ class Frames(Mapping[str, pd.DataFrame]):
         df['full_compliance'] = _coerce_bool(df['full_compliance'], 'policy', 'full_compliance')
 
         bank_values = df['bank0'].unique()
-        if len(bank_values) != 1:
+        if len(bank_values) == 0:
+            bank0 = 0.0
+        elif len(bank_values) != 1:
             raise ValueError('policy frame must provide a single bank0 value shared across years')
-        bank0 = float(bank_values[0])
+        else:
+            bank0 = float(bank_values[0])
 
         surrender_values = df['annual_surrender_frac'].unique()
-        if len(surrender_values) != 1:
+        if len(surrender_values) == 0:
+            annual_surrender_frac = 0.0
+        elif len(surrender_values) != 1:
             raise ValueError('policy frame must provide a single annual_surrender_frac value shared across years')
-        annual_surrender_frac = float(surrender_values[0])
+        else:
+            annual_surrender_frac = float(surrender_values[0])
 
         carry_values = df['carry_pct'].unique()
-        if len(carry_values) != 1:
+        if len(carry_values) == 0:
+            carry_pct = 1.0
+        elif len(carry_values) != 1:
             raise ValueError('policy frame must provide a single carry_pct value shared across years')
-        carry_pct = float(carry_values[0])
+        else:
+            carry_pct = float(carry_values[0])
+
+        ccr1_enabled = True
+        if 'ccr1_enabled' in df.columns:
+            ccr1_series = _coerce_bool(df['ccr1_enabled'], 'policy', 'ccr1_enabled')
+            unique_ccr1 = ccr1_series.unique()
+            if len(unique_ccr1) != 1:
+                raise ValueError(
+                    'policy frame must provide a single ccr1_enabled value shared across years'
+                )
+            ccr1_enabled = bool(unique_ccr1[0])
+
+        ccr2_enabled = True
+        if 'ccr2_enabled' in df.columns:
+            ccr2_series = _coerce_bool(df['ccr2_enabled'], 'policy', 'ccr2_enabled')
+            unique_ccr2 = ccr2_series.unique()
+            if len(unique_ccr2) != 1:
+                raise ValueError(
+                    'policy frame must provide a single ccr2_enabled value shared across years'
+                )
+            ccr2_enabled = bool(unique_ccr2[0])
+
+        control_period_years = None
+        if 'control_period_years' in df.columns:
+            cp_numeric = pd.to_numeric(df['control_period_years'], errors='coerce')
+            cp_numeric = cp_numeric.dropna()
+            if not cp_numeric.empty:
+                unique_cp = cp_numeric.unique()
+                if len(unique_cp) != 1:
+                    raise ValueError(
+                        'policy frame must provide a single control_period_years value shared across years'
+                    )
+                control_candidate = unique_cp[0]
+                control_int = int(control_candidate)
+                if control_int <= 0:
+                    raise ValueError('control_period_years must be a positive integer')
+                control_period_years = control_int
 
         index = df['year']
         cap = pd.Series(df['cap_tons'].values, index=index)
@@ -408,6 +514,8 @@ class Frames(Mapping[str, pd.DataFrame]):
         cp_id = pd.Series(df['cp_id'].values, index=index)
 
         full_compliance_years = {int(year) for year, flag in zip(df['year'], df['full_compliance']) if flag}
+
+        self._carbon_policy_enabled = bool(policy_enabled)
 
         return PolicySpec(
             cap=cap,
@@ -421,6 +529,10 @@ class Frames(Mapping[str, pd.DataFrame]):
             full_compliance_years=full_compliance_years,
             annual_surrender_frac=annual_surrender_frac,
             carry_pct=carry_pct,
+            enabled=policy_enabled,
+            ccr1_enabled=ccr1_enabled,
+            ccr2_enabled=ccr2_enabled,
+            control_period_years=control_period_years,
         )
 
 

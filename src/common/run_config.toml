@@ -127,6 +127,9 @@ description = "Default national carbon cap group"
 
 [allowance_market]
 type = "annual"
+enabled = false
+ccr1_enabled = true
+ccr2_enabled = true
 cap = {}
 floor = {}
 ccr1_trigger = {}
@@ -137,4 +140,6 @@ cp_id = {}
 bank0 = 0.0
 annual_surrender_frac = 0.5
 carry_pct = 1.0
+# Uncomment to automatically mark every Nth year for full compliance
+# control_period_years = 3
 full_compliance_years = []

@@ -7,6 +7,7 @@ and report clear error messages.
 
 from __future__ import annotations
 
+import importlib.util
 import logging
 import shutil
 import tempfile
@@ -14,10 +15,14 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, TypeVar, cast
 
-import streamlit as st
 import tomllib
 
 from definitions import PROJECT_ROOT
+
+if importlib.util.find_spec('streamlit') is not None:  # pragma: no cover - optional dependency
+    import streamlit as st  # type: ignore[import-not-found]
+else:  # pragma: no cover - optional dependency
+    st = None  # type: ignore[assignment]
 
 try:  # pragma: no cover - optional dependency
     import pandas as _PANDAS_MODULE  # type: ignore[import-not-found]
@@ -54,6 +59,10 @@ PANDAS_REQUIRED_MESSAGE = (
     'pandas is required to run the policy simulator. Install pandas to continue.'
 )
 
+STREAMLIT_REQUIRED_MESSAGE = (
+    'streamlit is required to run the policy simulator UI. Install streamlit to continue.'
+)
+
 
 def _ensure_pandas():
     """Return the pandas module or raise an informative error."""
@@ -77,6 +86,13 @@ def _ensure_engine_runner():
     if _RUN_END_TO_END is None:
         raise ModuleNotFoundError(PANDAS_REQUIRED_MESSAGE)
     return _RUN_END_TO_END
+
+
+def _ensure_streamlit() -> None:
+    """Raise an informative error when the GUI stack is unavailable."""
+
+    if st is None:
+        raise ModuleNotFoundError(STREAMLIT_REQUIRED_MESSAGE)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -252,6 +268,23 @@ def _coerce_float(value: Any, default: float = 0.0) -> float:
         return float(default)
 
 
+def _coerce_bool_flag(value: Any, default: bool = True) -> bool:
+    if value in (None, ""):
+        return bool(default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        if value in (0, 1):
+            return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "t", "yes", "y", "1", "on"}:
+            return True
+        if normalized in {"false", "f", "no", "n", "0", "off"}:
+            return False
+    return bool(default)
+
+
 def _coerce_str(value: Any, default: str = 'default') -> str:
     if value in (None, ''):
         return default
@@ -281,6 +314,10 @@ def _build_policy_frame(
     config: Mapping[str, Any],
     years: Iterable[int],
     carbon_policy_enabled: bool,
+    *,
+    ccr1_enabled: bool | None = None,
+    ccr2_enabled: bool | None = None,
+    control_period_years: int | None = None,
 ) -> pd.DataFrame:
     """Construct the policy frame consumed by :class:`io_loader.Frames`."""
 
@@ -294,6 +331,24 @@ def _build_policy_frame(
         market_cfg = {}
 
     if carbon_policy_enabled:
+        ccr1_flag = _coerce_bool_flag(market_cfg.get('ccr1_enabled'), default=True)
+        ccr2_flag = _coerce_bool_flag(market_cfg.get('ccr2_enabled'), default=True)
+        if ccr1_enabled is not None:
+            ccr1_flag = bool(ccr1_enabled)
+        if ccr2_enabled is not None:
+            ccr2_flag = bool(ccr2_enabled)
+
+        control_period = control_period_years
+        if control_period is None:
+            raw_control = market_cfg.get('control_period_years')
+            if raw_control not in (None, ''):
+                try:
+                    control_period = int(raw_control)
+                except (TypeError, ValueError):
+                    control_period = None
+        if control_period is not None and control_period <= 0:
+            control_period = None
+
         cap_map = _coerce_year_value_map(market_cfg.get('cap'), years_list, cast=float, default=0.0)
         floor_map = _coerce_year_value_map(market_cfg.get('floor'), years_list, cast=float, default=0.0)
         ccr1_trigger_map = _coerce_year_value_map(
@@ -315,8 +370,17 @@ def _build_policy_frame(
         surrender_frac = _coerce_float(market_cfg.get('annual_surrender_frac'), default=1.0)
         carry_pct = _coerce_float(market_cfg.get('carry_pct'), default=1.0)
         full_compliance_years = _coerce_year_set(
-            market_cfg.get('full_compliance_years'), fallback=[years_list[-1]]
+            market_cfg.get('full_compliance_years'), fallback=[]
         )
+        if not full_compliance_years:
+            if control_period:
+                full_compliance_years = {
+                    year
+                    for idx, year in enumerate(years_list, start=1)
+                    if idx % control_period == 0
+                }
+            if not full_compliance_years:
+                full_compliance_years = {years_list[-1]}
     else:
         cap_map = {year: float(_LARGE_ALLOWANCE_SUPPLY) for year in years_list}
         floor_map = {year: 0.0 for year in years_list}
@@ -328,7 +392,10 @@ def _build_policy_frame(
         bank0 = _LARGE_ALLOWANCE_SUPPLY
         surrender_frac = 0.0
         carry_pct = 1.0
-        full_compliance_years = {years_list[-1]}
+        full_compliance_years = set()
+        ccr1_flag = False
+        ccr2_flag = False
+        control_period = None
 
     records: list[dict[str, Any]] = []
     for year in years_list:
@@ -346,6 +413,10 @@ def _build_policy_frame(
                 'bank0': float(bank0),
                 'annual_surrender_frac': float(surrender_frac),
                 'carry_pct': float(carry_pct),
+                'policy_enabled': bool(carbon_policy_enabled),
+                'ccr1_enabled': bool(ccr1_flag),
+                'ccr2_enabled': bool(ccr2_flag),
+                'control_period_years': control_period,
             }
         )
 
@@ -469,6 +540,9 @@ def run_policy_simulation(
     start_year: int | None = None,
     end_year: int | None = None,
     carbon_policy_enabled: bool = True,
+    ccr1_enabled: bool = True,
+    ccr2_enabled: bool = True,
+    control_period_years: int | None = None,
     frames: FramesType | Mapping[str, pd.DataFrame] | None = None,
 ) -> dict[str, Any]:
     """Execute the allowance engine and return structured results."""
@@ -494,7 +568,14 @@ def run_policy_simulation(
     try:
         frames_obj = frames_cls.coerce(frames) if frames is not None else _build_default_frames(years)
         frames_obj = _ensure_years_in_demand(frames_obj, years)
-        policy_frame = _build_policy_frame(config, years, carbon_policy_enabled)
+        policy_frame = _build_policy_frame(
+            config,
+            years,
+            carbon_policy_enabled,
+            ccr1_enabled=ccr1_enabled,
+            ccr2_enabled=ccr2_enabled,
+            control_period_years=control_period_years,
+        )
         frames_obj = frames_obj.with_frame('policy', policy_frame)
 
         outputs = runner(frames_obj, years=years, price_initial=0.0)
@@ -516,6 +597,7 @@ def run_policy_simulation(
 
 
 def _cleanup_session_temp_dirs() -> None:
+    _ensure_streamlit()
     temp_dirs = st.session_state.get('temp_dirs', [])
     for path_str in temp_dirs:
         try:
@@ -525,7 +607,8 @@ def _cleanup_session_temp_dirs() -> None:
     st.session_state['temp_dirs'] = []
 
 
-def _render_results(result: dict[str, Any]) -> None:
+def _render_results(result: dict[str, Any]) -> None:  # pragma: no cover - UI rendering
+    _ensure_streamlit()
     if 'error' in result:
         st.error(result['error'])
         return
@@ -564,7 +647,8 @@ def _render_results(result: dict[str, Any]) -> None:
         st.caption(f'Temporary files saved to {temp_dir}')
 
 
-def main() -> None:
+def main() -> None:  # pragma: no cover - Streamlit entry point
+    _ensure_streamlit()
     st.set_page_config(page_title='BlueSky Policy Simulator', layout='wide')
     st.title('BlueSky Policy Simulator')
     st.write('Upload a run configuration and execute the annual allowance market engine.')
@@ -608,6 +692,36 @@ def main() -> None:
             )
 
         carbon_policy_enabled = st.checkbox('Enable carbon policy', value=True)
+        ccr1_enabled = st.checkbox(
+            'Enable CCR tranche 1',
+            value=True,
+            disabled=not carbon_policy_enabled,
+        )
+        ccr2_enabled = st.checkbox(
+            'Enable CCR tranche 2',
+            value=True,
+            disabled=not carbon_policy_enabled,
+        )
+        control_override = st.checkbox(
+            'Specify control period length',
+            value=False,
+            disabled=not carbon_policy_enabled,
+        )
+        control_period_years = None
+        if carbon_policy_enabled and control_override:
+            control_period_years = int(
+                st.number_input(
+                    'Control period length (years)',
+                    min_value=1,
+                    value=3,
+                    step=1,
+                    format='%d',
+                )
+            )
+        if not carbon_policy_enabled:
+            ccr1_enabled = False
+            ccr2_enabled = False
+            control_period_years = None
         run_clicked = st.button('Run', type='primary')
 
     result = st.session_state.get('last_result')
@@ -620,6 +734,9 @@ def main() -> None:
                 start_year=int(start_year),
                 end_year=int(end_year),
                 carbon_policy_enabled=bool(carbon_policy_enabled),
+                ccr1_enabled=bool(ccr1_enabled),
+                ccr2_enabled=bool(ccr2_enabled),
+                control_period_years=control_period_years,
             )
         if 'temp_dir' in result:
             st.session_state['temp_dirs'] = [str(result['temp_dir'])]
