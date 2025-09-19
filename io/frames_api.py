@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
+from numbers import Integral, Real
 from typing import Dict, Iterable, Tuple
 
 import pandas as pd
@@ -51,6 +52,43 @@ def _require_numeric(frame: str, column: str, series: pd.Series) -> pd.Series:
     if numeric.isna().any():
         raise ValueError(f"{frame} frame column '{column}' must contain numeric values")
     return numeric
+
+
+def _coerce_bool(series: pd.Series, frame: str, column: str) -> pd.Series:
+    """Return ``series`` converted to booleans with explicit validation."""
+
+    true_tokens = {"true", "t", "yes", "y", "on", "1"}
+    false_tokens = {"false", "f", "no", "n", "off", "0"}
+
+    def convert(value: object) -> bool:
+        if pd.isna(value):
+            raise ValueError
+        if isinstance(value, bool):
+            return bool(value)
+        if isinstance(value, Integral):
+            if value in (0, 1):
+                return bool(value)
+            raise ValueError
+        if isinstance(value, Real):
+            if value in (0.0, 1.0):
+                return bool(int(value))
+            raise ValueError
+        if isinstance(value, str):
+            normalised = value.strip().lower()
+            if normalised in true_tokens:
+                return True
+            if normalised in false_tokens:
+                return False
+        raise ValueError
+
+    try:
+        coerced = series.map(convert)
+    except ValueError as exc:
+        raise ValueError(
+            f"{frame} frame column '{column}' must contain boolean-like values"
+        ) from exc
+
+    return coerced.astype(bool)
 
 
 @dataclass(frozen=True)
@@ -216,7 +254,7 @@ class Frames(Mapping[str, pd.DataFrame]):
             duplicates = sorted(df.loc[df['fuel'].duplicated(), 'fuel'].unique())
             raise ValueError('fuels frame contains duplicate fuel labels: ' + ', '.join(duplicates))
 
-        df['covered'] = df['covered'].astype(bool)
+        df['covered'] = _coerce_bool(df['covered'], 'fuels', 'covered')
         if 'co2_ton_per_mmbtu' in df.columns:
             df['co2_ton_per_mmbtu'] = _require_numeric('fuels', 'co2_ton_per_mmbtu', df['co2_ton_per_mmbtu']).astype(float)
 
@@ -262,7 +300,7 @@ class Frames(Mapping[str, pd.DataFrame]):
         df = _validate_columns('coverage', df, ['region', 'covered'])
 
         df['region'] = df['region'].astype(str)
-        df['covered'] = df['covered'].astype(bool)
+        df['covered'] = _coerce_bool(df['covered'], 'coverage', 'covered')
 
         if 'year' in df.columns:
             year_series = df['year']
@@ -343,7 +381,7 @@ class Frames(Mapping[str, pd.DataFrame]):
             df[column] = _require_numeric('policy', column, df[column]).astype(float)
 
         df['cp_id'] = df['cp_id'].astype(str)
-        df['full_compliance'] = df['full_compliance'].astype(bool)
+        df['full_compliance'] = _coerce_bool(df['full_compliance'], 'policy', 'full_compliance')
 
         bank_values = df['bank0'].unique()
         if len(bank_values) != 1:

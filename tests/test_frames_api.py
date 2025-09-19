@@ -59,6 +59,98 @@ def test_region_coverage_defaults_and_overrides() -> None:
     assert override['south'] is True
 
 
+def test_boolean_columns_accept_common_tokens() -> None:
+    """Boolean validation should understand mixed types and strings."""
+
+    fuels = pd.DataFrame(
+        [
+            {'fuel': 'gas', 'covered': 'true'},
+            {'fuel': 'coal', 'covered': '0'},
+            {'fuel': 'wind', 'covered': 1},
+        ]
+    )
+
+    coverage = pd.DataFrame(
+        [
+            {'region': 'north', 'covered': 'false'},
+            {'region': 'south', 'covered': 1, 'year': 2030},
+            {'region': 'east', 'covered': 0, 'year': 2031},
+        ]
+    )
+
+    policy = pd.DataFrame(
+        [
+            {
+                'year': 2025,
+                'cap_tons': 100.0,
+                'floor_dollars': 3.0,
+                'ccr1_trigger': 1.0,
+                'ccr1_qty': 1.0,
+                'ccr2_trigger': 2.0,
+                'ccr2_qty': 2.0,
+                'cp_id': 'A',
+                'full_compliance': 'yes',
+                'bank0': 0.0,
+                'annual_surrender_frac': 0.5,
+                'carry_pct': 1.0,
+            },
+            {
+                'year': 2026,
+                'cap_tons': 110.0,
+                'floor_dollars': 3.0,
+                'ccr1_trigger': 1.1,
+                'ccr1_qty': 1.1,
+                'ccr2_trigger': 2.1,
+                'ccr2_qty': 2.1,
+                'cp_id': 'B',
+                'full_compliance': 0,
+                'bank0': 0.0,
+                'annual_surrender_frac': 0.5,
+                'carry_pct': 1.0,
+            },
+        ]
+    )
+
+    frames = Frames({'fuels': fuels, 'coverage': coverage, 'policy': policy})
+
+    fuels_result = frames.fuels()
+    assert fuels_result['covered'].dtype == bool
+    assert fuels_result.set_index('fuel')['covered'].to_dict() == {
+        'gas': True,
+        'coal': False,
+        'wind': True,
+    }
+
+    coverage_result = frames.coverage()
+    assert coverage_result['covered'].dtype == bool
+    coverage_lookup = {
+        (row.region, row.year): row.covered for row in coverage_result.itertuples(index=False)
+    }
+    assert coverage_lookup[('north', -1)] is False
+    assert coverage_lookup[('south', 2030)] is True
+    assert coverage_lookup[('east', 2031)] is False
+
+    policy_spec = frames.policy()
+    assert policy_spec.full_compliance_years == {2025}
+
+
+def test_boolean_columns_reject_invalid_tokens() -> None:
+    """Unknown boolean tokens should raise a validation error."""
+
+    frames = Frames(
+        {
+            'fuels': pd.DataFrame(
+                [
+                    {'fuel': 'gas', 'covered': 'maybe'},
+                ]
+            )
+        }
+    )
+
+    with pytest.raises(ValueError, match='boolean-like values'):
+        frames.fuels()
+
+
 def test_policy_spec_round_trip() -> None:
     """The policy accessor should convert to an :class:`RGGIPolicyAnnual`."""
 
