@@ -2,8 +2,6 @@ from __future__ import annotations
 
 """GUI backend tests (skipped automatically if Streamlit is not installed)."""
 
-import importlib
-import shutil
 import pytest
 
 from tests.fixtures.dispatch_single_minimal import baseline_frames
@@ -11,7 +9,6 @@ from gui.app import run_policy_simulation
 
 streamlit = pytest.importorskip("streamlit")
 pd = pytest.importorskip("pandas")
-
 
 def _baseline_config() -> dict:
     return {
