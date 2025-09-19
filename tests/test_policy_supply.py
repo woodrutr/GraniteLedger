@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import pytest
 
-pd = pytest.importorskip("pandas")
-
 from engine import run_loop
 from io_loader import Frames
+
+pd = pytest.importorskip("pandas")
 
 
 class DummyDispatchResult(dict):
