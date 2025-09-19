@@ -1,12 +1,14 @@
-"""Tests for the linear programming dispatch with a regional network."""
-
 from __future__ import annotations
 
-import importlib
-import math
+"""GUI backend tests (skipped automatically if Streamlit is not installed)."""
 
+import shutil
 import pytest
 
+from tests.fixtures.dispatch_single_minimal import baseline_frames
+from gui.app import run_policy_simulation
+
+streamlit = pytest.importorskip("streamlit")
 pd = pytest.importorskip("pandas")
 
 from dispatch.interface import DispatchResult
