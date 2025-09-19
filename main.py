@@ -19,18 +19,21 @@ from src.integrator.runner import run_standalone, run_elec_solo, run_h2_solo, ru
 default_config_path = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
 
 
-def app_main(selected_mode):
+def app_main(selected_mode, capacity_build_limits=None):
     """main run through the bsky gui app
 
     Parameters
     ----------
     selected_mode : str
         selected mode to run model
+    capacity_build_limits : Mapping | None
+        Optional nested mapping of capacity limits provided by the GUI
     """
     app_args = types.SimpleNamespace()
     app_args.op_mode = selected_mode
     app_args.debug = False
     app_args.output_name = None
+    app_args.capacity_build_limits = capacity_build_limits
 
     app_settings = Config_settings(config_path=default_config_path, args=app_args)
     main(app_settings)

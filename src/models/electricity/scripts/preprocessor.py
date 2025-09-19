@@ -15,6 +15,8 @@ It established the parameters and sets that will be used in the model. It contai
 from pathlib import Path
 import pandas as pd
 import os
+import copy
+from pandas.api.types import is_float_dtype, is_integer_dtype
 
 # Import python modules
 from definitions import PROJECT_ROOT
@@ -50,6 +52,8 @@ DEFAULT_TECH_EMISSIONS_RATE_TON_PER_GWH = {
     14: 0.0,
     15: 0.0,
 }
+
+DEFAULT_CAPACITY_BUILD_LIMIT = 1_000_000.0
 
 
 def apply_allowance_overrides(
@@ -192,6 +196,9 @@ class Sets:
         ]  # old vals: 1=spinning, 2=regulation, 3=flex
         self.sw_builds = pd.read_csv(data_root / 'sw_builds.csv')
         self.sw_retires = pd.read_csv(data_root / 'sw_retires.csv')
+        self.capacity_build_limits = copy.deepcopy(
+            getattr(settings, 'capacity_build_limits', {}) or {}
+        )
 
         # Load Setting
         self.load_scalar = settings.scale_load
@@ -380,6 +387,191 @@ def subset_dfs(all_frames, setin, i):
             all_frames[key] = all_frames[key].loc[all_frames[key][i].isin(getattr(setin, i))]
 
     return all_frames
+
+
+def _flatten_capacity_build_limit_overrides(overrides) -> pd.DataFrame:
+    """Convert nested run configuration overrides into a dataframe."""
+
+    if not overrides:
+        return pd.DataFrame(
+            columns=['region', 'tech', 'year', 'step', 'CapacityBuildLimit']
+        )
+
+    records: list[dict] = []
+    for region, tech_map in overrides.items():
+        if not isinstance(tech_map, dict):
+            continue
+        for tech, year_map in tech_map.items():
+            if not isinstance(year_map, dict):
+                continue
+            for year, value in year_map.items():
+                if isinstance(value, dict):
+                    for step, limit in value.items():
+                        records.append(
+                            {
+                                'region': region,
+                                'tech': tech,
+                                'year': year,
+                                'step': step,
+                                'CapacityBuildLimit': limit,
+                            }
+                        )
+                else:
+                    records.append(
+                        {
+                            'region': region,
+                            'tech': tech,
+                            'year': year,
+                            'CapacityBuildLimit': value,
+                        }
+                    )
+
+    if not records:
+        return pd.DataFrame(
+            columns=['region', 'tech', 'year', 'step', 'CapacityBuildLimit']
+        )
+
+    df = pd.DataFrame.from_records(records)
+    if 'step' not in df.columns:
+        df['step'] = pd.NA
+    return df
+
+
+def _prepare_capacity_limit_overrides(df: pd.DataFrame, base_df: pd.DataFrame):
+    """Return per-year and per-step override frames coerced to base dtypes."""
+
+    if df is None or df.empty:
+        empty_year = pd.DataFrame(columns=['region', 'tech', 'year', 'CapacityBuildLimit'])
+        empty_step = pd.DataFrame(
+            columns=['region', 'tech', 'year', 'step', 'CapacityBuildLimit']
+        )
+        return empty_year, empty_step
+
+    prepared = df.copy()
+    if isinstance(prepared.index, pd.MultiIndex):
+        prepared = prepared.reset_index()
+
+    required_cols = {'region', 'tech', 'year', 'CapacityBuildLimit'}
+    missing = required_cols - set(prepared.columns)
+    if missing:
+        missing_str = ', '.join(sorted(missing))
+        raise ValueError(
+            'CapacityBuildLimit input must include the following columns: '
+            f'{missing_str}'
+        )
+
+    prepared['region'] = pd.to_numeric(prepared['region'], errors='coerce')
+    prepared['year'] = pd.to_numeric(prepared['year'], errors='coerce')
+    prepared['CapacityBuildLimit'] = pd.to_numeric(
+        prepared['CapacityBuildLimit'], errors='coerce'
+    )
+
+    tech_dtype = base_df['tech'].dtype
+    if is_integer_dtype(tech_dtype) or is_float_dtype(tech_dtype):
+        prepared['tech'] = pd.to_numeric(prepared['tech'], errors='coerce')
+    else:
+        prepared['tech'] = prepared['tech'].astype(str)
+
+    if 'step' in prepared.columns:
+        prepared['step'] = pd.to_numeric(prepared['step'], errors='coerce')
+    else:
+        prepared['step'] = pd.NA
+
+    prepared = prepared.dropna(subset=['region', 'tech', 'year', 'CapacityBuildLimit'])
+
+    region_dtype = base_df['region'].dtype
+    year_dtype = base_df['year'].dtype
+    step_dtype = base_df['step'].dtype
+
+    prepared['region'] = prepared['region'].astype(region_dtype)
+    prepared['year'] = prepared['year'].astype(year_dtype)
+    if is_integer_dtype(tech_dtype) or is_float_dtype(tech_dtype):
+        prepared['tech'] = prepared['tech'].astype(tech_dtype)
+    else:
+        prepared['tech'] = prepared['tech'].astype(base_df['tech'].dtype)
+
+    per_step = prepared[prepared['step'].notna()].copy()
+    if not per_step.empty:
+        if is_integer_dtype(step_dtype) or is_float_dtype(step_dtype):
+            per_step['step'] = per_step['step'].astype(step_dtype)
+        else:
+            per_step['step'] = per_step['step'].astype(base_df['step'].dtype)
+        per_step = per_step[
+            ['region', 'tech', 'year', 'step', 'CapacityBuildLimit']
+        ].drop_duplicates()
+
+    per_year = prepared[prepared['step'].isna()].copy()
+    per_year = per_year[['region', 'tech', 'year', 'CapacityBuildLimit']].drop_duplicates()
+
+    return per_year, per_step
+
+
+def _overlay_capacity_limits(base_df: pd.DataFrame, override_df: pd.DataFrame, match_cols):
+    """Overlay override values onto the base capacity limit table."""
+
+    if override_df is None or override_df.empty:
+        return base_df
+
+    override = override_df.copy()
+    override = override[match_cols + ['CapacityBuildLimit']]
+    override = override.drop_duplicates(match_cols, keep='last')
+    override = override.rename(columns={'CapacityBuildLimit': 'CapacityBuildLimit_override'})
+
+    merged = base_df.merge(override, on=match_cols, how='left')
+    mask = merged['CapacityBuildLimit_override'].notna()
+    if mask.any():
+        merged.loc[mask, 'CapacityBuildLimit'] = merged.loc[
+            mask, 'CapacityBuildLimit_override'
+        ]
+    merged = merged.drop(columns=['CapacityBuildLimit_override'])
+    return merged
+
+
+def build_capacity_build_limits(all_frames, setin):
+    """Create the capacity build limit frame with CSV and override data."""
+
+    cap_cost_df = all_frames.get('CapCost')
+    if cap_cost_df is None or cap_cost_df.empty:
+        return pd.DataFrame(
+            columns=['region', 'tech', 'year', 'step', 'CapacityBuildLimit']
+        )
+
+    base_index = cap_cost_df[['region', 'tech', 'year', 'step']].drop_duplicates()
+    base_index = base_index.reset_index(drop=True)
+    base_index = base_index.astype(cap_cost_df[['region', 'tech', 'year', 'step']].dtypes.to_dict())
+    base_index['CapacityBuildLimit'] = float(DEFAULT_CAPACITY_BUILD_LIMIT)
+
+    raw_limits = all_frames.get('CapacityBuildLimit')
+    if raw_limits is not None and not raw_limits.empty:
+        per_year, per_step = _prepare_capacity_limit_overrides(raw_limits, base_index)
+        if not per_year.empty:
+            base_index = _overlay_capacity_limits(
+                base_index, per_year, ['region', 'tech', 'year']
+            )
+        if not per_step.empty:
+            base_index = _overlay_capacity_limits(
+                base_index, per_step, ['region', 'tech', 'year', 'step']
+            )
+
+    override_df = _flatten_capacity_build_limit_overrides(
+        getattr(setin, 'capacity_build_limits', {})
+    )
+    if not override_df.empty:
+        per_year, per_step = _prepare_capacity_limit_overrides(override_df, base_index)
+        if not per_year.empty:
+            base_index = _overlay_capacity_limits(
+                base_index, per_year, ['region', 'tech', 'year']
+            )
+        if not per_step.empty:
+            base_index = _overlay_capacity_limits(
+                base_index, per_step, ['region', 'tech', 'year', 'step']
+            )
+
+    index_cols = ['region', 'tech', 'year', 'step']
+    columns = index_cols + ['CapacityBuildLimit']
+    base_index = base_index[columns]
+    base_index = base_index.sort_values(index_cols).reset_index(drop=True)
+    return base_index
 
 
 def _expand_frame_to_cap_groups(df, groups, group_column='cap_group'):
@@ -1180,10 +1372,12 @@ def preprocessor(setin):
     all_frames['WeightYear'] = setin.WeightYear
 
     # last year values used
-    filter_list = ['CapCost']
+    filter_list = ['CapCost', 'CapacityBuildLimit']
     if 'CarbonAllowanceProcurement' in all_frames:
         filter_list.append('CarbonAllowanceProcurement')
     for key in filter_list:
+        if key not in all_frames:
+            continue
         df = all_frames[key]
         years = getattr(setin, 'years')
         if isinstance(df, pd.DataFrame):
@@ -1329,6 +1523,7 @@ def preprocessor(setin):
     ] = 0.01
 
     all_frames['CapacityCredit'] = capacitycredit_df(all_frames, setin)
+    all_frames['CapacityBuildLimit'] = build_capacity_build_limits(all_frames, setin)
 
     # expand a few parameters to be hourly
     TLCI_cols = ['region', 'region1', 'year', 'hour', 'TranLimitCapInt']
