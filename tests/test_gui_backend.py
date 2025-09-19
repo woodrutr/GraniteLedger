@@ -1,16 +1,8 @@
-"""GUI backend tests (skipped automatically if Streamlit is not installed)."""
-
-from __future__ import annotations
-
 import shutil
-
 import pytest
 import pandas as pd
 
 from tests.fixtures.dispatch_single_minimal import baseline_frames
-from gui.app import run_policy_simulation
-
-streamlit = pytest.importorskip("streamlit")
 
 
 def _baseline_config() -> dict:
@@ -48,6 +40,10 @@ def _cleanup_temp_dir(result: dict) -> None:
 
 
 def test_backend_generates_outputs(tmp_path):
+    pytest.importorskip("streamlit")
+
+    from gui.app import run_policy_simulation
+
     config = _baseline_config()
     frames = _frames_for_years([2025, 2026])
     result = run_policy_simulation(
@@ -76,6 +72,10 @@ def test_backend_generates_outputs(tmp_path):
 
 
 def test_backend_policy_toggle_affects_price():
+    pytest.importorskip("streamlit")
+
+    from gui.app import run_policy_simulation
+
     config = _baseline_config()
     frames = _frames_for_years([2025])
 
@@ -113,6 +113,10 @@ def test_backend_policy_toggle_affects_price():
 
 
 def test_backend_returns_error_for_invalid_frames():
+    pytest.importorskip("streamlit")
+
+    from gui.app import run_policy_simulation
+
     config = _baseline_config()
     result = run_policy_simulation(
         config,
@@ -125,9 +129,12 @@ def test_backend_returns_error_for_invalid_frames():
 
 
 def test_backend_reports_missing_pandas(monkeypatch):
+    pytest.importorskip("streamlit")
+
+    from gui.app import run_policy_simulation
+
     config = _baseline_config()
 
-    # Simulate an environment where pandas is not available after import time.
     monkeypatch.setattr("gui.app._PANDAS_MODULE", None)
 
     result = run_policy_simulation(config, start_year=2025, end_year=2025)
