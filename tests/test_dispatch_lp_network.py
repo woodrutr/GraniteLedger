@@ -3,14 +3,9 @@ from __future__ import annotations
 """Tests for the linear programming dispatch with a regional network."""
 
 import math
+
 import pytest
-
-from dispatch.interface import DispatchResult
-from dispatch.lp_network import solve_from_frames
-from dispatch.lp_single import HOURS_PER_YEAR
-from io_loader import Frames
-
-pd = pytest.importorskip("pandas")
+import pandas as pd
 
 from dispatch.interface import DispatchResult
 from dispatch.lp_network import solve_from_frames
@@ -90,7 +85,9 @@ def test_congestion_leads_to_price_separation() -> None:
     assert math.isclose(result.emissions_tons, 0.0)
     assert ("north", "south") in result.flows
     assert result.flows[("north", "south")] == pytest.approx(15.0 * HOURS_PER_YEAR)
-    assert sum(result.emissions_by_region.values()) == pytest.approx(result.emissions_tons)
+    assert sum(result.emissions_by_region.values()) == pytest.approx(
+        result.emissions_tons
+    )
 
 
 def test_imports_increase_with_carbon_price() -> None:
