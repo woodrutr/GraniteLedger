@@ -168,3 +168,112 @@ def test_disabled_policy_produces_zero_price():
     assert outputs.annual["p_co2"].eq(0.0).all()
     assert outputs.annual["surrendered"].eq(0.0).all()
     assert outputs.annual["bank"].eq(0.0).all()
+
+
+def test_bank_never_negative_across_years():
+    frames = _three_year_frames()
+    outputs = run_end_to_end_from_frames(
+        frames,
+        years=YEARS,
+        price_initial=0.0,
+        tol=1e-4,
+        relaxation=0.8,
+    )
+
+    assert outputs.annual["bank"].min() >= -1e-9
+
+
+def test_bank_accumulates_when_emissions_below_cap():
+    low_loads = [400_000.0, 380_000.0, 360_000.0]
+    frames = _three_year_frames(loads=low_loads)
+    policy = frames.policy().to_policy()
+    outputs = run_end_to_end_from_frames(
+        frames,
+        years=YEARS,
+        price_initial=0.0,
+        tol=1e-4,
+        relaxation=0.8,
+    )
+
+    initial_bank = float(policy.bank0)
+    banks = outputs.annual.set_index("year")["bank"]
+    assert banks.is_monotonic_increasing
+    assert banks.iloc[-1] > initial_bank
+
+
+def test_ccr_trigger_increases_allowances():
+    loads = [600_000.0, 600_000.0, 600_000.0]
+    frames = _three_year_frames(loads=loads)
+    policy_df = _policy_frame(cap_scale=0.15)
+    policy_df['bank0'] = 0.0
+    policy_df['ccr1_qty'] = 500_000.0
+    frames = frames.with_frame("policy", policy_df)
+    policy = frames.policy().to_policy()
+    outputs = run_end_to_end_from_frames(
+        frames,
+        years=YEARS,
+        price_initial=0.0,
+        tol=1e-4,
+        relaxation=0.8,
+    )
+
+    annual = outputs.annual.set_index("year")
+    first_year = YEARS[0]
+    cap = float(policy.cap.loc[first_year])
+    bank0 = float(policy.bank0)
+    available = float(annual.loc[first_year, "available_allowances"])
+    allowances_issued = available - bank0
+
+    assert allowances_issued > cap
+    assert annual.loc[first_year, "p_co2"] == pytest.approx(policy.ccr1_trigger.loc[first_year], rel=1e-4)
+
+
+def test_compliance_true_up_reconciles_obligations():
+    frames = _three_year_frames()
+    outputs = run_end_to_end_from_frames(
+        frames,
+        years=YEARS,
+        price_initial=0.0,
+        tol=1e-4,
+        relaxation=0.8,
+    )
+
+    annual = outputs.annual.set_index("year")
+    first_two = annual.loc[YEARS[:-1], "obligation"]
+    assert (first_two > 0.0).all()
+
+    final_year = YEARS[-1]
+    final_obligation = float(annual.loc[final_year, "obligation"])
+    assert final_obligation <= 1e-6
+    surrendered_final = float(annual.loc[final_year, "surrendered"])
+    required_fraction = 0.5 * float(annual.loc[final_year, "emissions_tons"])
+    assert surrendered_final > required_fraction
+
+
+def test_control_period_mass_balance():
+    frames = _three_year_frames()
+    policy = frames.policy().to_policy()
+    outputs = run_end_to_end_from_frames(
+        frames,
+        years=YEARS,
+        price_initial=0.0,
+        tol=1e-4,
+        relaxation=0.8,
+    )
+
+    annual = outputs.annual.set_index("year")
+    bank_prev = []
+    for idx, year in enumerate(YEARS):
+        if idx == 0:
+            bank_prev.append(float(policy.bank0))
+        else:
+            bank_prev.append(float(annual.iloc[idx - 1]["bank"]))
+
+    bank_prev_series = pd.Series(bank_prev, index=YEARS)
+    allowances_issued = annual["available_allowances"] - bank_prev_series
+    total_supply = float(policy.bank0) + allowances_issued.sum()
+    total_surrendered = annual["surrendered"].sum()
+    ending_bank = float(annual.iloc[-1]["bank"])
+    remaining = float(annual.iloc[-1]["obligation"])
+
+    assert total_supply == pytest.approx(total_surrendered + ending_bank + remaining)
