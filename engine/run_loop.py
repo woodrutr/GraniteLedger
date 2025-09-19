@@ -97,6 +97,37 @@ def _policy_record_for_year(policy: Any, year: int) -> dict[str, float | bool]:
         'ccr1_enabled': bool(getattr(policy, 'ccr1_enabled', True)),
         'ccr2_enabled': bool(getattr(policy, 'ccr2_enabled', True)),
     }
+
+    cp_series = getattr(policy, 'cp_id', None)
+    cp_value: str | None = None
+    if cp_series is not None:
+        getter = getattr(cp_series, 'get', None)
+        if callable(getter):
+            cp_value = getter(year, None)
+        else:
+            try:
+                cp_value = cp_series.loc[year]  # type: ignore[index]
+            except Exception:  # pragma: no cover - defensive
+                cp_value = None
+    record['cp_id'] = str(cp_value) if cp_value is not None else 'NoPolicy'
+
+    surrender_frac = getattr(policy, 'annual_surrender_frac', 0.5)
+    try:
+        record['annual_surrender_frac'] = float(surrender_frac)
+    except (TypeError, ValueError):  # pragma: no cover - defensive
+        record['annual_surrender_frac'] = 0.5
+
+    carry_pct = getattr(policy, 'carry_pct', 1.0)
+    try:
+        record['carry_pct'] = float(carry_pct)
+    except (TypeError, ValueError):  # pragma: no cover - defensive
+        record['carry_pct'] = 1.0
+
+    full_compliance_years = getattr(policy, 'full_compliance_years', set())
+    try:
+        record['full_compliance'] = bool(int(year) in set(full_compliance_years))
+    except TypeError:  # pragma: no cover - defensive
+        record['full_compliance'] = False
     return record
 
 
@@ -131,11 +162,15 @@ def _solve_allowance_market_year(
     dispatch_solver: Callable[[int, float], object],
     year: int,
     supply: AllowanceSupply,
+    bank_prev: float,
+    outstanding_prev: float,
     *,
     policy_enabled: bool,
     high_price: float,
     tol: float,
     max_iter: int,
+    annual_surrender_frac: float,
+    carry_pct: float,
 ) -> dict[str, object]:
     """Solve for the allowance clearing price for ``year`` using bisection."""
 
@@ -158,17 +193,26 @@ def _solve_allowance_market_year(
             issued2 = min(float(supply.ccr2_qty), remaining)
         return issued1, issued2
 
+    bank_prev = max(0.0, float(bank_prev))
+    outstanding_prev = max(0.0, float(outstanding_prev))
+    carry_pct = max(0.0, float(carry_pct))
+    surrender_frac = max(0.0, min(1.0, float(annual_surrender_frac)))
+
     if not policy_enabled:
         clearing_price = 0.0
         dispatch_result = dispatch_solver(year, clearing_price)
         emissions = _extract_emissions(dispatch_result)
         allowances = max(supply.available_allowances(clearing_price), emissions)
         ccr1_issued, ccr2_issued = _issued_quantities(clearing_price, allowances)
+        minted_allowances = float(max(allowances, emissions))
+        total_allowances = minted_allowances  # bank is zero when policy disabled
         return {
             'year': year,
             'p_co2': float(clearing_price),
-            'available_allowances': float(allowances),
+            'available_allowances': minted_allowances,
+            'allowances_total': total_allowances,
             'bank_prev': 0.0,
+            'bank_unadjusted': 0.0,
             'bank_new': 0.0,
             'surrendered': 0.0,
             'obligation_new': 0.0,
@@ -177,7 +221,12 @@ def _solve_allowance_market_year(
             'emissions': float(emissions),
             'ccr1_issued': float(ccr1_issued),
             'ccr2_issued': float(ccr2_issued),
-            'finalize': {'finalized': False, 'bank_final': 0.0},
+            'finalize': {
+                'finalized': False,
+                'bank_final': 0.0,
+                'remaining_obligation': 0.0,
+                'surrendered_additional': 0.0,
+            },
             '_dispatch_result': dispatch_result,
         }
 
@@ -189,29 +238,40 @@ def _solve_allowance_market_year(
     emissions_low = _extract_emissions(dispatch_low)
     allowances_low = supply.available_allowances(low)
 
-    if allowances_low >= emissions_low:
+    total_allowances_low = bank_prev + allowances_low
+    if total_allowances_low >= emissions_low:
         clearing_price = supply.enforce_floor(low)
         if clearing_price != low:
             dispatch_low = dispatch_solver(year, clearing_price)
             emissions_low = _extract_emissions(dispatch_low)
             allowances_low = supply.available_allowances(clearing_price)
-        bank = max(allowances_low - emissions_low, 0.0)
-        obligation = max(emissions_low - allowances_low, 0.0)
+            total_allowances_low = bank_prev + allowances_low
+        surrendered = min(surrender_frac * emissions_low, total_allowances_low)
+        bank_unadjusted = max(total_allowances_low - surrendered, 0.0)
+        obligation = max(outstanding_prev + emissions_low - surrendered, 0.0)
         ccr1_issued, ccr2_issued = _issued_quantities(clearing_price, allowances_low)
+        bank_carry = max(bank_unadjusted * carry_pct, 0.0)
         return {
             'year': year,
             'p_co2': float(clearing_price),
             'available_allowances': float(allowances_low),
-            'bank_prev': 0.0,
-            'bank_new': float(bank),
-            'surrendered': float(min(emissions_low, allowances_low)),
+            'allowances_total': float(total_allowances_low),
+            'bank_prev': float(bank_prev),
+            'bank_unadjusted': float(bank_unadjusted),
+            'bank_new': float(bank_carry),
+            'surrendered': float(surrendered),
             'obligation_new': float(obligation),
             'shortage_flag': False,
             'iterations': 0,
             'emissions': float(emissions_low),
             'ccr1_issued': float(ccr1_issued),
             'ccr2_issued': float(ccr2_issued),
-            'finalize': {'finalized': False, 'bank_final': float(bank)},
+            'finalize': {
+                'finalized': False,
+                'bank_final': float(bank_carry),
+                'remaining_obligation': float(obligation),
+                'surrendered_additional': 0.0,
+            },
             '_dispatch_result': dispatch_low,
         }
 
@@ -219,29 +279,39 @@ def _solve_allowance_market_year(
     emissions_high = _extract_emissions(dispatch_high)
     allowances_high = supply.available_allowances(high)
 
-    if allowances_high < emissions_high - tol:
+    if bank_prev + allowances_high < emissions_high - tol:
         clearing_price = supply.enforce_floor(high)
         if clearing_price != high:
             dispatch_high = dispatch_solver(year, clearing_price)
             emissions_high = _extract_emissions(dispatch_high)
             allowances_high = supply.available_allowances(clearing_price)
-        bank = max(allowances_high - emissions_high, 0.0)
-        obligation = max(emissions_high - allowances_high, 0.0)
+        total_allowances_high = bank_prev + allowances_high
+        surrendered = min(surrender_frac * emissions_high, total_allowances_high)
+        bank_unadjusted = max(total_allowances_high - surrendered, 0.0)
+        obligation = max(outstanding_prev + emissions_high - surrendered, 0.0)
         ccr1_issued, ccr2_issued = _issued_quantities(clearing_price, allowances_high)
+        bank_carry = max(bank_unadjusted * carry_pct, 0.0)
         return {
             'year': year,
             'p_co2': float(clearing_price),
             'available_allowances': float(allowances_high),
-            'bank_prev': 0.0,
-            'bank_new': float(bank),
-            'surrendered': float(min(emissions_high, allowances_high)),
+            'allowances_total': float(total_allowances_high),
+            'bank_prev': float(bank_prev),
+            'bank_unadjusted': float(bank_unadjusted),
+            'bank_new': float(bank_carry),
+            'surrendered': float(surrendered),
             'obligation_new': float(obligation),
             'shortage_flag': True,
             'iterations': max_iter_int,
             'emissions': float(emissions_high),
             'ccr1_issued': float(ccr1_issued),
             'ccr2_issued': float(ccr2_issued),
-            'finalize': {'finalized': False, 'bank_final': float(bank)},
+            'finalize': {
+                'finalized': False,
+                'bank_final': float(bank_carry),
+                'remaining_obligation': float(obligation),
+                'surrendered_additional': 0.0,
+            },
             '_dispatch_result': dispatch_high,
         }
 
@@ -259,8 +329,9 @@ def _solve_allowance_market_year(
         dispatch_mid = dispatch_solver(year, mid)
         emissions_mid = _extract_emissions(dispatch_mid)
         allowances_mid = supply.available_allowances(mid)
+        total_allowances_mid = bank_prev + allowances_mid
         iteration_count = iteration
-        if allowances_mid >= emissions_mid:
+        if total_allowances_mid >= emissions_mid:
             best_price = mid
             best_allowances = allowances_mid
             best_emissions = emissions_mid
@@ -278,26 +349,36 @@ def _solve_allowance_market_year(
         best_dispatch = dispatch_solver(year, clearing_price)
         best_emissions = _extract_emissions(best_dispatch)
         best_allowances = supply.available_allowances(clearing_price)
+    total_allowances = bank_prev + best_allowances
 
-    bank = max(best_allowances - best_emissions, 0.0)
-    obligation = max(best_emissions - best_allowances, 0.0)
-    shortage_flag = best_emissions > best_allowances + tol
+    surrendered = min(surrender_frac * best_emissions, total_allowances)
+    bank_unadjusted = max(total_allowances - surrendered, 0.0)
+    obligation = max(outstanding_prev + best_emissions - surrendered, 0.0)
+    shortage_flag = best_emissions > total_allowances + tol
     ccr1_issued, ccr2_issued = _issued_quantities(clearing_price, best_allowances)
+    bank_carry = max(bank_unadjusted * carry_pct, 0.0)
 
     return {
         'year': year,
         'p_co2': float(clearing_price),
         'available_allowances': float(best_allowances),
-        'bank_prev': 0.0,
-        'bank_new': float(bank),
-        'surrendered': float(min(best_emissions, best_allowances)),
+        'allowances_total': float(total_allowances),
+        'bank_prev': float(bank_prev),
+        'bank_unadjusted': float(bank_unadjusted),
+        'bank_new': float(bank_carry),
+        'surrendered': float(surrendered),
         'obligation_new': float(obligation),
         'shortage_flag': bool(shortage_flag),
         'iterations': iteration_count,
         'emissions': float(best_emissions),
         'ccr1_issued': float(ccr1_issued),
         'ccr2_issued': float(ccr2_issued),
-        'finalize': {'finalized': False, 'bank_final': float(bank)},
+        'finalize': {
+            'finalized': False,
+            'bank_final': float(bank_carry),
+            'remaining_obligation': float(obligation),
+            'surrendered_additional': 0.0,
+        },
         '_dispatch_result': best_dispatch,
     }
 
@@ -488,6 +569,12 @@ def _build_engine_outputs(
             iterations = 0
 
         allowances_available = float(summary.get("available_allowances", 0.0))
+        allowances_total = float(
+            summary.get(
+                "allowances_total",
+                allowances_available + float(summary.get("bank_prev", 0.0)),
+            )
+        )
 
         emissions_by_region = getattr(dispatch_result, "emissions_by_region", None)
         if isinstance(emissions_by_region, Mapping):
@@ -538,6 +625,7 @@ def _build_engine_outputs(
                 "iterations": iterations,
                 "emissions_tons": float(emissions_total),
                 "available_allowances": allowances_available,
+                "allowances_total": allowances_total,
                 "bank": bank_value,
                 "surrendered": surrendered,
                 "obligation": obligation,
@@ -590,26 +678,156 @@ def run_end_to_end_from_frames(
 
     frames_obj = Frames.coerce(frames)
     policy_spec = frames_obj.policy()
+    policy = policy_spec.to_policy()
     dispatch_solver = _dispatch_from_frames(frames_obj, use_network=use_network)
-    years_sequence = _coerce_years(policy_spec, years)
+    years_sequence = _coerce_years(policy, years)
 
     results: dict[int, dict[str, object]] = {}
-    for year in years_sequence:
+    policy_enabled_global = bool(getattr(policy, 'enabled', True))
+    bank_prev = float(policy.bank0) if policy_enabled_global else 0.0
+    bank_prev = max(0.0, bank_prev)
+
+    cp_track: dict[str, dict[str, float | list[int] | None]] = {}
+
+    for idx, year in enumerate(years_sequence):
         supply, record = _build_allowance_supply(
-            policy_spec,
+            policy,
             year,
             enable_floor=enable_floor,
             enable_ccr=enable_ccr,
         )
+
+        policy_enabled_year = bool(record.get('enabled', True)) and policy_enabled_global
+        cp_id = str(record.get('cp_id', 'NoPolicy'))
+        surrender_frac = float(record.get('annual_surrender_frac', getattr(policy, 'annual_surrender_frac', 0.5)))
+        carry_pct = float(record.get('carry_pct', getattr(policy, 'carry_pct', 1.0)))
+
+        state = cp_track.setdefault(
+            cp_id,
+            {
+                'emissions': 0.0,
+                'surrendered': 0.0,
+                'cap': 0.0,
+                'ccr1': 0.0,
+                'ccr2': 0.0,
+                'bank_start': bank_prev,
+                'outstanding': 0.0,
+                'years': [],
+            },
+        )
+
+        if state.get('bank_start') is None:
+            state['bank_start'] = bank_prev
+
+        years_list = state.setdefault('years', [])
+        if isinstance(years_list, list) and year not in years_list:
+            years_list.append(year)
+
+        outstanding_prev = float(state.get('outstanding', 0.0))
+
         summary = _solve_allowance_market_year(
             dispatch_solver,
             year,
             supply,
-            policy_enabled=bool(record.get('enabled', True)),
+            bank_prev,
+            outstanding_prev,
+            policy_enabled=policy_enabled_year,
             high_price=price_cap,
             tol=tol,
             max_iter=max_iter,
+            annual_surrender_frac=surrender_frac,
+            carry_pct=carry_pct,
         )
+
+        emissions = float(summary.get('emissions', 0.0))
+        surrendered = float(summary.get('surrendered', 0.0))
+        bank_unadjusted = float(summary.get('bank_unadjusted', summary.get('bank_new', 0.0)))
+        obligation = float(summary.get('obligation_new', 0.0))
+        ccr1_issued = float(summary.get('ccr1_issued', 0.0))
+        ccr2_issued = float(summary.get('ccr2_issued', 0.0))
+
+        state['emissions'] = float(state.get('emissions', 0.0)) + emissions
+        state['surrendered'] = float(state.get('surrendered', 0.0)) + surrendered
+        state['cap'] = float(state.get('cap', 0.0)) + float(record.get('cap', 0.0))
+        state['ccr1'] = float(state.get('ccr1', 0.0)) + ccr1_issued
+        state['ccr2'] = float(state.get('ccr2', 0.0)) + ccr2_issued
+        state['outstanding'] = obligation
+        state['bank_last_unadjusted'] = bank_unadjusted
+        state['bank_last_carried'] = float(summary.get('bank_new', 0.0))
+
+        finalize_summary = dict(summary.get('finalize', {}))
+
+        if not policy_enabled_year:
+            finalize_summary.setdefault('finalized', False)
+            finalize_summary.setdefault('bank_final', float(summary.get('bank_new', 0.0)))
+            finalize_summary.setdefault('remaining_obligation', 0.0)
+            finalize_summary.setdefault('surrendered_additional', 0.0)
+            summary['finalize'] = finalize_summary
+            results[year] = summary
+            bank_prev = float(summary.get('bank_new', 0.0))
+            state['outstanding'] = 0.0
+            continue
+
+        is_final_year = bool(record.get('full_compliance', False))
+        if not is_final_year:
+            if idx + 1 < len(years_sequence):
+                next_year = years_sequence[idx + 1]
+                next_record = _policy_record_for_year(policy, next_year)
+                next_cp_id = str(next_record.get('cp_id', 'NoPolicy'))
+                if next_cp_id != cp_id:
+                    is_final_year = True
+            else:
+                is_final_year = True
+
+        if is_final_year:
+            outstanding_before = obligation
+            surrender_additional = min(outstanding_before, bank_unadjusted)
+            remaining_obligation = max(outstanding_before - surrender_additional, 0.0)
+            bank_after_trueup = max(bank_unadjusted - surrender_additional, 0.0)
+            bank_carry = max(bank_after_trueup * carry_pct, 0.0)
+
+            summary['bank_unadjusted'] = bank_after_trueup
+            summary['bank_new'] = bank_carry
+            summary['obligation_new'] = remaining_obligation
+
+            state['surrendered'] = float(state.get('surrendered', 0.0)) + surrender_additional
+            state['bank_last_unadjusted'] = bank_after_trueup
+            state['bank_last_carried'] = bank_carry
+            state['outstanding'] = 0.0
+
+            total_allowances = float(state.get('bank_start', 0.0)) + float(state.get('cap', 0.0))
+            total_allowances += float(state.get('ccr1', 0.0)) + float(state.get('ccr2', 0.0))
+
+            finalize_summary = {
+                'finalized': True,
+                'cp_id': cp_id,
+                'bank_final': float(bank_carry),
+                'remaining_obligation': float(remaining_obligation),
+                'surrendered_additional': float(surrender_additional),
+                'shortage_flag': bool(remaining_obligation > 1e-9),
+                'cp_emissions': float(state.get('emissions', 0.0)),
+                'cp_surrendered': float(state.get('surrendered', 0.0)),
+                'cp_cap': float(state.get('cap', 0.0)),
+                'cp_ccr1': float(state.get('ccr1', 0.0)),
+                'cp_ccr2': float(state.get('ccr2', 0.0)),
+                'bank_start': float(state.get('bank_start', 0.0)),
+                'cp_allowances_total': float(total_allowances),
+            }
+
+            bank_prev = bank_carry
+        else:
+            bank_carry = max(float(summary.get('bank_new', 0.0)), 0.0)
+            finalize_summary = {
+                'finalized': False,
+                'bank_final': bank_carry,
+                'remaining_obligation': float(obligation),
+                'surrendered_additional': 0.0,
+            }
+            summary['bank_new'] = bank_carry
+            summary['obligation_new'] = obligation
+            bank_prev = bank_carry
+
+        summary['finalize'] = finalize_summary
         results[year] = summary
 
     ordered_years = sorted(results)
