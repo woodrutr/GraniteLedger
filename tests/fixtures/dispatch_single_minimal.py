@@ -56,9 +56,9 @@ def baseline_units() -> pd.DataFrame:
 def baseline_frames(year: int = 2030, load_mwh: float = 1_000_000.0) -> Frames:
     """Construct frames with the baseline unit data and supplied load."""
 
-    demand = pd.DataFrame([
-        {"year": year, "region": "default", "demand_mwh": float(load_mwh)}
-    ])
+    demand = pd.DataFrame(
+        [{"year": year, "region": "default", "demand_mwh": float(load_mwh)}]
+    )
     fuels = pd.DataFrame(
         [
             {"fuel": "wind", "covered": False},
@@ -88,4 +88,3 @@ def infeasible_frames(year: int = 2030) -> Frames:
     demand.loc[demand["year"] == year, "demand_mwh"] = total_cap + 10_000.0
 
     return base.with_frame("demand", demand)
-

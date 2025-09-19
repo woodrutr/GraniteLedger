@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from itertools import combinations, product
-from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple, cast
+from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple, TYPE_CHECKING, cast
 
 try:  # pragma: no cover - optional dependency guard
     import pandas as pd
 except ImportError:  # pragma: no cover - optional dependency
     pd = cast(Any, None)
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    import pandas as pd
 
 from io_loader import Frames
 
@@ -17,6 +20,8 @@ from .interface import DispatchResult
 from .lp_single import HOURS_PER_YEAR
 
 _TOL = 1e-9
+
+PANDAS_REQUIRED_MESSAGE = "pandas is required to operate the network dispatch engine."
 
 
 def _ensure_pandas() -> None:
@@ -57,21 +62,21 @@ def _normalize_interfaces(
 
     for regions, limit in items:
         if len(regions) != 2:
-            raise ValueError('Interface keys must contain exactly two regions.')
+            raise ValueError("Interface keys must contain exactly two regions.")
 
         region_a, region_b = regions
         if region_a == region_b:
-            raise ValueError('Interfaces must connect two distinct regions.')
+            raise ValueError("Interfaces must connect two distinct regions.")
 
         limit = float(limit)
         if limit < 0.0:
-            raise ValueError('Transfer capability must be non-negative.')
+            raise ValueError("Transfer capability must be non-negative.")
 
         key = tuple(sorted((region_a, region_b)))
         if key in normalized:
             if abs(normalized[key] - limit) > _TOL:
                 raise ValueError(
-                    f'Conflicting limits specified for interface between {region_a} and {region_b}.',
+                    f"Conflicting limits specified for interface between {region_a} and {region_b}.",
                 )
         else:
             normalized[key] = limit
@@ -209,12 +214,12 @@ def _solve_dispatch_problem(
     num_vars = len(costs)
     if num_vars == 0:
         if any(abs(value) > tol for value in rhs):
-            raise RuntimeError('No decision variables available to satisfy the load balance.')
+            raise RuntimeError("No decision variables available to satisfy the load balance.")
         return [], 0.0
 
     rank = _matrix_rank(matrix, tol=tol)
     if rank == 0:
-        raise RuntimeError('Dispatch problem must include at least one balance constraint.')
+        raise RuntimeError("Dispatch problem must include at least one balance constraint.")
 
     indices = list(range(num_vars))
     best_solution: List[float] | None = None
@@ -277,7 +282,7 @@ def _solve_dispatch_problem(
                 best_solution = candidate
 
     if best_solution is None or best_objective is None:
-        raise RuntimeError('Unable to find feasible dispatch solution.')
+        raise RuntimeError("Unable to find feasible dispatch solution.")
 
     return best_solution, best_objective
 
@@ -292,7 +297,7 @@ def solve(
     """Solve the economic dispatch problem with transmission interfaces."""
 
     if not generators and not load_by_region:
-        raise ValueError('At least one generator or load is required to solve the dispatch problem.')
+        raise ValueError("At least one generator or load is required to solve the dispatch problem.")
 
     normalized_interfaces = _normalize_interfaces(interfaces)
 
@@ -309,7 +314,7 @@ def solve(
         regions.add(region_b)
 
     if not regions:
-        raise ValueError('No regions supplied for dispatch problem.')
+        raise ValueError("No regions supplied for dispatch problem.")
 
     region_list = sorted(regions)
     region_index = {region: idx for idx, region in enumerate(region_list)}
@@ -326,7 +331,7 @@ def solve(
 
     for generator in generators:
         if generator.region not in region_index:
-            raise ValueError(f'Region {generator.region} is not defined in the load data.')
+            raise ValueError(f"Region {generator.region} is not defined in the load data.")
         column = [0.0] * len(region_list)
         column[region_index[generator.region]] = 1.0
         matrix_columns.append(column)
@@ -360,12 +365,10 @@ def solve(
 
     gen_by_fuel: Dict[str, float] = {}
     emissions_tons = 0.0
-    # initialize accumulators
     emissions_by_region_totals: Dict[str, float] = {region: 0.0 for region in region_list}
     generation_by_region: Dict[str, float] = {region: 0.0 for region in region_list}
     generation_by_coverage: Dict[str, float] = {"covered": 0.0, "non_covered": 0.0}
 
-    # loop over generators
     for idx in generator_indices:
         generator = generator_refs[idx]
         assert generator is not None
@@ -378,7 +381,6 @@ def solve(
         coverage_key = "covered" if generator.covered else "non_covered"
         generation_by_coverage[coverage_key] += output
 
-    # compute coverage flags and trade flows
     region_coverage_result: Dict[str, bool] = {}
     imports_to_covered = 0.0
     exports_from_covered = 0.0
@@ -398,7 +400,6 @@ def solve(
             elif net_import < -_TOL:
                 exports_from_covered += -net_import
 
-    # region marginal prices
     delta = 1e-4
     region_prices: Dict[str, float] = {}
     for region, row_idx in region_index.items():
@@ -467,7 +468,7 @@ def solve_from_frames(
     for row in units.itertuples(index=False):
         region_raw = row.region
         region = (
-            str(region_raw) if region_raw is not None and not pd.isna(region_raw) else 'default'
+            str(region_raw) if region_raw is not None and not pd.isna(region_raw) else "default"
         )
         fuel = str(row.fuel)
         if coverage_by_region:

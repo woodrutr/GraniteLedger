@@ -97,8 +97,8 @@ def test_infeasible_load_reports_shortfall_and_price() -> None:
 
     frames = infeasible_frames()
     demand = frames.demand()
-    year = int(demand.iloc[0]['year'])
-    load = float(demand.loc[demand['year'] == year, 'demand_mwh'].sum())
+    year = int(demand.iloc[0]["year"])
+    load = float(demand.loc[demand["year"] == year, "demand_mwh"].sum())
 
     summary = _dispatch_merit_order(frames.units(), load, allowance_cost=10.0)
     caps = summary["units"]["cap_mwh"]

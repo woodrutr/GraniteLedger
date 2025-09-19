@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import importlib
 import math
 
 import pytest
 
-from dispatch.interface import DispatchResult
-from dispatch.stub import EMISSIONS_INTERCEPT, EMISSIONS_SLOPE, solve
+pd = pytest.importorskip('pandas')
+
+DispatchResult = importlib.import_module('dispatch.interface').DispatchResult
+_stub = importlib.import_module('dispatch.stub')
+EMISSIONS_INTERCEPT = _stub.EMISSIONS_INTERCEPT
+EMISSIONS_SLOPE = _stub.EMISSIONS_SLOPE
+solve = _stub.solve
 
 
 @pytest.mark.parametrize(
