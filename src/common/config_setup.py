@@ -11,11 +11,13 @@ import numpy as np
 import tomllib
 from pathlib import Path
 from collections import OrderedDict
+from collections.abc import Mapping
 import types
 import argparse
 import hashlib
 import json
 import re
+import copy
 
 # Constants
 SHORT_TON_TO_METRIC_TON = 0.90718474
@@ -42,7 +44,13 @@ class Config_settings:
     _OUTPUT_OVERRIDE_KEY = 'output_name'
     _OUTPUT_NAME_SANITIZER = re.compile(r'[^A-Za-z0-9._-]+')
 
-    def __init__(self, config_path: Path, args: argparse.Namespace | None = None, test=False):
+    def __init__(
+        self,
+        config_path: Path,
+        args: argparse.Namespace | None = None,
+        test=False,
+        capacity_build_limits: Mapping | None = None,
+    ):
         """Creates configuration object upon instantiation
 
         Parameters
@@ -73,9 +81,12 @@ class Config_settings:
             self.args.op_mode = None
             self.args.debug = False
             self.args.output_name = None
+            self.args.capacity_build_limits = None
         else:
             if not hasattr(self.args, 'output_name'):
                 self.args.output_name = None
+            if not hasattr(self.args, 'capacity_build_limits'):
+                self.args.capacity_build_limits = None
         self.PROJECT_ROOT = PROJECT_ROOT
 
         # __INIT__: Dump toml, sse args to set mode
@@ -260,6 +271,15 @@ class Config_settings:
         self.sw_reserves = int(config.get('sw_reserves', 0))
         self.sw_learning = int(config.get('sw_learning', 0))
         self.sw_expansion = int(config.get('sw_expansion', 0))
+
+        raw_capacity_limits = capacity_build_limits
+        if raw_capacity_limits is None:
+            raw_capacity_limits = getattr(self.args, 'capacity_build_limits', None)
+        if raw_capacity_limits is None:
+            raw_capacity_limits = config.get('capacity_build_limits')
+        self.capacity_build_limits = self._normalize_capacity_build_limits(
+            raw_capacity_limits
+        )
 
         ############################################################################################
         # __INIT__: Residential Configs
@@ -863,6 +883,61 @@ class Config_settings:
             except (TypeError, ValueError):
                 continue
         return normalized
+
+    def _coerce_int_or_none(self, value):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _normalize_capacity_build_limits(self, limits_source):
+        """Normalize capacity build limit overrides into a nested mapping."""
+
+        if not isinstance(limits_source, Mapping):
+            return {}
+
+        normalized: dict[int, dict[str, dict[int, dict[int, float] | float]]] = {}
+
+        for region_key, tech_map in limits_source.items():
+            region = self._coerce_int_or_none(region_key)
+            if region is None or not isinstance(tech_map, Mapping):
+                continue
+            region_entry = normalized.setdefault(region, {})
+            for tech_key, year_map in tech_map.items():
+                if tech_key in (None, '') or not isinstance(year_map, Mapping):
+                    continue
+                tech_str = str(tech_key)
+                tech_entry = region_entry.setdefault(tech_str, {})
+                for year_key, value in year_map.items():
+                    year = self._coerce_int_or_none(year_key)
+                    if year is None:
+                        continue
+                    if isinstance(value, Mapping):
+                        step_map: dict[int, float] = {}
+                        for step_key, limit_value in value.items():
+                            step = self._coerce_int_or_none(step_key)
+                            if step is None:
+                                continue
+                            try:
+                                limit_float = float(limit_value)
+                            except (TypeError, ValueError):
+                                continue
+                            step_map[step] = limit_float
+                        if step_map:
+                            tech_entry[year] = step_map
+                    else:
+                        try:
+                            limit_float = float(value)
+                        except (TypeError, ValueError):
+                            continue
+                        tech_entry[year] = limit_float
+
+        return normalized
+
+    def get_capacity_build_limits(self) -> dict[int, dict[str, dict[int, dict[int, float] | float]]]:
+        """Return a deep copy of the configured capacity build limits."""
+
+        return copy.deepcopy(self.capacity_build_limits)
 
     def _coalesce_group_value(self, group_config, *keys):
         """Return the first value present in a group configuration for any key."""

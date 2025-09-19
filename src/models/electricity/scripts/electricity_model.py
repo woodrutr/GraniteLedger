@@ -196,6 +196,12 @@ class PowerModel(Model):
             self.declare_set('Build_index', setA.Build_index)
             self.declare_set('CapacityCredit_index', all_frames['CapacityCredit'])
             self.declare_set('capacity_retirements_index', setA.capacity_retirements_index)
+            self.declare_param(
+                'CapacityBuildLimit',
+                self.capacity_builds_index,
+                all_frames['CapacityBuildLimit'],
+                mutable=True,
+            )
 
         # if capacity expansion and learning are on
         # this block of code demonstrates the application of the switch option,
@@ -1210,6 +1216,14 @@ class PowerModel(Model):
 
         # if capacity expansion is on
         if self.sw_expansion:
+
+            @self.Constraint(self.capacity_builds_index)
+            def capacity_build_limit(self, r, tech, y, step):
+                """Limit new builds to configured maximum capacity."""
+
+                return self.capacity_builds[(r, tech, y, step)] <= self.CapacityBuildLimit[
+                    (r, tech, y, step)
+                ]
 
             @self.Constraint(self.capacity_retirements_index)
             def capacity_retirements_ub(self, tech, y, r, step):
