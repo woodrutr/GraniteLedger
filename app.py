@@ -10,7 +10,6 @@ Created on Wed Sept 19 2024 by Adam Heisey
 import dash
 from dash import dcc, html, Input, Output, State
 import dash_bootstrap_components as dbc
-import toml
 import base64
 import io
 import ast
@@ -21,7 +20,6 @@ import os
 import tomli
 import tomlkit
 import sys
-import shlex
 
 # Import python modules
 from definitions import PROJECT_ROOT
@@ -227,16 +225,14 @@ def run_mode(n_clicks, selected_mode):
     modes_available = {'unified-combo', 'gs-combo', 'standalone'}
 
     if selected_mode not in modes_available:
-        return f"Error: '{selected_mode}' is not a valide mode.", 0
+        return f"Error: '{selected_mode}' is not a valid mode.", 0
 
     try:
-        selected_mode = shlex.quote(selected_mode)
-
         # run selected mode
         app_main(selected_mode)
 
         return (
-            f"{selected_mode.capitalize()} mode has finished running. See results in output/'{selected_mode}'.",
+            f"{selected_mode} mode has finished running. See results in output/{selected_mode}.",
             100,
         )
     except Exception as e:
