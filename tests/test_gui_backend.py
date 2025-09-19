@@ -1,6 +1,6 @@
-from __future__ import annotations
-
 """GUI backend tests (skipped automatically if Streamlit is not installed)."""
+
+from __future__ import annotations
 
 import shutil
 
@@ -36,10 +36,7 @@ def _frames_for_years(years: list[int]) -> object:
     base = baseline_frames(year=years[0])
     load = float(base.demand()["demand_mwh"].iloc[0])
     demand = pd.DataFrame(
-        [
-            {"year": year, "region": "default", "demand_mwh": load}
-            for year in years
-        ]
+        [{"year": year, "region": "default", "demand_mwh": load} for year in years]
     )
     return base.with_frame("demand", demand)
 
