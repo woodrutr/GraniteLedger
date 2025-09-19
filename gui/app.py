@@ -7,6 +7,7 @@ and report clear error messages.
 
 from __future__ import annotations
 
+import importlib.util
 import logging
 import shutil
 import tempfile
@@ -14,10 +15,14 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, TypeVar, cast
 
-import streamlit as st
 import tomllib
 
 from definitions import PROJECT_ROOT
+
+if importlib.util.find_spec('streamlit') is not None:  # pragma: no cover - optional dependency
+    import streamlit as st  # type: ignore[import-not-found]
+else:  # pragma: no cover - optional dependency
+    st = None  # type: ignore[assignment]
 
 try:  # pragma: no cover - optional dependency
     import pandas as _PANDAS_MODULE  # type: ignore[import-not-found]
@@ -54,6 +59,10 @@ PANDAS_REQUIRED_MESSAGE = (
     'pandas is required to run the policy simulator. Install pandas to continue.'
 )
 
+STREAMLIT_REQUIRED_MESSAGE = (
+    'streamlit is required to run the policy simulator UI. Install streamlit to continue.'
+)
+
 
 def _ensure_pandas():
     """Return the pandas module or raise an informative error."""
@@ -77,6 +86,13 @@ def _ensure_engine_runner():
     if _RUN_END_TO_END is None:
         raise ModuleNotFoundError(PANDAS_REQUIRED_MESSAGE)
     return _RUN_END_TO_END
+
+
+def _ensure_streamlit() -> None:
+    """Raise an informative error when the GUI stack is unavailable."""
+
+    if st is None:
+        raise ModuleNotFoundError(STREAMLIT_REQUIRED_MESSAGE)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -581,6 +597,7 @@ def run_policy_simulation(
 
 
 def _cleanup_session_temp_dirs() -> None:
+    _ensure_streamlit()
     temp_dirs = st.session_state.get('temp_dirs', [])
     for path_str in temp_dirs:
         try:
@@ -591,6 +608,7 @@ def _cleanup_session_temp_dirs() -> None:
 
 
 def _render_results(result: dict[str, Any]) -> None:  # pragma: no cover - UI rendering
+    _ensure_streamlit()
     if 'error' in result:
         st.error(result['error'])
         return
@@ -630,6 +648,7 @@ def _render_results(result: dict[str, Any]) -> None:  # pragma: no cover - UI re
 
 
 def main() -> None:  # pragma: no cover - Streamlit entry point
+    _ensure_streamlit()
     st.set_page_config(page_title='BlueSky Policy Simulator', layout='wide')
     st.title('BlueSky Policy Simulator')
     st.write('Upload a run configuration and execute the annual allowance market engine.')
