@@ -1,7 +1,3 @@
-"""Tests for the linear programming dispatch with a regional network."""
-
-from __future__ import annotations
-
 import math
 import pytest
 import pandas as pd
