@@ -1,12 +1,14 @@
 import importlib
 import io
 import shutil
-import pytest
-import tomllib
 
-pd = pytest.importorskip("pandas")
+import pytest
+import pandas as pd
 
 from tests.fixtures.dispatch_single_minimal import baseline_frames
+from gui.app import run_policy_simulation
+
+streamlit = pytest.importorskip("streamlit")
 
 
 def _baseline_config() -> dict:
@@ -44,10 +46,6 @@ def _cleanup_temp_dir(result: dict) -> None:
 
 
 def test_backend_generates_outputs(tmp_path):
-    pytest.importorskip("streamlit")
-
-    from gui.app import run_policy_simulation
-
     config = _baseline_config()
     frames = _frames_for_years([2025, 2026])
     result = run_policy_simulation(
@@ -76,10 +74,6 @@ def test_backend_generates_outputs(tmp_path):
 
 
 def test_backend_policy_toggle_affects_price():
-    pytest.importorskip("streamlit")
-
-    from gui.app import run_policy_simulation
-
     config = _baseline_config()
     frames = _frames_for_years([2025])
 
@@ -117,10 +111,6 @@ def test_backend_policy_toggle_affects_price():
 
 
 def test_backend_disabled_toggle_propagates_flags(monkeypatch):
-    pytest.importorskip("streamlit")
-
-    from gui.app import run_policy_simulation
-
     real_runner = importlib.import_module("engine.run_loop").run_end_to_end_from_frames
     captured: dict[str, object] = {}
 
@@ -158,10 +148,6 @@ def test_backend_disabled_toggle_propagates_flags(monkeypatch):
 
 
 def test_backend_returns_error_for_invalid_frames():
-    pytest.importorskip("streamlit")
-
-    from gui.app import run_policy_simulation
-
     config = _baseline_config()
     result = run_policy_simulation(
         config,
@@ -174,10 +160,6 @@ def test_backend_returns_error_for_invalid_frames():
 
 
 def test_backend_reports_missing_pandas(monkeypatch):
-    pytest.importorskip("streamlit")
-
-    from gui.app import run_policy_simulation
-
     config = _baseline_config()
 
     monkeypatch.setattr("gui.app._PANDAS_MODULE", None)
@@ -189,10 +171,6 @@ def test_backend_reports_missing_pandas(monkeypatch):
 
 
 def test_backend_builds_default_frames(tmp_path):
-    pytest.importorskip("streamlit")
-
-    from gui.app import run_policy_simulation
-
     config = _baseline_config()
     result = run_policy_simulation(config, start_year=2025, end_year=2025)
 
@@ -203,8 +181,6 @@ def test_backend_builds_default_frames(tmp_path):
 
 
 def test_build_policy_frame_control_override():
-    pytest.importorskip("streamlit")
-
     from gui.app import _build_policy_frame
 
     config = _baseline_config()
@@ -222,8 +198,6 @@ def test_build_policy_frame_control_override():
 
 
 def test_build_policy_frame_disabled_defaults():
-    pytest.importorskip("streamlit")
-
     from gui.app import _build_policy_frame
 
     config = _baseline_config()
@@ -236,8 +210,6 @@ def test_build_policy_frame_disabled_defaults():
 
 
 def test_load_config_data_accepts_various_sources(tmp_path):
-    pytest.importorskip("streamlit")
-
     from gui.app import _load_config_data
 
     mapping = {"a": 1}
@@ -258,8 +230,6 @@ def test_load_config_data_accepts_various_sources(tmp_path):
 
 
 def test_year_and_selection_helpers_cover_branches():
-    pytest.importorskip("streamlit")
-
     from gui.app import _years_from_config, _select_years
 
     config = {"years": [{"year": 2025}, 2026]}

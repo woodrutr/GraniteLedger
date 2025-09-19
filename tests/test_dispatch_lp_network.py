@@ -1,7 +1,7 @@
 import math
-import pytest
 
-pd = pytest.importorskip("pandas")
+import pytest
+import pandas as pd
 
 from dispatch.interface import DispatchResult
 from dispatch.lp_network import solve_from_frames
