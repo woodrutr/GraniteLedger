@@ -540,6 +540,8 @@ def run_policy_simulation(
     start_year: int | None = None,
     end_year: int | None = None,
     carbon_policy_enabled: bool = True,
+    enable_floor: bool = True,
+    enable_ccr: bool = True,
     ccr1_enabled: bool = True,
     ccr2_enabled: bool = True,
     control_period_years: int | None = None,
@@ -565,6 +567,10 @@ def run_policy_simulation(
     except ModuleNotFoundError as exc:
         return {'error': str(exc)}
 
+    if not carbon_policy_enabled:
+        enable_floor = False
+        enable_ccr = False
+
     try:
         frames_obj = frames_cls.coerce(frames) if frames is not None else _build_default_frames(years)
         frames_obj = _ensure_years_in_demand(frames_obj, years)
@@ -578,7 +584,13 @@ def run_policy_simulation(
         )
         frames_obj = frames_obj.with_frame('policy', policy_frame)
 
-        outputs = runner(frames_obj, years=years, price_initial=0.0)
+        outputs = runner(
+            frames_obj,
+            years=years,
+            price_initial=0.0,
+            enable_floor=bool(enable_floor),
+            enable_ccr=bool(enable_ccr),
+        )
         temp_dir, csv_files = _write_outputs_to_temp(outputs)
 
         result = {
@@ -692,6 +704,16 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
             )
 
         carbon_policy_enabled = st.checkbox('Enable carbon policy', value=True)
+        enable_floor = st.checkbox(
+            'Enable Price Floor',
+            value=True,
+            disabled=not carbon_policy_enabled,
+        )
+        enable_ccr = st.checkbox(
+            'Enable CCR',
+            value=True,
+            disabled=not carbon_policy_enabled,
+        )
         ccr1_enabled = st.checkbox(
             'Enable CCR tranche 1',
             value=True,
@@ -717,11 +739,13 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
                     step=1,
                     format='%d',
                 )
-            )
+        )
         if not carbon_policy_enabled:
             ccr1_enabled = False
             ccr2_enabled = False
             control_period_years = None
+            enable_floor = False
+            enable_ccr = False
         run_clicked = st.button('Run', type='primary')
 
     result = st.session_state.get('last_result')
@@ -734,6 +758,8 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
                 start_year=int(start_year),
                 end_year=int(end_year),
                 carbon_policy_enabled=bool(carbon_policy_enabled),
+                enable_floor=bool(enable_floor),
+                enable_ccr=bool(enable_ccr),
                 ccr1_enabled=bool(ccr1_enabled),
                 ccr2_enabled=bool(ccr2_enabled),
                 control_period_years=control_period_years,

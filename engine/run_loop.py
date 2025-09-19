@@ -1,9 +1,7 @@
 """Annual fixed-point integration between dispatch and allowance market."""
 from __future__ import annotations
 
-from __future__ import annotations
-
-from typing import Callable, Iterable, Mapping, Sequence, cast
+from typing import Any, Callable, Iterable, Mapping, Sequence, cast
 
 try:  # pragma: no cover - optional dependency guard
     import pandas as pd
@@ -14,6 +12,7 @@ from dispatch.lp_network import solve_from_frames as solve_network_from_frames
 from dispatch.lp_single import solve as solve_single
 from engine.outputs import EngineOutputs
 from policy.allowance_annual import AllowanceAnnual, RGGIPolicyAnnual
+from policy.allowance_supply import AllowanceSupply
 
 from io_loader import Frames
 
@@ -27,7 +26,7 @@ def _ensure_pandas() -> None:
         )
 
 
-def _coerce_years(policy: RGGIPolicyAnnual, years: Iterable[int] | None) -> list[int]:
+def _coerce_years(policy: Any, years: Iterable[int] | None) -> list[int]:
     if years is None:
         series_index = getattr(policy.cap, 'index', [])
         years_list = list(series_index) if series_index is not None else []
@@ -55,6 +54,252 @@ def _extract_emissions(dispatch_output: object) -> float:
     if isinstance(dispatch_output, Mapping) and 'emissions_tons' in dispatch_output:
         return float(dispatch_output['emissions_tons'])
     return float(dispatch_output)
+
+
+def _policy_value(series: Any, year: int, default: float = 0.0) -> float:
+    """Return the policy value for ``year`` falling back to ``default``."""
+
+    if series is None:
+        return float(default)
+    getter = getattr(series, 'get', None)
+    if callable(getter):
+        raw = getter(year, default)
+    else:
+        try:
+            raw = series.loc[year]  # type: ignore[index]
+        except Exception:  # pragma: no cover - defensive guard
+            raw = default
+    if raw is None:
+        return float(default)
+    if pd is not None:
+        try:
+            if pd.isna(raw):  # type: ignore[arg-type]
+                return float(default)
+        except AttributeError:  # pragma: no cover - defensive guard
+            pass
+    try:
+        return float(raw)
+    except (TypeError, ValueError):  # pragma: no cover - defensive guard
+        return float(default)
+
+
+def _policy_record_for_year(policy: Any, year: int) -> dict[str, float | bool]:
+    """Return a mapping of scalar policy values for ``year``."""
+
+    record = {
+        'cap': _policy_value(getattr(policy, 'cap', None), year),
+        'floor': _policy_value(getattr(policy, 'floor', None), year),
+        'ccr1_trigger': _policy_value(getattr(policy, 'ccr1_trigger', None), year),
+        'ccr1_qty': _policy_value(getattr(policy, 'ccr1_qty', None), year),
+        'ccr2_trigger': _policy_value(getattr(policy, 'ccr2_trigger', None), year),
+        'ccr2_qty': _policy_value(getattr(policy, 'ccr2_qty', None), year),
+        'enabled': bool(getattr(policy, 'enabled', True)),
+        'ccr1_enabled': bool(getattr(policy, 'ccr1_enabled', True)),
+        'ccr2_enabled': bool(getattr(policy, 'ccr2_enabled', True)),
+    }
+    return record
+
+
+def _build_allowance_supply(
+    policy: Any,
+    year: int,
+    *,
+    enable_floor: bool,
+    enable_ccr: bool,
+) -> tuple[AllowanceSupply, dict[str, float | bool]]:
+    """Construct :class:`AllowanceSupply` for ``year`` along with the raw record."""
+
+    record = _policy_record_for_year(policy, year)
+    ccr1_qty = float(record['ccr1_qty']) if record['ccr1_enabled'] else 0.0
+    ccr2_qty = float(record['ccr2_qty']) if record['ccr2_enabled'] else 0.0
+    supply = AllowanceSupply(
+        cap=float(record['cap']),
+        floor=float(record['floor']),
+        ccr1_trigger=float(record['ccr1_trigger']),
+        ccr1_qty=ccr1_qty,
+        ccr2_trigger=float(record['ccr2_trigger']),
+        ccr2_qty=ccr2_qty,
+        enable_floor=enable_floor,
+        enable_ccr=enable_ccr and (ccr1_qty > 0.0 or ccr2_qty > 0.0),
+    )
+    record['ccr1_qty'] = ccr1_qty
+    record['ccr2_qty'] = ccr2_qty
+    return supply, record
+
+
+def _solve_allowance_market_year(
+    dispatch_solver: Callable[[int, float], object],
+    year: int,
+    supply: AllowanceSupply,
+    *,
+    policy_enabled: bool,
+    high_price: float,
+    tol: float,
+    max_iter: int,
+) -> dict[str, object]:
+    """Solve for the allowance clearing price for ``year`` using bisection."""
+
+    tol = max(float(tol), 0.0)
+    max_iter_int = max(int(max_iter), 0)
+    high_price = float(high_price)
+
+    def _issued_quantities(price: float, allowances: float) -> tuple[float, float]:
+        if not supply.enable_ccr:
+            return 0.0, 0.0
+        remaining = max(allowances - float(supply.cap), 0.0)
+        if remaining <= 0.0:
+            return 0.0, 0.0
+        issued1 = 0.0
+        issued2 = 0.0
+        if price >= supply.ccr1_trigger and supply.ccr1_qty > 0.0:
+            issued1 = min(float(supply.ccr1_qty), remaining)
+            remaining -= issued1
+        if price >= supply.ccr2_trigger and supply.ccr2_qty > 0.0:
+            issued2 = min(float(supply.ccr2_qty), remaining)
+        return issued1, issued2
+
+    if not policy_enabled:
+        clearing_price = 0.0
+        dispatch_result = dispatch_solver(year, clearing_price)
+        emissions = _extract_emissions(dispatch_result)
+        allowances = max(supply.available_allowances(clearing_price), emissions)
+        ccr1_issued, ccr2_issued = _issued_quantities(clearing_price, allowances)
+        return {
+            'year': year,
+            'p_co2': float(clearing_price),
+            'available_allowances': float(allowances),
+            'bank_prev': 0.0,
+            'bank_new': 0.0,
+            'surrendered': 0.0,
+            'obligation_new': 0.0,
+            'shortage_flag': False,
+            'iterations': 0,
+            'emissions': float(emissions),
+            'ccr1_issued': float(ccr1_issued),
+            'ccr2_issued': float(ccr2_issued),
+            'finalize': {'finalized': False, 'bank_final': 0.0},
+            '_dispatch_result': dispatch_result,
+        }
+
+    min_price = supply.floor if supply.enable_floor else 0.0
+    low = max(0.0, float(min_price))
+    high = max(low, high_price if high_price > 0.0 else low)
+
+    dispatch_low = dispatch_solver(year, low)
+    emissions_low = _extract_emissions(dispatch_low)
+    allowances_low = supply.available_allowances(low)
+
+    if allowances_low >= emissions_low:
+        clearing_price = supply.enforce_floor(low)
+        if clearing_price != low:
+            dispatch_low = dispatch_solver(year, clearing_price)
+            emissions_low = _extract_emissions(dispatch_low)
+            allowances_low = supply.available_allowances(clearing_price)
+        bank = max(allowances_low - emissions_low, 0.0)
+        obligation = max(emissions_low - allowances_low, 0.0)
+        ccr1_issued, ccr2_issued = _issued_quantities(clearing_price, allowances_low)
+        return {
+            'year': year,
+            'p_co2': float(clearing_price),
+            'available_allowances': float(allowances_low),
+            'bank_prev': 0.0,
+            'bank_new': float(bank),
+            'surrendered': float(min(emissions_low, allowances_low)),
+            'obligation_new': float(obligation),
+            'shortage_flag': False,
+            'iterations': 0,
+            'emissions': float(emissions_low),
+            'ccr1_issued': float(ccr1_issued),
+            'ccr2_issued': float(ccr2_issued),
+            'finalize': {'finalized': False, 'bank_final': float(bank)},
+            '_dispatch_result': dispatch_low,
+        }
+
+    dispatch_high = dispatch_solver(year, high)
+    emissions_high = _extract_emissions(dispatch_high)
+    allowances_high = supply.available_allowances(high)
+
+    if allowances_high < emissions_high - tol:
+        clearing_price = supply.enforce_floor(high)
+        if clearing_price != high:
+            dispatch_high = dispatch_solver(year, clearing_price)
+            emissions_high = _extract_emissions(dispatch_high)
+            allowances_high = supply.available_allowances(clearing_price)
+        bank = max(allowances_high - emissions_high, 0.0)
+        obligation = max(emissions_high - allowances_high, 0.0)
+        ccr1_issued, ccr2_issued = _issued_quantities(clearing_price, allowances_high)
+        return {
+            'year': year,
+            'p_co2': float(clearing_price),
+            'available_allowances': float(allowances_high),
+            'bank_prev': 0.0,
+            'bank_new': float(bank),
+            'surrendered': float(min(emissions_high, allowances_high)),
+            'obligation_new': float(obligation),
+            'shortage_flag': True,
+            'iterations': max_iter_int,
+            'emissions': float(emissions_high),
+            'ccr1_issued': float(ccr1_issued),
+            'ccr2_issued': float(ccr2_issued),
+            'finalize': {'finalized': False, 'bank_final': float(bank)},
+            '_dispatch_result': dispatch_high,
+        }
+
+    best_price = high
+    best_allowances = allowances_high
+    best_emissions = emissions_high
+    best_dispatch = dispatch_high
+    iteration_count = 0
+
+    low_bound = low
+    high_bound = high
+
+    for iteration in range(1, max_iter_int + 1):
+        mid = 0.5 * (low_bound + high_bound)
+        dispatch_mid = dispatch_solver(year, mid)
+        emissions_mid = _extract_emissions(dispatch_mid)
+        allowances_mid = supply.available_allowances(mid)
+        iteration_count = iteration
+        if allowances_mid >= emissions_mid:
+            best_price = mid
+            best_allowances = allowances_mid
+            best_emissions = emissions_mid
+            best_dispatch = dispatch_mid
+            high_bound = mid
+            if abs(allowances_mid - emissions_mid) <= tol:
+                break
+        else:
+            low_bound = mid
+        if abs(high_bound - low_bound) <= max(tol, 1e-6):
+            break
+
+    clearing_price = supply.enforce_floor(best_price)
+    if clearing_price != best_price:
+        best_dispatch = dispatch_solver(year, clearing_price)
+        best_emissions = _extract_emissions(best_dispatch)
+        best_allowances = supply.available_allowances(clearing_price)
+
+    bank = max(best_allowances - best_emissions, 0.0)
+    obligation = max(best_emissions - best_allowances, 0.0)
+    shortage_flag = best_emissions > best_allowances + tol
+    ccr1_issued, ccr2_issued = _issued_quantities(clearing_price, best_allowances)
+
+    return {
+        'year': year,
+        'p_co2': float(clearing_price),
+        'available_allowances': float(best_allowances),
+        'bank_prev': 0.0,
+        'bank_new': float(bank),
+        'surrendered': float(min(best_emissions, best_allowances)),
+        'obligation_new': float(obligation),
+        'shortage_flag': bool(shortage_flag),
+        'iterations': iteration_count,
+        'emissions': float(best_emissions),
+        'ccr1_issued': float(ccr1_issued),
+        'ccr2_issued': float(ccr2_issued),
+        'finalize': {'finalized': False, 'bank_final': float(bank)},
+        '_dispatch_result': best_dispatch,
+    }
 
 
 def run_annual_fixed_point(
@@ -219,7 +464,9 @@ def _build_engine_outputs(
             continue
         summary = dict(summary_raw)
         price = float(summary.get("p_co2", 0.0))
-        dispatch_result = dispatch_solver(year, price)
+        dispatch_result = summary.pop("_dispatch_result", None)
+        if dispatch_result is None:
+            dispatch_result = dispatch_solver(year, price)
         emissions_total = _extract_emissions(dispatch_result)
 
         finalize = summary.get("finalize") or {}
@@ -239,6 +486,8 @@ def _build_engine_outputs(
             iterations = int(iterations_value)
         except (TypeError, ValueError):
             iterations = 0
+
+        allowances_available = float(summary.get("available_allowances", 0.0))
 
         emissions_by_region = getattr(dispatch_result, "emissions_by_region", None)
         if isinstance(emissions_by_region, Mapping):
@@ -288,6 +537,7 @@ def _build_engine_outputs(
                 "p_co2": price,
                 "iterations": iterations,
                 "emissions_tons": float(emissions_total),
+                "available_allowances": allowances_available,
                 "bank": bank_value,
                 "surrendered": surrendered,
                 "obligation": obligation,
@@ -329,6 +579,9 @@ def run_end_to_end_from_frames(
     tol: float = 1e-3,
     max_iter: int = 25,
     relaxation: float = 0.5,
+    enable_floor: bool = True,
+    enable_ccr: bool = True,
+    price_cap: float = 1000.0,
     use_network: bool = False,
 ) -> EngineOutputs:
     """Run the integrated dispatch and allowance engine returning structured outputs."""
@@ -336,21 +589,28 @@ def run_end_to_end_from_frames(
     _ensure_pandas()
 
     frames_obj = Frames.coerce(frames)
-    policy = frames_obj.policy().to_policy()
+    policy_spec = frames_obj.policy()
     dispatch_solver = _dispatch_from_frames(frames_obj, use_network=use_network)
+    years_sequence = _coerce_years(policy_spec, years)
 
-    def dispatch_model(year: int, allowance_cost: float) -> float:
-        return _extract_emissions(dispatch_solver(year, allowance_cost))
-
-    results = run_annual_fixed_point(
-        policy,
-        dispatch_model,
-        years=years,
-        price_initial=price_initial,
-        tol=tol,
-        max_iter=max_iter,
-        relaxation=relaxation,
-    )
+    results: dict[int, dict[str, object]] = {}
+    for year in years_sequence:
+        supply, record = _build_allowance_supply(
+            policy_spec,
+            year,
+            enable_floor=enable_floor,
+            enable_ccr=enable_ccr,
+        )
+        summary = _solve_allowance_market_year(
+            dispatch_solver,
+            year,
+            supply,
+            policy_enabled=bool(record.get('enabled', True)),
+            high_price=price_cap,
+            tol=tol,
+            max_iter=max_iter,
+        )
+        results[year] = summary
 
     ordered_years = sorted(results)
     return _build_engine_outputs(ordered_years, results, dispatch_solver)
