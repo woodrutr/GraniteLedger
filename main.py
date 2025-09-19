@@ -30,6 +30,7 @@ def app_main(selected_mode):
     app_args = types.SimpleNamespace()
     app_args.op_mode = selected_mode
     app_args.debug = False
+    app_args.output_name = None
 
     app_settings = Config_settings(config_path=default_config_path, args=app_args)
     main(app_settings)

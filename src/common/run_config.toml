@@ -11,6 +11,9 @@
 # The default mode is only used when --mode argument is not passed by the user when running main.py
 default_mode = "gs-combo"
 
+# Optional: override the deterministic output directory name used for results
+# output_name = "my_run_label"
+
 # Modules to run
 electricity = true # specify true or false (lowercase)
 hydrogen = true    # specify true or false (lowercase)
