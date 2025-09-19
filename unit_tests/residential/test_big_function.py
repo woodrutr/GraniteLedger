@@ -2,9 +2,9 @@ from pathlib import Path
 
 import pytest
 
-from definitions import PROJECT_ROOT
-
 pd = pytest.importorskip("pandas")
+
+from definitions import PROJECT_ROOT
 
 data_source = Path(PROJECT_ROOT, 'unit_tests', 'residential', 'res_test_data', 'rates.csv')
 

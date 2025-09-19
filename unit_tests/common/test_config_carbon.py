@@ -4,9 +4,10 @@ import importlib
 from pathlib import Path
 
 import pytest
-from definitions import PROJECT_ROOT
 
 pytest.importorskip("pandas")
+
+from definitions import PROJECT_ROOT
 
 _config_setup = importlib.import_module("src.common.config_setup")
 Config_settings = _config_setup.Config_settings

@@ -11,7 +11,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PIP_CACHE_DIR: ${{ github.workspace }}/.pip
-      CONDA_NO_PLUGINS: true
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -27,96 +26,35 @@ jobs:
           path: |
             ./.pip
             ./.pytest_cache
-          key: ${{ runner.os }}-pip-py312-${{ hashFiles('environment.yml', 'pyproject.toml', 'requirements-dev.txt') }}
+          key: ${{ runner.os }}-pip-py312-${{ hashFiles('requirements-dev.txt', 'pyproject.toml') }}
           restore-keys: |
             ${{ runner.os }}-pip-
 
-      - name: Cache Conda packages
-        uses: actions/cache@v4
-        with:
-          path: ~/.conda/pkgs
-          key: ${{ runner.os }}-conda-${{ hashFiles('environment.yml') }}
-          restore-keys: |
-            ${{ runner.os }}-conda-
-
-      - name: Set up Conda environment
-        id: setup-conda
-        continue-on-error: true
-        uses: conda-incubator/setup-miniconda@v3
-        with:
-          auto-update-conda: false
-          miniforge-version: "24.9.2-0"
-          environment-file: environment.yml
-          activate-environment: bluesky-env
-
-      - name: Choose execution environment
-        id: env-select
-        run: |
-          if [ "${{ steps.setup-conda.outcome }}" = "success" ]; then
-            echo "use-conda=true" >> "$GITHUB_OUTPUT"
-            echo "USING_CONDA=true" >> "$GITHUB_ENV"
-            echo "CMD_PREFIX=conda run --no-capture-output -n bluesky-env" >> "$GITHUB_ENV"
-            echo "Using Conda environment"
-          else
-            echo "use-conda=false" >> "$GITHUB_OUTPUT"
-            echo "USING_CONDA=false" >> "$GITHUB_ENV"
-            echo "CMD_PREFIX=" >> "$GITHUB_ENV"
-            echo "Falling back to pip environment"
-          fi
-
-      - name: Set up Python fallback
-        if: steps.env-select.outputs.use-conda == 'false'
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
-      - name: Install dependencies (pip fallback)
-        if: steps.env-select.outputs.use-conda == 'false'
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements-dev.txt
-          python -m pip install numpy pyomo sympy matplotlib networkx scipy
-
-      - name: Ensure Conda test dependencies
-        if: steps.env-select.outputs.use-conda == 'true'
-        run: |
-          conda install -n bluesky-env -y pandas pytest pytest-cov --solver=classic
 
       - name: Show Python diagnostics
         run: |
-          if [ "$USING_CONDA" = "true" ]; then
-            conda run --no-capture-output -n bluesky-env python --version
-            conda run --no-capture-output -n bluesky-env pip --version
-          else
-            python --version
-            pip --version
-          fi
+          python --version
+          pip --version
 
       - name: Ruff lint
-        run: |
-          if [ "$USING_CONDA" = "true" ]; then
-            conda run --no-capture-output -n bluesky-env ruff check .
-          else
-            ruff check .
-          fi
+        run: ruff check .
 
       - name: Mypy
-        run: |
-          if [ "$USING_CONDA" = "true" ]; then
-            conda run --no-capture-output -n bluesky-env mypy --config-file pyproject.toml
-          else
-            mypy --config-file pyproject.toml
-          fi
+        run: mypy --config-file pyproject.toml
 
       - name: Pytest
         env:
           PYTHONWARNINGS: error
-        run: |
-          if [ "$USING_CONDA" = "true" ]; then
-            conda run --no-capture-output -n bluesky-env pytest -q --cov=engine --cov=dispatch --cov=policy --cov-report=term-missing --cov-fail-under=80
-          else
-            pytest -q --cov=engine --cov=dispatch --cov=policy --cov-report=term-missing --cov-fail-under=80
-          fi
+        run: pytest -q --cov=engine --cov=dispatch --cov=policy --cov-report=term-missing --cov-fail-under=80
 
       - name: Upload coverage report
         if: always()
@@ -125,3 +63,29 @@ jobs:
           name: coverage-report
           path: .coverage
           if-no-files-found: ignore
+
+# Option B (Conda with pinned Python 3.11) sample configuration:
+# jobs:
+#   lint-test:
+#     runs-on: ubuntu-latest
+#     steps:
+#       - uses: actions/checkout@v4
+#       - uses: conda-incubator/setup-miniconda@v3
+#         with:
+#           python-version: 3.11
+#           environment-name: bluesky-env
+#           auto-activate-base: false
+#       - name: Install Conda dependencies
+#         env:
+#           CONDA_NO_PLUGINS: true
+#         run: |
+#           conda install -n bluesky-env -y pandas pytest pytest-cov --solver=classic
+#       - name: Run checks with Conda
+#         env:
+#           PYTHONWARNINGS: error
+#         run: |
+#           conda run --no-capture-output -n bluesky-env ruff check .
+#           conda run --no-capture-output -n bluesky-env mypy --config-file pyproject.toml
+#           conda run --no-capture-output -n bluesky-env pytest -q \
+#             --cov=engine --cov=dispatch --cov=policy \
+#             --cov-report=term-missing --cov-fail-under=80

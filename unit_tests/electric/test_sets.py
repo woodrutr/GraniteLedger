@@ -3,9 +3,10 @@ from pathlib import Path
 
 import importlib
 import pytest
-from definitions import PROJECT_ROOT
 
 pd = pytest.importorskip("pandas")
+
+from definitions import PROJECT_ROOT
 
 config_setup = importlib.import_module("src.common.config_setup")
 utilities = importlib.import_module("src.models.electricity.scripts.utilities")
