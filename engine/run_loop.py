@@ -204,10 +204,13 @@ def _solve_allowance_market_year(
         emissions = _extract_emissions(dispatch_result)
         allowances = max(supply.available_allowances(clearing_price), emissions)
         ccr1_issued, ccr2_issued = _issued_quantities(clearing_price, allowances)
+        minted_allowances = float(max(allowances, emissions))
+        total_allowances = minted_allowances  # bank is zero when policy disabled
         return {
             'year': year,
             'p_co2': float(clearing_price),
-            'available_allowances': float(max(allowances, emissions)),
+            'available_allowances': minted_allowances,
+            'allowances_total': total_allowances,
             'bank_prev': 0.0,
             'bank_unadjusted': 0.0,
             'bank_new': 0.0,
@@ -251,7 +254,8 @@ def _solve_allowance_market_year(
         return {
             'year': year,
             'p_co2': float(clearing_price),
-            'available_allowances': float(total_allowances_low),
+            'available_allowances': float(allowances_low),
+            'allowances_total': float(total_allowances_low),
             'bank_prev': float(bank_prev),
             'bank_unadjusted': float(bank_unadjusted),
             'bank_new': float(bank_carry),
@@ -290,7 +294,8 @@ def _solve_allowance_market_year(
         return {
             'year': year,
             'p_co2': float(clearing_price),
-            'available_allowances': float(total_allowances_high),
+            'available_allowances': float(allowances_high),
+            'allowances_total': float(total_allowances_high),
             'bank_prev': float(bank_prev),
             'bank_unadjusted': float(bank_unadjusted),
             'bank_new': float(bank_carry),
@@ -356,7 +361,8 @@ def _solve_allowance_market_year(
     return {
         'year': year,
         'p_co2': float(clearing_price),
-        'available_allowances': float(total_allowances),
+        'available_allowances': float(best_allowances),
+        'allowances_total': float(total_allowances),
         'bank_prev': float(bank_prev),
         'bank_unadjusted': float(bank_unadjusted),
         'bank_new': float(bank_carry),
@@ -563,6 +569,12 @@ def _build_engine_outputs(
             iterations = 0
 
         allowances_available = float(summary.get("available_allowances", 0.0))
+        allowances_total = float(
+            summary.get(
+                "allowances_total",
+                allowances_available + float(summary.get("bank_prev", 0.0)),
+            )
+        )
 
         emissions_by_region = getattr(dispatch_result, "emissions_by_region", None)
         if isinstance(emissions_by_region, Mapping):
@@ -613,6 +625,7 @@ def _build_engine_outputs(
                 "iterations": iterations,
                 "emissions_tons": float(emissions_total),
                 "available_allowances": allowances_available,
+                "allowances_total": allowances_total,
                 "bank": bank_value,
                 "surrendered": surrendered,
                 "obligation": obligation,

@@ -270,8 +270,17 @@ def test_control_period_mass_balance():
             bank_prev.append(float(annual.iloc[idx - 1]["bank"]))
 
     bank_prev_series = pd.Series(bank_prev, index=YEARS)
-    allowances_issued = annual["available_allowances"] - bank_prev_series
-    total_supply = float(policy.bank0) + allowances_issued.sum()
+    allowances_minted = annual["available_allowances"]
+    allowances_total = annual["allowances_total"]
+    pd.testing.assert_series_equal(
+        allowances_total,
+        bank_prev_series + allowances_minted,
+        check_names=False,
+        rtol=1e-9,
+        atol=1e-6,
+    )
+
+    total_supply = float(policy.bank0) + allowances_minted.sum()
     total_surrendered = annual["surrendered"].sum()
     ending_bank = float(annual.iloc[-1]["bank"])
     remaining = float(annual.iloc[-1]["obligation"])
