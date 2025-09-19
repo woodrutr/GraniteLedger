@@ -9,7 +9,7 @@ try:  # pragma: no cover - optional dependency
 except ImportError:  # pragma: no cover - optional dependency
     pd = cast(object, None)
 
-from policy.allowance_annual import RGGIPolicyAnnual
+from policy.allowance_annual import ConfigError, RGGIPolicyAnnual
 
 
 def _ensure_pandas() -> None:
@@ -21,6 +21,25 @@ def _ensure_pandas() -> None:
         )
 
 _FILL_DIRECTIVES = {"forward", "ffill", "pad"}
+
+
+def _coerce_bool_flag(value: Any, key: str, *, default: bool = True) -> bool:
+    """Interpret ``value`` as a boolean flag with a fallback ``default``."""
+
+    if value in (None, ""):
+        return bool(default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        if value in (0, 1):
+            return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "t", "yes", "y", "1", "on"}:
+            return True
+        if normalized in {"false", "f", "no", "n", "0", "off"}:
+            return False
+    raise TypeError(f"{key} must be a boolean value")
 
 
 def _coerce_year_list(years: Any) -> list[int]:
@@ -211,38 +230,94 @@ def load_annual_policy(cfg: Mapping[str, Any]) -> RGGIPolicyAnnual:
 
     _ensure_pandas()
 
-    cap_series = _coerce_numeric_series(series_from_year_map(cfg, "cap"), "cap")
-    years = [int(year) for year in cap_series.index]
+    if not isinstance(cfg, Mapping):
+        raise TypeError("cfg must be a mapping")
 
-    cfg_with_years = dict(cfg)
-    cfg_with_years["years"] = years
+    cfg_dict = dict(cfg)
 
-    floor_series = _coerce_numeric_series(series_from_year_map(cfg_with_years, "floor"), "floor")
-    ccr1_trigger = _coerce_numeric_series(series_from_year_map(cfg_with_years, "ccr1_trigger"), "ccr1_trigger")
-    ccr1_qty = _coerce_numeric_series(series_from_year_map(cfg_with_years, "ccr1_qty"), "ccr1_qty")
-    ccr2_trigger = _coerce_numeric_series(series_from_year_map(cfg_with_years, "ccr2_trigger"), "ccr2_trigger")
-    ccr2_qty = _coerce_numeric_series(series_from_year_map(cfg_with_years, "ccr2_qty"), "ccr2_qty")
+    enabled_raw = cfg_dict.get("enabled")
+    if enabled_raw is None and "policy_enabled" in cfg_dict:
+        enabled_raw = cfg_dict.get("policy_enabled")
+    enabled = _coerce_bool_flag(enabled_raw, "enabled", default=True)
+    ccr1_enabled = _coerce_bool_flag(cfg_dict.get("ccr1_enabled"), "ccr1_enabled", default=True)
+    ccr2_enabled = _coerce_bool_flag(cfg_dict.get("ccr2_enabled"), "ccr2_enabled", default=True)
 
-    cp_key = "cp_id" if "cp_id" in cfg else "control_period"
-    if cp_key not in cfg:
-        raise KeyError("Configuration must include 'cp_id' or 'control_period'")
-    cp_series = series_from_year_map(cfg_with_years, cp_key).astype(str)
-    cp_series.name = "cp_id"
+    control_period_years_value = cfg_dict.get("control_period_years")
+    control_period_years = None
+    if control_period_years_value not in (None, "", []):
+        try:
+            control_period_years = int(control_period_years_value)
+        except (TypeError, ValueError) as exc:
+            raise TypeError("control_period_years must be a positive integer") from exc
+        if control_period_years <= 0:
+            raise ValueError("control_period_years must be a positive integer")
 
-    _validate_year_alignment(
-        {
-            "cap": cap_series,
-            "floor": floor_series,
-            "ccr1_trigger": ccr1_trigger,
-            "ccr1_qty": ccr1_qty,
-            "ccr2_trigger": ccr2_trigger,
-            "ccr2_qty": ccr2_qty,
-            "cp_id": cp_series,
-        }
-    )
+    if enabled:
+        try:
+            cap_series = _coerce_numeric_series(series_from_year_map(cfg_dict, "cap"), "cap")
+        except KeyError as exc:
+            raise ConfigError("enabled carbon policy requires 'cap' data") from exc
+        years = [int(year) for year in cap_series.index]
 
-    bank0 = float(cfg.get("bank0", 0.0))
-    full_compliance_raw = cfg.get("full_compliance_years", set())
+        cfg_with_years = dict(cfg_dict)
+        cfg_with_years["years"] = years
+
+        def _required_series(key: str) -> pd.Series:
+            try:
+                return _coerce_numeric_series(series_from_year_map(cfg_with_years, key), key)
+            except KeyError as exc:  # pragma: no cover - exercised in ConfigError tests
+                raise ConfigError(f"enabled carbon policy requires '{key}' data") from exc
+
+        floor_series = _required_series("floor")
+        ccr1_trigger = _required_series("ccr1_trigger")
+        ccr1_qty = _required_series("ccr1_qty")
+        ccr2_trigger = _required_series("ccr2_trigger")
+        ccr2_qty = _required_series("ccr2_qty")
+
+        cp_key = "cp_id" if "cp_id" in cfg_dict else "control_period"
+        if cp_key not in cfg_dict:
+            raise ConfigError("enabled carbon policy requires 'cp_id' data")
+        cp_series = series_from_year_map(cfg_with_years, cp_key).astype(str)
+        cp_series.name = "cp_id"
+
+        _validate_year_alignment(
+            {
+                "cap": cap_series,
+                "floor": floor_series,
+                "ccr1_trigger": ccr1_trigger,
+                "ccr1_qty": ccr1_qty,
+                "ccr2_trigger": ccr2_trigger,
+                "ccr2_qty": ccr2_qty,
+                "cp_id": cp_series,
+            }
+        )
+    else:
+        target_years = _coerce_year_list(cfg_dict.get("years")) if "years" in cfg_dict else []
+        cfg_with_years = dict(cfg_dict)
+        if target_years:
+            cfg_with_years["years"] = target_years
+
+        def _optional_numeric_series(key: str) -> pd.Series:
+            if key not in cfg_dict:
+                return pd.Series(dtype=float)
+            series = series_from_year_map(cfg_with_years, key)
+            return _coerce_numeric_series(series, key)
+
+        cap_series = _optional_numeric_series("cap")
+        floor_series = _optional_numeric_series("floor")
+        ccr1_trigger = _optional_numeric_series("ccr1_trigger")
+        ccr1_qty = _optional_numeric_series("ccr1_qty")
+        ccr2_trigger = _optional_numeric_series("ccr2_trigger")
+        ccr2_qty = _optional_numeric_series("ccr2_qty")
+
+        cp_series = pd.Series(dtype=str, name="cp_id")
+        if "cp_id" in cfg_dict or "control_period" in cfg_dict:
+            cp_key = "cp_id" if "cp_id" in cfg_dict else "control_period"
+            cp_series = series_from_year_map(cfg_with_years, cp_key).astype(str)
+            cp_series.name = "cp_id"
+
+    bank0 = float(cfg_dict.get("bank0", 0.0))
+    full_compliance_raw = cfg_dict.get("full_compliance_years", set())
     if full_compliance_raw is None:
         full_compliance_years: set[int] = set()
     else:
@@ -253,8 +328,8 @@ def load_annual_policy(cfg: Mapping[str, Any]) -> RGGIPolicyAnnual:
         except (TypeError, ValueError) as exc:
             raise TypeError("full_compliance_years must be an iterable of years") from exc
 
-    annual_surrender_frac = float(cfg.get("annual_surrender_frac", 0.5))
-    carry_pct = float(cfg.get("carry_pct", 1.0))
+    annual_surrender_frac = float(cfg_dict.get("annual_surrender_frac", 0.5))
+    carry_pct = float(cfg_dict.get("carry_pct", 1.0))
 
     return RGGIPolicyAnnual(
         cap=cap_series,
@@ -268,6 +343,10 @@ def load_annual_policy(cfg: Mapping[str, Any]) -> RGGIPolicyAnnual:
         full_compliance_years=full_compliance_years,
         annual_surrender_frac=float(annual_surrender_frac),
         carry_pct=float(carry_pct),
+        enabled=enabled,
+        ccr1_enabled=ccr1_enabled,
+        ccr2_enabled=ccr2_enabled,
+        control_period_length=control_period_years,
     )
 
 

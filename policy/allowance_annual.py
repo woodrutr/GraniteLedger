@@ -22,6 +22,10 @@ def _ensure_pandas() -> None:
         )
 
 
+class ConfigError(ValueError):
+    """Configuration error raised when allowance policy inputs are invalid."""
+
+
 @dataclass
 class RGGIPolicyAnnual:
     """Inputs describing an annual-resolution allowance market."""
@@ -34,12 +38,77 @@ class RGGIPolicyAnnual:
     ccr2_qty: pd.Series
     cp_id: pd.Series
     bank0: float
-    full_compliance_years: Set[int]
+    full_compliance_years: Set[int] | None
     annual_surrender_frac: float = 0.5
     carry_pct: float = 1.0
+    enabled: bool = True
+    ccr1_enabled: bool = True
+    ccr2_enabled: bool = True
+    control_period_length: int | None = None
 
     def __post_init__(self) -> None:
         _ensure_pandas()
+
+        full_compliance: set[int]
+        if self.full_compliance_years is None:
+            full_compliance = set()
+        else:
+            full_compliance = {int(year) for year in self.full_compliance_years}
+        self.full_compliance_years = full_compliance
+
+        self.enabled = bool(self.enabled)
+        self.ccr1_enabled = bool(self.ccr1_enabled)
+        self.ccr2_enabled = bool(self.ccr2_enabled)
+
+        if self.control_period_length is not None:
+            try:
+                control_length = int(self.control_period_length)
+            except (TypeError, ValueError) as exc:  # pragma: no cover - defensive
+                raise ValueError('control_period_length must be an integer or None') from exc
+            if control_length <= 0:
+                raise ValueError('control_period_length must be a positive integer')
+            self.control_period_length = control_length
+        else:
+            control_length = None
+
+        if not self.full_compliance_years and control_length:
+            series_index = getattr(self.cap, 'index', None)
+            if series_index is not None:
+                ordered_years = [int(year) for year in series_index]
+                compliance_years = {
+                    year
+                    for idx, year in enumerate(ordered_years, start=1)
+                    if idx % control_length == 0
+                }
+                self.full_compliance_years = compliance_years
+
+        if self.enabled:
+            missing: list[str] = []
+            series_requirements = {
+                'cap': self.cap,
+                'floor': self.floor,
+                'ccr1_trigger': self.ccr1_trigger,
+                'ccr1_qty': self.ccr1_qty,
+                'ccr2_trigger': self.ccr2_trigger,
+                'ccr2_qty': self.ccr2_qty,
+                'cp_id': self.cp_id,
+            }
+            for name, series in series_requirements.items():
+                if series is None:
+                    missing.append(name)
+                    continue
+                length = getattr(series, '__len__', None)
+                if callable(length):
+                    try:
+                        if len(series) == 0:  # type: ignore[arg-type]
+                            missing.append(name)
+                    except TypeError:  # pragma: no cover - defensive guard
+                        continue
+            if missing:
+                missing_list = ', '.join(sorted(missing))
+                raise ConfigError(
+                    f'enabled carbon policy requires data for: {missing_list}'
+                )
 
 
 class AllowanceAnnual:
@@ -123,6 +192,26 @@ class AllowanceAnnual:
         emissions = max(0.0, float(emissions_tons))
         bank_prev = max(0.0, float(bank_prev))
 
+        if not getattr(self.policy, 'enabled', True):
+            record = {
+                'year': year,
+                'cp_id': 'disabled',
+                'emissions': emissions,
+                'bank_prev': bank_prev,
+                'available_allowances': emissions,
+                'p_co2': 0.0,
+                'ccr1_issued': 0.0,
+                'ccr2_issued': 0.0,
+                'surrendered': 0.0,
+                'shortage_flag': False,
+            }
+
+            self.year_records[year] = record
+            self.bank_history.pop(year, None)
+            self.obligation_history.pop(year, None)
+            self.finalized_results.pop(year, None)
+            return record.copy()
+
         cap = self._value(self.policy.cap, year)
         floor = self._value(self.policy.floor, year)
         ccr1_trigger = self._value(self.policy.ccr1_trigger, year)
@@ -144,9 +233,12 @@ class AllowanceAnnual:
         ccr1_issued = 0.0
         ccr2_issued = 0.0
 
-        def issue(trigger: float, qty: float) -> float:
+        ccr1_enabled = getattr(self.policy, 'ccr1_enabled', True)
+        ccr2_enabled = getattr(self.policy, 'ccr2_enabled', True)
+
+        def issue(trigger: float, qty: float, enabled: bool) -> float:
             nonlocal available, price
-            if qty <= 0.0:
+            if not enabled or qty <= 0.0:
                 return 0.0
             shortfall = emissions - available
             if shortfall <= 0.0:
@@ -156,8 +248,8 @@ class AllowanceAnnual:
             price = max(price, trigger)
             return issued
 
-        ccr1_issued = issue(ccr1_trigger, ccr1_qty)
-        ccr2_issued = issue(ccr2_trigger, ccr2_qty)
+        ccr1_issued = issue(ccr1_trigger, ccr1_qty, ccr1_enabled)
+        ccr2_issued = issue(ccr2_trigger, ccr2_qty, ccr2_enabled)
 
         available_allowances = bank_prev + cap + ccr1_issued + ccr2_issued
         shortage_flag = emissions > available_allowances + 1e-9
@@ -204,6 +296,11 @@ class AllowanceAnnual:
         if year in self.finalized_results:
             return self.finalized_results[year].copy()
 
+        if not getattr(self.policy, 'enabled', True):
+            summary = {'finalized': False}
+            self.finalized_results[year] = summary
+            return summary.copy()
+
         if year not in self.policy.full_compliance_years:
             summary = {'finalized': False, 'bank_final': self.bank_history.get(year)}
             self.finalized_results[year] = summary
@@ -245,3 +342,6 @@ class AllowanceAnnual:
             state['years'] = []
 
         return summary.copy()
+
+
+__all__ = ["ConfigError", "RGGIPolicyAnnual", "AllowanceAnnual"]

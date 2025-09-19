@@ -163,6 +163,10 @@ def test_policy_spec_round_trip() -> None:
     assert policy.carry_pct == pytest.approx(1.0)
     assert policy.full_compliance_years == {2027}
     assert list(policy.cap.index) == [2025, 2026, 2027]
+    assert policy.enabled is True
+    assert policy.ccr1_enabled is True
+    assert policy.ccr2_enabled is True
+    assert policy.control_period_length is None
 
 
 def test_fixed_point_runs_from_frames() -> None:
@@ -189,3 +193,43 @@ def test_fixed_point_runs_from_frames() -> None:
     assert set(results) == {2025, 2026, 2027}
     assert all("emissions" in year_result for year_result in results.values())
     assert results[2027]["finalize"]["finalized"]
+
+
+def test_policy_spec_respects_optional_columns() -> None:
+    base = policy_frame_three_year()
+    base['full_compliance'] = [False, False, False]
+    base['policy_enabled'] = [False, False, False]
+    base['ccr1_enabled'] = [False, False, False]
+    base['ccr2_enabled'] = [True, True, True]
+    base['control_period_years'] = [2, 2, 2]
+
+    frames = Frames({"policy": base})
+    policy = frames.policy().to_policy()
+
+    assert policy.enabled is False
+    assert policy.ccr1_enabled is False
+    assert policy.ccr2_enabled is True
+    assert policy.control_period_length == 2
+    assert policy.full_compliance_years == {2026}
+
+
+def test_policy_disabled_allows_minimal_columns() -> None:
+    frames = Frames(
+        {
+            "policy": pd.DataFrame(
+                [
+                    {"year": 2025, "policy_enabled": False},
+                    {"year": 2026, "policy_enabled": False},
+                ]
+            )
+        }
+    )
+
+    spec = frames.policy()
+    policy = spec.to_policy()
+
+    assert spec.enabled is False
+    assert policy.enabled is False
+    assert list(policy.cap.index) == [2025, 2026]
+    assert policy.cap.eq(0.0).all()
+    assert policy.bank0 == pytest.approx(0.0)

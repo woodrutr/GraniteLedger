@@ -1,6 +1,10 @@
+import importlib
+import io
 import shutil
 import pytest
-import pandas as pd
+import tomllib
+
+pd = pytest.importorskip("pandas")
 
 from tests.fixtures.dispatch_single_minimal import baseline_frames
 
@@ -112,6 +116,47 @@ def test_backend_policy_toggle_affects_price():
     _cleanup_temp_dir(disabled)
 
 
+def test_backend_disabled_toggle_propagates_flags(monkeypatch):
+    pytest.importorskip("streamlit")
+
+    from gui.app import run_policy_simulation
+
+    real_runner = importlib.import_module("engine.run_loop").run_end_to_end_from_frames
+    captured: dict[str, object] = {}
+
+    def capturing_runner(frames, **kwargs):
+        policy = frames.policy().to_policy()
+        captured["enabled"] = policy.enabled
+        captured["ccr1"] = policy.ccr1_enabled
+        captured["ccr2"] = policy.ccr2_enabled
+        captured["control"] = policy.control_period_length
+        return real_runner(frames, **kwargs)
+
+    monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: capturing_runner)
+
+    config = _baseline_config()
+    frames = _frames_for_years([2025])
+
+    result = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2025,
+        frames=frames,
+        carbon_policy_enabled=False,
+        ccr1_enabled=False,
+        ccr2_enabled=False,
+        control_period_years=4,
+    )
+
+    assert "error" not in result
+    assert captured.get("enabled") is False
+    assert captured.get("ccr1") is False
+    assert captured.get("ccr2") is False
+    assert captured.get("control") is None
+
+    _cleanup_temp_dir(result)
+
+
 def test_backend_returns_error_for_invalid_frames():
     pytest.importorskip("streamlit")
 
@@ -141,3 +186,92 @@ def test_backend_reports_missing_pandas(monkeypatch):
 
     assert "error" in result
     assert "pandas" in result["error"].lower()
+
+
+def test_backend_builds_default_frames(tmp_path):
+    pytest.importorskip("streamlit")
+
+    from gui.app import run_policy_simulation
+
+    config = _baseline_config()
+    result = run_policy_simulation(config, start_year=2025, end_year=2025)
+
+    assert "error" not in result
+    assert not result["annual"].empty
+
+    _cleanup_temp_dir(result)
+
+
+def test_build_policy_frame_control_override():
+    pytest.importorskip("streamlit")
+
+    from gui.app import _build_policy_frame
+
+    config = _baseline_config()
+    years = [2025, 2026, 2027]
+    frame = _build_policy_frame(
+        config,
+        years,
+        carbon_policy_enabled=True,
+        control_period_years=2,
+    )
+
+    assert set(frame["year"]) == set(years)
+    assert frame["policy_enabled"].all()
+    assert frame["control_period_years"].dropna().unique().tolist() == [2]
+
+
+def test_build_policy_frame_disabled_defaults():
+    pytest.importorskip("streamlit")
+
+    from gui.app import _build_policy_frame
+
+    config = _baseline_config()
+    years = [2025]
+    frame = _build_policy_frame(config, years, carbon_policy_enabled=False)
+
+    assert not frame["policy_enabled"].any()
+    assert frame["cap_tons"].iloc[0] > 0.0
+    assert bool(frame["ccr1_enabled"].iloc[0]) is False
+
+
+def test_load_config_data_accepts_various_sources(tmp_path):
+    pytest.importorskip("streamlit")
+
+    from gui.app import _load_config_data
+
+    mapping = {"a": 1}
+    assert _load_config_data(mapping) == mapping
+
+    toml_text = "value = 1\n"
+    assert _load_config_data(toml_text.encode("utf-8"))["value"] == 1
+
+    temp_file = tmp_path / "config.toml"
+    temp_file.write_text("value = 2\n", encoding="utf-8")
+    assert _load_config_data(str(temp_file))["value"] == 2
+
+    stream = io.StringIO("value = 3\n")
+    assert _load_config_data(stream)["value"] == 3
+
+    with pytest.raises(TypeError):
+        _load_config_data(object())
+
+
+def test_year_and_selection_helpers_cover_branches():
+    pytest.importorskip("streamlit")
+
+    from gui.app import _years_from_config, _select_years
+
+    config = {"years": [{"year": 2025}, 2026]}
+    years = _years_from_config(config)
+    assert years == [2025, 2026]
+
+    fallback = {"start_year": 2024, "end_year": 2022}
+    fallback_years = _years_from_config(fallback)
+    assert fallback_years == [2022, 2023, 2024]
+
+    selected = _select_years(fallback_years, start_year=2023, end_year=2024)
+    assert selected == [2023, 2024]
+
+    with pytest.raises(ValueError):
+        _select_years(years, start_year=2026, end_year=2024)

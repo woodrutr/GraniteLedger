@@ -55,6 +55,20 @@ def test_ccr_tranches_and_shortage_flag():
     assert shortage["surrendered"] == pytest.approx(shortage["available_allowances"])
 
 
+def test_ccr_modules_can_be_disabled():
+    policy = policy_three_year()
+    policy.ccr1_enabled = False
+    policy.ccr2_enabled = False
+    market = AllowanceAnnual(policy)
+
+    result = market.clear_year(2025, emissions_tons=220.0, bank_prev=policy.bank0)
+
+    assert result["ccr1_issued"] == pytest.approx(0.0)
+    assert result["ccr2_issued"] == pytest.approx(0.0)
+    assert result["p_co2"] == pytest.approx(policy.floor.loc[2025])
+    assert result["shortage_flag"]
+
+
 def test_true_up_full_compliance_year():
     policy = policy_three_year()
     market = AllowanceAnnual(policy)
@@ -101,3 +115,16 @@ def test_run_loop_iterates_fixed_point():
     assert "finalize" in outputs[2027]
     assert outputs[2027]["finalize"]["finalized"]
     assert outputs[2027]["finalize"]["bank_final"] >= 0.0
+
+
+def test_run_loop_skips_when_policy_disabled():
+    policy = policy_three_year()
+    policy.enabled = False
+    dispatch = LinearDispatch(base={2025: 200.0}, slope=0.0)
+
+    outputs = run_annual_fixed_point(policy, dispatch, years=[2025], price_initial=25.0)
+
+    summary = outputs[2025]
+    assert summary["p_co2"] == pytest.approx(0.0)
+    assert summary["iterations"] == 0
+    assert summary["surrendered"] == pytest.approx(0.0)

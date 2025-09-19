@@ -8,6 +8,7 @@ pd = pytest.importorskip("pandas")
 policy_loader = importlib.import_module("config.policy_loader")
 load_annual_policy = policy_loader.load_annual_policy
 series_from_year_map = policy_loader.series_from_year_map
+ConfigError = importlib.import_module("policy.allowance_annual").ConfigError
 
 
 def test_series_from_year_map_basic():
@@ -100,6 +101,10 @@ def test_load_annual_policy_builds_series_and_validates_alignment():
     assert policy.ccr2_qty.loc[2027] == pytest.approx(60.0)
     assert policy.bank0 == pytest.approx(15.0)
     assert policy.full_compliance_years == {2027}
+    assert policy.enabled is True
+    assert policy.ccr1_enabled is True
+    assert policy.ccr2_enabled is True
+    assert policy.control_period_length is None
 
 
 def test_load_annual_policy_flags_missing_series_years():
@@ -119,3 +124,50 @@ def test_load_annual_policy_flags_missing_series_years():
 
     assert "ccr2_qty" in str(exc.value)
     assert "2026" in str(exc.value)
+
+
+def test_load_annual_policy_respects_module_flags():
+    cfg = {
+        "years": [2025, 2026],
+        "cap": {2025: 100.0, 2026: 90.0},
+        "floor": {2025: 4.0, 2026: 4.0},
+        "ccr1_trigger": {2025: 7.0, 2026: 7.0},
+        "ccr1_qty": {2025: 30.0, 2026: 30.0},
+        "ccr2_trigger": {2025: 13.0, 2026: 13.0},
+        "ccr2_qty": {2025: 60.0, 2026: 60.0},
+        "cp_id": {2025: "CP1", 2026: "CP1"},
+        "bank0": 0.0,
+        "annual_surrender_frac": 1.0,
+        "carry_pct": 1.0,
+        "full_compliance_years": [],
+        "enabled": False,
+        "ccr1_enabled": False,
+        "ccr2_enabled": True,
+        "control_period_years": 2,
+    }
+
+    policy = load_annual_policy(cfg)
+
+    assert policy.enabled is False
+    assert policy.ccr1_enabled is False
+    assert policy.ccr2_enabled is True
+    assert policy.control_period_length == 2
+    assert policy.full_compliance_years == {2026}
+
+
+def test_enabled_policy_requires_cap_schedule():
+    cfg = {"enabled": True}
+
+    with pytest.raises(ConfigError) as exc:
+        load_annual_policy(cfg)
+
+    assert "cap" in str(exc.value).lower()
+
+
+def test_disabled_policy_allows_missing_inputs():
+    policy = load_annual_policy({"enabled": False})
+
+    assert policy.enabled is False
+    assert len(policy.cap) == 0
+    assert policy.ccr1_enabled is True
+    assert policy.ccr2_enabled is True

@@ -21,6 +21,7 @@ def _policy_frame(
     *,
     carry_pct: float = 1.0,
     annual_surrender_frac: float = 0.5,
+    policy_enabled: bool = True,
 ) -> pd.DataFrame:
     """Return a policy frame scaled to the dispatch fixture demand levels."""
 
@@ -45,6 +46,7 @@ def _policy_frame(
                 "bank0": bank0,
                 "annual_surrender_frac": float(annual_surrender_frac),
                 "carry_pct": float(carry_pct),
+                "policy_enabled": bool(policy_enabled),
             }
         )
     return pd.DataFrame(records)
@@ -57,6 +59,7 @@ def _three_year_frames(
     cap_scale: float = 1.0,
     carry_pct: float = 1.0,
     annual_surrender_frac: float = 0.5,
+    policy_enabled: bool = True,
 ):
     """Build Frames with three years of demand and a configurable policy."""
 
@@ -82,6 +85,7 @@ def _three_year_frames(
             cap_scale=cap_scale,
             carry_pct=carry_pct,
             annual_surrender_frac=annual_surrender_frac,
+            policy_enabled=policy_enabled,
         ),
     )
     return frames
@@ -147,3 +151,20 @@ def test_emissions_decline_with_stricter_policy():
         relaxation=0.8,
     )
     assert lower_cap_outputs.annual["emissions_tons"].sum() < base_emissions
+
+
+def test_disabled_policy_produces_zero_price():
+    frames = _three_year_frames()
+    frames = frames.with_frame("policy", _policy_frame(policy_enabled=False))
+
+    outputs = run_end_to_end_from_frames(
+        frames,
+        years=YEARS,
+        price_initial=5.0,
+        tol=1e-4,
+        relaxation=0.8,
+    )
+
+    assert outputs.annual["p_co2"].eq(0.0).all()
+    assert outputs.annual["surrendered"].eq(0.0).all()
+    assert outputs.annual["bank"].eq(0.0).all()

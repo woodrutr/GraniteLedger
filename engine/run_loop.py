@@ -74,8 +74,30 @@ def run_annual_fixed_point(
     if not callable(dispatch_model):
         raise TypeError('dispatch_model must be callable with signature (year, price) -> emissions')
 
-    allowance = AllowanceAnnual(policy)
     years_sequence = _coerce_years(policy, years)
+    if not getattr(policy, 'enabled', True):
+        results: dict[int, dict] = {}
+        for year in years_sequence:
+            emissions = _extract_emissions(dispatch_model(year, 0.0))
+            record = {
+                'year': year,
+                'bank_prev': 0.0,
+                'available_allowances': emissions,
+                'p_co2': 0.0,
+                'ccr1_issued': 0.0,
+                'ccr2_issued': 0.0,
+                'surrendered': 0.0,
+                'bank_new': 0.0,
+                'obligation_new': 0.0,
+                'shortage_flag': False,
+                'iterations': 0,
+                'emissions': emissions,
+                'finalize': {'finalized': False, 'bank_final': 0.0},
+            }
+            results[year] = record
+        return results
+
+    allowance = AllowanceAnnual(policy)
     results: dict[int, dict] = {}
 
     bank = float(policy.bank0)
