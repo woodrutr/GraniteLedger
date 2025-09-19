@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import importlib
 import shutil
-
 import pytest
 
-streamlit = pytest.importorskip("streamlit")
-pd = pytest.importorskip('pandas')
+from tests.fixtures.dispatch_single_minimal import baseline_frames
+from gui.app import run_policy_simulation
 
-run_policy_simulation = importlib.import_module('gui.app').run_policy_simulation
-baseline_frames = importlib.import_module('tests.fixtures.dispatch_single_minimal').baseline_frames
+streamlit = pytest.importorskip("streamlit")
+pd = pytest.importorskip("pandas")
 
 
 def _baseline_config() -> dict:
