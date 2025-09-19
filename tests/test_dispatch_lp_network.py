@@ -1,9 +1,8 @@
-from __future__ import annotations
-
 """Tests for the linear programming dispatch with a regional network."""
 
-import math
+from __future__ import annotations
 
+import math
 import pytest
 import pandas as pd
 
@@ -14,8 +13,6 @@ from io_loader import Frames
 
 
 def test_congestion_leads_to_price_separation() -> None:
-    """A binding interface should separate regional prices."""
-
     demand = pd.DataFrame(
         [
             {"year": 2030, "region": "north", "demand_mwh": 40.0 * HOURS_PER_YEAR},
@@ -85,14 +82,10 @@ def test_congestion_leads_to_price_separation() -> None:
     assert math.isclose(result.emissions_tons, 0.0)
     assert ("north", "south") in result.flows
     assert result.flows[("north", "south")] == pytest.approx(15.0 * HOURS_PER_YEAR)
-    assert sum(result.emissions_by_region.values()) == pytest.approx(
-        result.emissions_tons
-    )
+    assert sum(result.emissions_by_region.values()) == pytest.approx(result.emissions_tons)
 
 
 def test_imports_increase_with_carbon_price() -> None:
-    """Imports into a covered region should rise as allowance prices increase."""
-
     demand = pd.DataFrame(
         [
             {"year": 2030, "region": "covered", "demand_mwh": 100.0 * HOURS_PER_YEAR},
@@ -168,8 +161,6 @@ def test_imports_increase_with_carbon_price() -> None:
 
 
 def test_region_coverage_overrides_fuel_flags() -> None:
-    """Units in uncovered regions should not pay allowance costs even if their fuel is covered."""
-
     demand = pd.DataFrame(
         [
             {"year": 2035, "region": "covered", "demand_mwh": 80.0 * HOURS_PER_YEAR},
@@ -236,8 +227,6 @@ def test_region_coverage_overrides_fuel_flags() -> None:
 
 
 def test_leakage_percentage_helper() -> None:
-    """The convenience leakage calculator should follow the documented formula."""
-
     baseline = DispatchResult(
         gen_by_fuel={"coal": 60.0},
         region_prices={"region": 25.0},
