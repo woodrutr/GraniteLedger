@@ -7,16 +7,40 @@ models after it is decided if it is a utility job to do .... or a class method.
 Additionally, there is probably some renaming due here for consistency
 """
 
+from __future__ import annotations
+
 # Import packages
 from collections import defaultdict, namedtuple
 from logging import getLogger
+import importlib.util
 import typing
-import pyomo.opt as pyo
-from pyomo.environ import ConcreteModel, value
 import pandas as pd
 from pathlib import Path
 import logging
 import os
+
+
+def _is_module_available(module: str) -> bool:
+    try:
+        return importlib.util.find_spec(module) is not None
+    except ModuleNotFoundError:  # pragma: no cover - exercised only when pyomo is absent
+        return False
+
+
+_PYOMO_AVAILABLE = _is_module_available('pyomo.opt') and _is_module_available('pyomo.environ')
+
+if _PYOMO_AVAILABLE:
+    import pyomo.opt as pyo  # type: ignore
+    from pyomo.environ import ConcreteModel, value  # type: ignore
+else:  # pragma: no cover - exercised only when pyomo is absent
+    pyo = None  # type: ignore[assignment]
+    ConcreteModel = typing.Any  # type: ignore[assignment]
+
+    def value(*args, **kwargs):  # type: ignore[override]
+        raise ModuleNotFoundError(
+            'Pyomo is required for this functionality. Install the "pyomo" package '
+            'to enable optimization features.'
+        )
 
 # Import python modules
 from definitions import PROJECT_ROOT
@@ -29,9 +53,19 @@ if typing.TYPE_CHECKING:
 logger = getLogger(__name__)
 
 
+def _require_pyomo() -> None:
+    if pyo is None:  # pragma: no cover - executed only when pyomo is unavailable
+        raise ModuleNotFoundError(
+            'Pyomo is required for this operation. Install the "pyomo" package to '
+            'enable optimization features.'
+        )
+
+
 # TODO:  This might be a good use case for a persistent solver (1-each) for both the elec & hyd...  hmm
 def simple_solve(m: ConcreteModel):
     """a simple solve routine"""
+
+    _require_pyomo()
 
     # Note:  this is a prime candidate to split into 2 persistent solvers!!
     # TODO:  experiment with pyomo's persistent solver interface, one for each ELEC, H2
@@ -52,6 +86,8 @@ def simple_solve_no_opt(m: ConcreteModel, opt: pyo.SolverFactory):
     opt: SolverFactory
         Solver object initiated prior to solve
     """
+
+    _require_pyomo()
 
     # Note:  this is a prime candidate to split into 2 persistent solvers!!
     # TODO:  experiment with pyomo's persistent solver interface, one for each ELEC, H2
@@ -75,6 +111,8 @@ def select_solver(instance: ConcreteModel):
     solver type (?)
         The pyomo solver
     """
+    _require_pyomo()
+
     # default = linear solver
     solver_name = 'appsi_highs'
     opt = pyo.SolverFactory(solver_name)
@@ -131,6 +169,8 @@ def get_elec_price(instance: typing.Union['PowerModel', ConcreteModel], block=No
         df of raw prices and the day weights to re-apply (if needed)
         columns: [r, y, hour, day_weight, raw_price]
     """
+
+    _require_pyomo()
 
     if block:
         c = block.demand_balance
@@ -342,6 +382,8 @@ def poll_h2_prices_from_elec(
     dict[typing.Any, float]
         a dictionary of (region, seasons, year): price
     """
+    _require_pyomo()
+
     res = {}
     for idx in model.H2Price:
         r, season, t, step, y = idx
@@ -412,6 +454,9 @@ def poll_h2_demand(model: 'PowerModel') -> dict[HI, float]:
     dict[HI, float]
         dictionary of prices by H2 Index: price
     """
+
+    _require_pyomo()
+
     h2_consuming_techs = {5}  # TODO:  get rid of this hard-coding
 
     # gather results

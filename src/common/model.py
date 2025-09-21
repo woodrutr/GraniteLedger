@@ -8,7 +8,6 @@ from collections import defaultdict
 import sys as sys
 import pyomo.environ as pyo
 import numpy as np
-import warnings
 from logging import getLogger
 
 # Establish logger
@@ -324,8 +323,11 @@ class Model(pyo.ConcreteModel):
         if len(sdata) == 0:
             empty = True
             scols = sname
-            warnings.warn(
-                f'For {sname}, sdata: {type(sdata)} is length 0; returning empty set called {sname}'
+            logger.warning(
+                'For %s, sdata: %s is length 0; returning empty set called %s',
+                sname,
+                type(sdata),
+                sname,
             )
         else:
             empty = False
@@ -910,11 +912,29 @@ class Model(pyo.ConcreteModel):
             data = tuple(element[t] for t in data_indices)
             res[idx].append(data)
 
-        # make the indexed set from keys -> index set, data = the dictionary
-        indexing_set = pyo.Set(initialize=res.keys())
+        if res:
+            # make the indexed set from keys -> index set, data = the dictionary
+            indexing_set = pyo.Set(initialize=res.keys())
+            return pyo.Set(indexing_set, initialize=res)
 
-        t = pyo.Set(indexing_set, initialize=res)
-        return t
+        # fall back to empty indexed sets keyed by the requested base indices
+        if set_base_name:
+            base_sets = [list(getattr(m1, set_base_name))]
+        else:
+            base_sets = [list(getattr(m1, base_name)) for base_name in set_base2]
+
+        if not base_sets:
+            indexing_entries = []
+        elif len(base_sets) == 1:
+            indexing_entries = base_sets[0]
+        else:
+            from itertools import product
+
+            indexing_entries = list(product(*base_sets))
+
+        indexing_set = pyo.Set(initialize=indexing_entries)
+        empty_initializer = {idx: [] for idx in indexing_entries}
+        return pyo.Set(indexing_set, initialize=empty_initializer)
 
     def get_duals(self, component_name: str) -> defaultdict:
         """Extract duals from a solved model instance
