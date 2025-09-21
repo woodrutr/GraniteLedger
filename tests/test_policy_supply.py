@@ -249,3 +249,40 @@ def test_toggles_disable_features(monkeypatch: pytest.MonkeyPatch):
     assert annual_without_floor.loc[2030, "p_co2"] == pytest.approx(10.0, abs=1e-6)
     assert annual_with_floor.loc[2030, "available_allowances"] == pytest.approx(120.0)
     assert annual_without_floor.loc[2030, "available_allowances"] == pytest.approx(120.0)
+
+
+def test_supply_disabled_returns_baseline(monkeypatch: pytest.MonkeyPatch):
+    policy_rows = [
+        {
+            "year": 2031,
+            "cap_tons": 100.0,
+            "floor_dollars": 25.0,
+            "ccr1_trigger": 0.0,
+            "ccr1_qty": 75.0,
+            "ccr2_trigger": 0.0,
+            "ccr2_qty": 125.0,
+            "cp_id": "CP1",
+            "full_compliance": False,
+            "bank0": 0.0,
+            "annual_surrender_frac": 1.0,
+            "carry_pct": 1.0,
+            "policy_enabled": False,
+        }
+    ]
+    emission_params = {2031: (150.0, 0.0)}
+
+    outputs = _run_supply_simulation(
+        monkeypatch,
+        policy_rows,
+        emission_params,
+        enable_floor=True,
+        enable_ccr=True,
+        price_cap=200.0,
+    )
+    annual = outputs.annual.set_index("year")
+    row = annual.loc[2031]
+
+    assert row["p_co2"] == pytest.approx(0.0, abs=1e-6)
+    assert row["available_allowances"] == pytest.approx(150.0)
+    assert row["allowances_total"] == pytest.approx(150.0)
+    assert row["available_allowances"] == pytest.approx(row["emissions_tons"])
