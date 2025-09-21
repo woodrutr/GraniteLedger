@@ -12,6 +12,8 @@ def build_allowance_model(
     allow_borrowing=False,
     cap_groups=('system',),
     membership=None,
+    annual_surrender_frac=0.5,
+    carry_pct=1.0,
 ):
     model = pyo.ConcreteModel()
     cap_groups = tuple(cap_groups)
@@ -58,6 +60,51 @@ def build_allowance_model(
         mutable=True,
     )
 
+    def _value_lookup(raw_value, group, year, default):
+        if isinstance(raw_value, dict):
+            for key in (
+                (group, year),
+                (group, int(year)),
+                (group, str(year)),
+                year,
+                int(year),
+                str(year),
+            ):
+                if key in raw_value:
+                    try:
+                        return float(raw_value[key])
+                    except (TypeError, ValueError):
+                        return float(default)
+            return float(default)
+        try:
+            return float(raw_value)
+        except (TypeError, ValueError):
+            return float(default)
+
+    surrender_map = {
+        (group, int(year)): _value_lookup(annual_surrender_frac, group, year, 0.0)
+        for group in cap_groups
+        for year in years
+    }
+    model.AnnualSurrenderFrac = pyo.Param(
+        model.cap_group_year,
+        initialize=surrender_map,
+        default=0.0,
+        mutable=True,
+    )
+
+    carry_map = {
+        (group, int(year)): _value_lookup(carry_pct, group, year, 1.0)
+        for group in cap_groups
+        for year in years
+    }
+    model.CarryPct = pyo.Param(
+        model.cap_group_year,
+        initialize=carry_map,
+        default=1.0,
+        mutable=True,
+    )
+
     if membership is None:
         membership = {(cap_groups[0], 'region'): 1.0}
     membership_map = {
@@ -78,6 +125,12 @@ def build_allowance_model(
     model.year_emissions = pyo.Var(
         model.cap_group_year, domain=pyo.NonNegativeReals
     )
+    model.allowance_surrender = pyo.Var(
+        model.cap_group_year, domain=pyo.NonNegativeReals
+    )
+    model.allowance_obligation = pyo.Var(
+        model.cap_group_year, domain=pyo.NonNegativeReals
+    )
 
     def incoming_bank(m, group, year):
         prev_year = m.prev_year_lookup[year]
@@ -96,13 +149,36 @@ def build_allowance_model(
     model.allowance_bank_balance = pyo.Constraint(
         model.cap_group_year,
         rule=lambda m, g, y: m.allowance_bank[g, y]
-        == incoming_bank(m, g, y)
-        + m.allowance_purchase[g, y]
-        - m.year_emissions[g, y],
+        == (
+            (m.CarryPct[g, y] if m.banking_enabled else 0.0)
+            * (
+                incoming_bank(m, g, y)
+                + m.allowance_purchase[g, y]
+                - m.allowance_surrender[g, y]
+            )
+        ),
+    )
+    model.allowance_surrender_requirement = pyo.Constraint(
+        model.cap_group_year,
+        rule=lambda m, g, y: m.allowance_surrender[g, y]
+        == m.AnnualSurrenderFrac[g, y] * m.year_emissions[g, y],
+    )
+    model.allowance_obligation_balance = pyo.Constraint(
+        model.cap_group_year,
+        rule=lambda m, g, y: m.allowance_obligation[g, y]
+        == (
+            (
+                m.allowance_obligation[(g, m.prev_year_lookup[y])]
+                if m.prev_year_lookup[y] is not None
+                else 0.0
+            )
+            + m.year_emissions[g, y]
+            - m.allowance_surrender[g, y]
+        ),
     )
     model.allowance_emissions_limit = pyo.Constraint(
         model.cap_group_year,
-        rule=lambda m, g, y: m.year_emissions[g, y]
+        rule=lambda m, g, y: m.allowance_surrender[g, y]
         <= m.allowance_purchase[g, y] + incoming_bank(m, g, y),
     )
 
@@ -112,7 +188,9 @@ def build_allowance_model(
 def test_allowance_bank_balance():
     years = [2025, 2030]
     allowances = {2025: 10.0, 2030: 12.0}
-    model = build_allowance_model(years, allowances, start_bank=2.0)
+    model = build_allowance_model(
+        years, allowances, start_bank=2.0, annual_surrender_frac=0.5
+    )
 
     key_2025 = ('system', 2025)
     key_2030 = ('system', 2030)
@@ -120,8 +198,12 @@ def test_allowance_bank_balance():
     model.allowance_purchase[key_2030].set_value(6.0)
     model.year_emissions[key_2025].set_value(3.0)
     model.year_emissions[key_2030].set_value(7.0)
-    model.allowance_bank[key_2025].set_value(3.0)
-    model.allowance_bank[key_2030].set_value(2.0)
+    model.allowance_surrender[key_2025].set_value(1.5)
+    model.allowance_surrender[key_2030].set_value(3.5)
+    model.allowance_obligation[key_2025].set_value(1.5)
+    model.allowance_obligation[key_2030].set_value(5.0)
+    model.allowance_bank[key_2025].set_value(4.5)
+    model.allowance_bank[key_2030].set_value(7.0)
 
     balance_2025 = model.allowance_bank_balance[key_2025]
     balance_2030 = model.allowance_bank_balance[key_2030]
@@ -130,10 +212,10 @@ def test_allowance_bank_balance():
 
     incoming_2025 = pyo.value(model.CarbonStartBank[key_2025])
     incoming_2030 = model.allowance_bank[key_2025].value
-    assert model.year_emissions[key_2025].value <= (
+    assert model.allowance_surrender[key_2025].value <= (
         model.allowance_purchase[key_2025].value + incoming_2025
     )
-    assert model.year_emissions[key_2030].value <= (
+    assert model.allowance_surrender[key_2030].value <= (
         model.allowance_purchase[key_2030].value + incoming_2030
     )
 
@@ -147,6 +229,7 @@ def test_emission_limit_detects_shortfall():
         start_bank=0.0,
         banking_enabled=True,
         allow_borrowing=True,
+        annual_surrender_frac=1.0,
     )
 
     key_2025 = ('system', 2025)
@@ -155,18 +238,22 @@ def test_emission_limit_detects_shortfall():
     model.allowance_purchase[key_2030].set_value(5.0)
     model.year_emissions[key_2025].set_value(6.0)
     model.year_emissions[key_2030].set_value(4.0)
+    model.allowance_surrender[key_2025].set_value(6.0)
+    model.allowance_surrender[key_2030].set_value(4.0)
+    model.allowance_obligation[key_2025].set_value(0.0)
+    model.allowance_obligation[key_2030].set_value(0.0)
     model.allowance_bank[key_2025].set_value(-1.0)
     model.allowance_bank[key_2030].set_value(0.0)
 
     incoming_2025 = pyo.value(model.CarbonStartBank[key_2025])
     incoming_2030 = model.allowance_bank[key_2025].value
-    assert model.year_emissions[key_2025].value > (
+    assert model.allowance_surrender[key_2025].value > (
         model.allowance_purchase[key_2025].value + incoming_2025
     )
     assert pytest.approx(0.0) == pyo.value(
         model.allowance_bank_balance[key_2025].body
     )
-    assert model.year_emissions[key_2030].value <= (
+    assert model.allowance_surrender[key_2030].value <= (
         model.allowance_purchase[key_2030].value + incoming_2030
     )
 

@@ -1154,6 +1154,71 @@ def build_cap_group_inputs(all_frames, setin):
     all_frames = all_frames.with_frame('CarbonStartBank', start_bank_indexed)
 
     frames = all_frames.to_frames()
+    try:
+        policy_spec = frames.policy()
+    except Exception:  # pragma: no cover - defensive guard
+        policy_spec = None
+
+    default_surrender_frac = 0.0
+    default_carry_pct = 1.0
+    if policy_spec is not None:
+        try:
+            default_surrender_frac = float(getattr(policy_spec, 'annual_surrender_frac', 0.0))
+        except (TypeError, ValueError):  # pragma: no cover - defensive guard
+            default_surrender_frac = 0.0
+        try:
+            default_carry_pct = float(getattr(policy_spec, 'carry_pct', 1.0))
+        except (TypeError, ValueError):  # pragma: no cover - defensive guard
+            default_carry_pct = 1.0
+
+    setin.annual_surrender_frac = default_surrender_frac
+    setin.carry_pct = default_carry_pct
+
+    def _lookup_override(config: Mapping[str, Any] | Any, year: int, default: float) -> float:
+        if isinstance(config, Mapping):
+            for key in (year, str(year)):
+                if key in config:
+                    try:
+                        return float(config[key])
+                    except (TypeError, ValueError):
+                        return float(default)
+            return float(default)
+        if config is None:
+            return float(default)
+        try:
+            return float(config)
+        except (TypeError, ValueError):
+            return float(default)
+
+    def _build_policy_param_frame(column: str, default_value: float, override_key: str):
+        if cap_group_year_combos is None or cap_group_year_combos.empty:
+            return pd.DataFrame(columns=['cap_group', 'year', column])
+        records: list[dict[str, object]] = []
+        for row in cap_group_year_combos.itertuples(index=False):
+            cap_group = str(row.cap_group)
+            year = int(row.year)
+            group_config = setin.active_carbon_cap_groups.get(cap_group, {}) or {}
+            override = group_config.get(override_key)
+            value = _lookup_override(override, year, default_value)
+            records.append({'cap_group': cap_group, 'year': year, column: value})
+        df = pd.DataFrame(records, columns=['cap_group', 'year', column])
+        df[column] = pd.to_numeric(df[column], errors='coerce').fillna(default_value).astype(float)
+        return df
+
+    surrender_df = _build_policy_param_frame(
+        'AnnualSurrenderFrac', default_surrender_frac, 'annual_surrender_frac'
+    )
+    carry_df = _build_policy_param_frame('CarryPct', default_carry_pct, 'carry_pct')
+
+    if not surrender_df.empty:
+        surrender_df = surrender_df.set_index(['cap_group', 'year'])
+    if not carry_df.empty:
+        carry_df = carry_df.set_index(['cap_group', 'year'])
+
+    all_frames = all_frames.with_frame('AnnualSurrenderFrac', surrender_df)
+    all_frames = all_frames.with_frame('CarryPct', carry_df)
+
+    frames = all_frames.to_frames()
 
     # Trigger schema validation for the Frames core contract tables.
     frames.demand()
