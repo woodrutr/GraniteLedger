@@ -155,6 +155,7 @@ def _build_allowance_supply(
         ccr1_qty=ccr1_qty,
         ccr2_trigger=float(record['ccr2_trigger']),
         ccr2_qty=ccr2_qty,
+        enabled=bool(record.get('enabled', True)),
         enable_floor=enable_floor,
         enable_ccr=enable_ccr and (ccr1_qty > 0.0 or ccr2_qty > 0.0),
     )
@@ -184,7 +185,7 @@ def _solve_allowance_market_year(
     high_price = float(high_price)
 
     def _issued_quantities(price: float, allowances: float) -> tuple[float, float]:
-        if not supply.enable_ccr:
+        if not supply.enable_ccr or not supply.enabled:
             return 0.0, 0.0
         remaining = max(allowances - float(supply.cap), 0.0)
         if remaining <= 0.0:
@@ -203,7 +204,7 @@ def _solve_allowance_market_year(
     carry_pct = max(0.0, float(carry_pct))
     surrender_frac = max(0.0, min(1.0, float(annual_surrender_frac)))
 
-    if not policy_enabled:
+    if not policy_enabled or not supply.enabled:
         clearing_price = 0.0
         dispatch_result = dispatch_solver(year, clearing_price)
         emissions = _extract_emissions(dispatch_result)
@@ -235,7 +236,7 @@ def _solve_allowance_market_year(
             '_dispatch_result': dispatch_result,
         }
 
-    min_price = supply.floor if supply.enable_floor else 0.0
+    min_price = supply.floor if supply.enable_floor and supply.enabled else 0.0
     low = max(0.0, float(min_price))
     high = max(low, high_price if high_price > 0.0 else low)
 
@@ -710,7 +711,7 @@ def run_end_to_end_from_frames(
             enable_ccr=enable_ccr,
         )
 
-        policy_enabled_year = bool(record.get('enabled', True)) and policy_enabled_global
+        policy_enabled_year = bool(supply.enabled) and policy_enabled_global
         cp_id = str(record.get('cp_id', 'NoPolicy'))
         surrender_frac = float(record.get('annual_surrender_frac', getattr(policy, 'annual_surrender_frac', 0.5)))
         carry_pct = float(record.get('carry_pct', getattr(policy, 'carry_pct', 1.0)))

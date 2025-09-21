@@ -14,6 +14,7 @@ class AllowanceSupply:
     ccr1_qty: float
     ccr2_trigger: float
     ccr2_qty: float
+    enabled: bool = True
     enable_floor: bool = True
     enable_ccr: bool = True
 
@@ -21,6 +22,8 @@ class AllowanceSupply:
         """Return the allowances available at ``price`` including CCR supply."""
 
         allowances = float(self.cap)
+        if not self.enabled:
+            return allowances
         if self.enable_ccr:
             if price >= self.ccr1_trigger:
                 allowances += float(self.ccr1_qty)
@@ -31,6 +34,8 @@ class AllowanceSupply:
     def enforce_floor(self, price: float) -> float:
         """Apply the price floor if enabled."""
 
+        if not self.enabled:
+            return float(price)
         if self.enable_floor:
             return max(float(price), float(self.floor))
         return float(price)
