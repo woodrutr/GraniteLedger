@@ -211,6 +211,29 @@ class Frames(Mapping[str, pd.DataFrame]):
         )
 
     # ------------------------------------------------------------------
+    # Convenience helpers
+    # ------------------------------------------------------------------
+    def has_frame(self, name: str) -> bool:
+        """Return ``True`` if ``name`` exists in the container."""
+
+        return _normalize_name(name) in self._frames
+
+    def frame(self, name: str) -> pd.DataFrame:
+        """Return the stored DataFrame for ``name``."""
+
+        return self[name]
+
+    def optional_frame(
+        self, name: str, default: pd.DataFrame | None = None
+    ) -> pd.DataFrame | None:
+        """Return the DataFrame for ``name`` if present, otherwise ``default``."""
+
+        normalized = _normalize_name(name)
+        if normalized not in self._frames:
+            return default
+        return self._frames[normalized].copy(deep=True)
+
+    # ------------------------------------------------------------------
     # Metadata accessors
     # ------------------------------------------------------------------
     @property
