@@ -26,6 +26,7 @@ SHORT_TON_TO_METRIC_TON = 0.90718474
 from definitions import PROJECT_ROOT
 from src.integrator.utilities import create_temporal_mapping
 from src.common.utilities import make_dir
+from src.models.electricity.scripts.technology_metadata import resolve_technology_key
 
 
 ###################################################################################################
@@ -116,67 +117,6 @@ class Config_settings:
         self.OUTPUT_ROOT = OUTPUT_ROOT
         self.output_folder_name = OUTPUT_ROOT.name
         make_dir(self.OUTPUT_ROOT)
-
-    def _determine_output_folder(self, config: dict) -> str:
-        override = self._resolve_output_override(config)
-        if override is not None:
-            return override
-        config_hash = self._config_hash(config)
-        return f"{self.selected_mode}_{config_hash}"
-
-    def _resolve_output_override(self, config: dict) -> str | None:
-        override = getattr(self.args, 'output_name', None)
-        if override in (None, ''):
-            override = config.get(self._OUTPUT_OVERRIDE_KEY)
-        if override in (None, ''):
-            return None
-        return self._sanitize_output_name(override)
-
-    @classmethod
-    def _sanitize_output_name(cls, name: object) -> str:
-        sanitized = cls._OUTPUT_NAME_SANITIZER.sub('_', str(name).strip())
-        sanitized = re.sub(r'_+', '_', sanitized)
-        sanitized = sanitized.strip('_')
-        if not sanitized:
-            raise ValueError('Output directory override must include at least one valid character')
-        return sanitized
-
-    @classmethod
-    def _config_hash(cls, config: dict) -> str:
-        sanitized_config = cls._sanitize_config_for_hash(config)
-        serialized = json.dumps(
-            sanitized_config,
-            sort_keys=True,
-            default=str,
-            separators=(',', ':'),
-        )
-        return hashlib.sha256(serialized.encode('utf-8')).hexdigest()[:10]
-
-    @classmethod
-    def _sanitize_config_for_hash(cls, data):
-        if isinstance(data, dict):
-            return {
-                key: cls._sanitize_config_for_hash(value)
-                for key, value in data.items()
-                if key != cls._OUTPUT_OVERRIDE_KEY
-            }
-        if isinstance(data, list):
-            return [cls._sanitize_config_for_hash(item) for item in data]
-        return data
-
-    @staticmethod
-    def _ensure_unique_output_dir(candidate: Path) -> Path:
-        if not candidate.exists():
-            return candidate
-
-        parent = candidate.parent
-        base_name = candidate.name
-        suffix = 1
-        while True:
-            alternative = parent / f"{base_name}_{suffix:02d}"
-            if not alternative.exists():
-                return alternative
-            suffix += 1
 
         #####
         ### __INIT__: Methods and Modules Configuration
@@ -272,6 +212,16 @@ class Config_settings:
         self.sw_learning = int(config.get('sw_learning', 0))
         self.sw_expansion = int(config.get('sw_expansion', 0))
 
+        raw_expansion_overrides = config.get('electricity_expansion_overrides')
+        self.electricity_expansion_overrides = self._normalize_expansion_overrides(
+            raw_expansion_overrides
+        )
+        self.disabled_expansion_techs = {
+            tech
+            for tech, allowed in self.electricity_expansion_overrides.items()
+            if not allowed
+        }
+
         raw_capacity_limits = capacity_build_limits
         if raw_capacity_limits is None:
             raw_capacity_limits = getattr(self.args, 'capacity_build_limits', None)
@@ -283,7 +233,9 @@ class Config_settings:
 
         ############################################################################################
         # __INIT__: Residential Configs
-        self.scale_load = config['scale_load']
+        self.scale_load = config.get('scale_load', 'enduse')
+        if test and self.scale_load == 'enduse':
+            self.scale_load = 'annual'
 
         if not test:
             self.view_regions = config['view_regions']
@@ -295,7 +247,70 @@ class Config_settings:
 
         ############################################################################################
         # __INIT__: Hydrogen Configs
-        self.h2_data_folder = self.PROJECT_ROOT / config['h2_data_folder']
+        self.h2_data_folder = self.PROJECT_ROOT / config.get(
+            'h2_data_folder', 'input/hydrogen/all_regions'
+        )
+
+    def _determine_output_folder(self, config: dict) -> str:
+        override = self._resolve_output_override(config)
+        if override is not None:
+            return override
+        config_hash = self._config_hash(config)
+        return f"{self.selected_mode}_{config_hash}"
+
+    def _resolve_output_override(self, config: dict) -> str | None:
+        override = getattr(self.args, 'output_name', None)
+        if override in (None, ''):
+            override = config.get(self._OUTPUT_OVERRIDE_KEY)
+        if override in (None, ''):
+            return None
+        return self._sanitize_output_name(override)
+
+    @classmethod
+    def _sanitize_output_name(cls, name: object) -> str:
+        sanitized = cls._OUTPUT_NAME_SANITIZER.sub('_', str(name).strip())
+        sanitized = re.sub(r'_+', '_', sanitized)
+        sanitized = sanitized.strip('_')
+        if not sanitized:
+            raise ValueError('Output directory override must include at least one valid character')
+        return sanitized
+
+    @classmethod
+    def _config_hash(cls, config: dict) -> str:
+        sanitized_config = cls._sanitize_config_for_hash(config)
+        serialized = json.dumps(
+            sanitized_config,
+            sort_keys=True,
+            default=str,
+            separators=(',', ':'),
+        )
+        return hashlib.sha256(serialized.encode('utf-8')).hexdigest()[:10]
+
+    @classmethod
+    def _sanitize_config_for_hash(cls, data):
+        if isinstance(data, dict):
+            return {
+                key: cls._sanitize_config_for_hash(value)
+                for key, value in data.items()
+                if key != cls._OUTPUT_OVERRIDE_KEY
+            }
+        if isinstance(data, list):
+            return [cls._sanitize_config_for_hash(item) for item in data]
+        return data
+
+    @staticmethod
+    def _ensure_unique_output_dir(candidate: Path) -> Path:
+        if not candidate.exists():
+            return candidate
+
+        parent = candidate.parent
+        base_name = candidate.name
+        suffix = 1
+        while True:
+            alternative = parent / f"{base_name}_{suffix:02d}"
+            if not alternative.exists():
+                return alternative
+            suffix += 1
 
     def _configure_carbon_policy(self, config: dict):
         """Parse carbon policy configuration data into normalized attributes."""
@@ -938,6 +953,22 @@ class Config_settings:
         """Return a deep copy of the configured capacity build limits."""
 
         return copy.deepcopy(self.capacity_build_limits)
+
+    def _normalize_expansion_overrides(self, overrides_source):
+        """Normalize per-technology expansion overrides."""
+
+        if not isinstance(overrides_source, Mapping):
+            return {}
+
+        normalized: dict[int, bool] = {}
+
+        for tech_key, allowed in overrides_source.items():
+            tech_id = resolve_technology_key(tech_key)
+            if tech_id is None:
+                continue
+            normalized[tech_id] = self._normalize_bool(allowed, default=True)
+
+        return normalized
 
     def _coalesce_group_value(self, group_config, *keys):
         """Return the first value present in a group configuration for any key."""

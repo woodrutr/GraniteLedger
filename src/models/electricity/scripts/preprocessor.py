@@ -56,6 +56,92 @@ DEFAULT_TECH_EMISSIONS_RATE_TON_PER_GWH = {
 DEFAULT_CAPACITY_BUILD_LIMIT = 1_000_000.0
 
 
+def _filter_disabled_capacity_build_frames(all_frames, disabled_techs):
+    """Align supply-curve dependent frames and remove disabled build technologies."""
+
+    supply_curve = all_frames.get('SupplyCurve')
+    if isinstance(supply_curve, pd.DataFrame):
+        if 'SupplyPrice' in all_frames and isinstance(
+            all_frames['SupplyPrice'], pd.DataFrame
+        ):
+            price_cols = [
+                col
+                for col in ('region', 'season', 'tech', 'step', 'year')
+                if col in supply_curve.columns
+                and col in all_frames['SupplyPrice'].columns
+            ]
+            if price_cols:
+                valid_keys = supply_curve[price_cols].drop_duplicates()
+                price_frame = pd.merge(
+                    valid_keys,
+                    all_frames['SupplyPrice'],
+                    on=price_cols,
+                    how='inner',
+                )
+                ordered_cols = price_cols + [
+                    col for col in all_frames['SupplyPrice'].columns if col not in price_cols
+                ]
+                all_frames['SupplyPrice'] = price_frame[ordered_cols].reset_index(drop=True)
+
+        if 'CapFactorVRE' in all_frames and isinstance(
+            all_frames['CapFactorVRE'], pd.DataFrame
+        ):
+            vre_cols = [
+                col
+                for col in ('tech', 'year', 'region', 'step')
+                if col in supply_curve.columns
+                and col in all_frames['CapFactorVRE'].columns
+            ]
+            if vre_cols:
+                valid_keys = supply_curve[vre_cols].drop_duplicates()
+                vre_frame = pd.merge(
+                    valid_keys,
+                    all_frames['CapFactorVRE'],
+                    on=vre_cols,
+                    how='inner',
+                )
+                ordered_cols = vre_cols + [
+                    col
+                    for col in all_frames['CapFactorVRE'].columns
+                    if col not in vre_cols
+                ]
+                all_frames['CapFactorVRE'] = vre_frame[ordered_cols].reset_index(drop=True)
+
+        available_techs = set(supply_curve['tech'].unique())
+        if 'SupplyCurveLearning' in all_frames and isinstance(
+            all_frames['SupplyCurveLearning'], pd.DataFrame
+        ):
+            all_frames['SupplyCurveLearning'] = all_frames['SupplyCurveLearning'][
+                all_frames['SupplyCurveLearning']['tech'].isin(available_techs)
+            ]
+
+    if not disabled_techs:
+        return all_frames
+
+    disabled = {int(tech) for tech in disabled_techs}
+
+    for key in (
+        'CapCost',
+        'CapCostInitial',
+        'CapacityBuildLimit',
+    ):
+        if key in all_frames:
+            frame = all_frames[key]
+            if isinstance(frame, pd.DataFrame):
+                all_frames[key] = frame[~frame['tech'].isin(disabled)]
+
+    if isinstance(supply_curve, pd.DataFrame):
+        available_techs = set(supply_curve['tech'].unique())
+        for key in ('SupplyPrice', 'CapFactorVRE', 'SupplyCurveLearning'):
+            if key not in all_frames:
+                continue
+            frame = all_frames[key]
+            if isinstance(frame, pd.DataFrame):
+                all_frames[key] = frame[frame['tech'].isin(available_techs - disabled)]
+
+    return all_frames
+
+
 def apply_allowance_overrides(
     allowances_df: pd.DataFrame,
     overrides: dict,
@@ -196,6 +282,16 @@ class Sets:
         ]  # old vals: 1=spinning, 2=regulation, 3=flex
         self.sw_builds = pd.read_csv(data_root / 'sw_builds.csv')
         self.sw_retires = pd.read_csv(data_root / 'sw_retires.csv')
+        self.electricity_expansion_overrides = copy.deepcopy(
+            getattr(settings, 'electricity_expansion_overrides', {}) or {}
+        )
+        self.disabled_expansion_techs = set(
+            getattr(settings, 'disabled_expansion_techs', set())
+        )
+        if self.disabled_expansion_techs:
+            mask = self.sw_builds['tech'].isin(self.disabled_expansion_techs)
+            if mask.any():
+                self.sw_builds.loc[mask, 'builds'] = 0
         self.capacity_build_limits = copy.deepcopy(
             getattr(settings, 'capacity_build_limits', {}) or {}
         )
@@ -567,6 +663,10 @@ def build_capacity_build_limits(all_frames, setin):
                 base_index, per_step, ['region', 'tech', 'year', 'step']
             )
 
+    disabled_techs = getattr(setin, 'disabled_expansion_techs', set())
+    if disabled_techs:
+        base_index.loc[base_index['tech'].isin(disabled_techs), 'CapacityBuildLimit'] = 0.0
+
     index_cols = ['region', 'tech', 'year', 'step']
     columns = index_cols + ['CapacityBuildLimit']
     base_index = base_index[columns]
@@ -732,7 +832,33 @@ def build_cap_group_inputs(all_frames, setin):
 
     membership = membership.reset_index(drop=True)
 
-    missing_regions = set(setin.region) - set(membership['region'])
+    configured_regions: set[int] = set()
+    for config in configured_groups.values():
+        if isinstance(config, dict) and 'regions' in config:
+            configured_regions.update(int(region) for region in config['regions'])
+
+    target_regions = set(setin.region)
+    if configured_regions:
+        target_regions = configured_regions & target_regions
+        if not target_regions:
+            target_regions = set(setin.region)
+
+    missing_regions = target_regions - set(membership['region'])
+    if missing_regions:
+        if not membership.empty:
+            fallback_group = str(membership['cap_group'].iloc[0])
+        elif configured_groups:
+            fallback_group = next(iter(configured_groups))
+        else:
+            fallback_group = 'system'
+        filler = pd.DataFrame(
+            {
+                'cap_group': [fallback_group] * len(missing_regions),
+                'region': sorted(missing_regions),
+            }
+        )
+        membership = pd.concat([membership, filler], ignore_index=True)
+        missing_regions = target_regions - set(membership['region'])
     if missing_regions:
         missing_regions_str = ', '.join(map(str, sorted(missing_regions)))
         raise ValueError(
@@ -1524,6 +1650,9 @@ def preprocessor(setin):
 
     all_frames['CapacityCredit'] = capacitycredit_df(all_frames, setin)
     all_frames['CapacityBuildLimit'] = build_capacity_build_limits(all_frames, setin)
+    all_frames = _filter_disabled_capacity_build_frames(
+        all_frames, getattr(setin, 'disabled_expansion_techs', set())
+    )
 
     # expand a few parameters to be hourly
     TLCI_cols = ['region', 'region1', 'year', 'hour', 'TranLimitCapInt']
@@ -1532,9 +1661,13 @@ def preprocessor(setin):
     all_frames['TranLimitGenInt'] = create_hourly_params(all_frames, 'TranLimitGenInt', TLGI_cols)
 
     # sets the index for all df in dict
-    for key in all_frames:
-        index = list(all_frames[key].columns[:-1])
-        all_frames[key] = all_frames[key].set_index(index)
+    for key, frame in list(all_frames.items()):
+        if frame.shape[1] <= 1:
+            continue
+        index = list(frame.columns[:-1])
+        if not index:
+            continue
+        all_frames[key] = frame.set_index(index)
 
     if 'CarbonCapGroupMembership' in all_frames:
         setin.cap_group_membership = all_frames['CarbonCapGroupMembership']

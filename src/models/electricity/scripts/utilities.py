@@ -112,18 +112,13 @@ class ElectricityMethods(Model):
         m : PowerModel
             pyomo electricity model instance
         """
-        m.WindSetReserves = {}
-        m.SolarSetReserves = {}
+        m.WindSetReserves = defaultdict(list)
+        m.SolarSetReserves = defaultdict(list)
 
         m.ProcurementSetReserves = Model.populate_sets_rule(
             m, 'reserves_procurement_index', set_base2=['restypes', 'region', 'year', 'hour']
         )
         for tech, year, r, step, hour in m.generation_vre_ub_index:
-            if (year, r, hour) not in m.WindSetReserves:
-                m.WindSetReserves[(year, r, hour)] = []
-            if (year, r, hour) not in m.SolarSetReserves:
-                m.SolarSetReserves[(year, r, hour)] = []
-
             if tech in m.T_wind:
                 m.WindSetReserves[(year, r, hour)].append((tech, step))
             elif tech in m.T_solar:

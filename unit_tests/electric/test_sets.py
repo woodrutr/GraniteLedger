@@ -161,3 +161,27 @@ def test_carbon_cap_group_region_override():
     assert set(indexed_membership['region']) == {7}
     assert set(setin.cap_groups) == {'national'}
 
+
+@pytest.mark.usefixtures('minimal_carbon_policy_inputs')
+def test_disabled_expansion_tech_removed_from_capacity_builds():
+    """Technologies disabled in the config should not appear in build sets."""
+
+    config_path = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
+    settings = config_setup.Config_settings(config_path, test=True)
+    settings.regions = [7]
+    settings.years = [2025]
+
+    overrides = settings._normalize_expansion_overrides({'Coal Steam': False})
+    settings.electricity_expansion_overrides = overrides
+    settings.disabled_expansion_techs = {
+        tech for tech, allowed in overrides.items() if not allowed
+    }
+
+    elec_model = runner.run_elec_model(settings, solve=False)
+
+    assert settings.disabled_expansion_techs, 'expected at least one disabled technology'
+    disabled_tech = next(iter(settings.disabled_expansion_techs))
+
+    assert all(index[1] != disabled_tech for index in elec_model.capacity_builds_index)
+    assert all(pair[0] != disabled_tech for pair in elec_model.Build_index)
+

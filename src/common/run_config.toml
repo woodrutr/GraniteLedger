@@ -60,6 +60,23 @@ sw_agg_years = 1
 # 0 = exogenous learning, 1 = iterative linear function, 2 = nonlinear function
 sw_learning = 0
 
+[electricity_expansion_overrides]
+"Coal Steam" = true
+"Oil Steam" = true
+"Natural Gas Combustion Turbine" = true
+"Natural Gas Combined-Cycle" = true
+"Hydrogen Turbine" = true
+"Nuclear" = true
+"Biomass" = true
+"Geothermal" = true
+"Municipal Solid Waste" = true
+"Hydroelectric Generation" = true
+"Pumped Hydroelectric Storage" = true
+"Battery Energy Storage" = true
+"Wind Offshore" = true
+"Wind Onshore" = true
+"Solar" = true
+
 ###################################################################################################
 # Carbon Policy Inputs
 

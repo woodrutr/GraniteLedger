@@ -7,6 +7,7 @@ Created on Wed Sept 19 2024 by Adam Heisey
 """
 
 # Import packages
+import csv
 import dash
 from dash import dcc, html, Input, Output, State
 import dash_bootstrap_components as dbc
@@ -24,6 +25,14 @@ import sys
 # Import python modules
 from definitions import PROJECT_ROOT
 from main import app_main
+from src.models.electricity.scripts.technology_metadata import (
+    get_technology_label,
+    resolve_technology_key,
+)
+
+
+ELECTRICITY_OVERRIDES_KEY = 'electricity_expansion_overrides'
+SW_BUILDS_PATH = Path(PROJECT_ROOT, 'input', 'electricity', 'sw_builds.csv')
 
 
 # Initialize the Dash app
@@ -110,33 +119,49 @@ def auto_load_toml(selected_mode):
     -------
         config default settings
     """
-    config_file_path = os.path.join('src/common', 'run_config_template.toml')
+    config_template_path = Path('src/common', 'run_config_template.toml')
+    config_file_path = Path('src/common', 'run_config.toml')
 
-    if os.path.exists(config_file_path):
-        # read run config with comments
-        with open(config_file_path, 'rb') as f:
-            config_content = tomli.load(f)
+    config_source_path = config_file_path if config_file_path.exists() else config_template_path
 
-        # Dynamically create input fields for the TOML content
-        inputs = []
+    if not config_source_path.exists():
+        return [], True
 
-        for key, value in config_content.items():
-            inputs.append(
-                html.Div(
-                    [
-                        dbc.Label(f'{key}:'),
-                        dbc.Input(
-                            id={'type': 'config-input', 'index': key},
-                            value=str(value),
-                            debounce=True,
-                        ),
-                    ],
-                    style={'margin-bottom': '10px'},
-                )
+    with open(config_source_path, 'rb') as f:
+        config_content = tomli.load(f)
+
+    general_inputs = []
+
+    for key, value in config_content.items():
+        if key == ELECTRICITY_OVERRIDES_KEY:
+            continue
+        general_inputs.append(
+            html.Div(
+                [
+                    dbc.Label(f'{key}:'),
+                    dbc.Input(
+                        id={'type': 'config-input', 'index': key},
+                        value=str(value),
+                        debounce=True,
+                    ),
+                ],
+                style={'margin-bottom': '10px'},
             )
+        )
 
-        return inputs, False  # Enable the Save button
-    return [], True  # Disable the Save button if no file is uploaded
+    electricity_tab = build_electricity_override_tab(
+        config_content.get(ELECTRICITY_OVERRIDES_KEY, {})
+    )
+
+    tabs = dcc.Tabs(
+        [
+            dcc.Tab(label='General', value='general', children=general_inputs),
+            dcc.Tab(label='Electricity', value='electricity', children=electricity_tab),
+        ],
+        value='general',
+    )
+
+    return tabs, False
 
 
 # Save the modified TOML file with comments
@@ -145,9 +170,11 @@ def auto_load_toml(selected_mode):
     Input('save-toml-button', 'n_clicks'),
     State({'type': 'config-input', 'index': dash.ALL}, 'value'),
     State({'type': 'config-input', 'index': dash.ALL}, 'id'),
+    State({'type': 'expansion-toggle', 'index': dash.ALL}, 'value'),
+    State({'type': 'expansion-toggle', 'index': dash.ALL}, 'id'),
     prevent_initial_call=True,
 )
-def save_toml(n_clicks, input_values, input_ids):
+def save_toml(n_clicks, input_values, input_ids, toggle_values, toggle_ids):
     """saves the configuration settings in the app to the config file.
 
     Parameters
@@ -175,12 +202,106 @@ def save_toml(n_clicks, input_values, input_ids):
         for item, value in zip(input_ids, input_values):
             config_doc[item['index']] = convert_value(value)
 
+        overrides_table = tomlkit.table()
+        overrides = {}
+        for item, value in zip(toggle_ids or [], toggle_values or []):
+            tech_index = item.get('index')
+            tech_id = resolve_technology_key(tech_index)
+            if tech_id is None:
+                continue
+            overrides[int(tech_id)] = bool(value)
+        if overrides:
+            for tech_id in sorted(overrides):
+                label = get_technology_label(tech_id)
+                overrides_table[label] = overrides[tech_id]
+            config_doc[ELECTRICITY_OVERRIDES_KEY] = overrides_table
+        elif ELECTRICITY_OVERRIDES_KEY in config_doc:
+            del config_doc[ELECTRICITY_OVERRIDES_KEY]
+
         # Write the updated content back, preserving comments
         with open(config_file_path, 'w') as f:
             f.write(tomlkit.dumps(config_doc))
 
         return f"Configuration settings saved successfully as 'run_config.toml'."
     return ''
+
+
+def build_electricity_override_tab(overrides_config):
+    """Create the electricity tab content with technology toggles."""
+
+    tech_overrides = normalize_override_config(overrides_config)
+    available_techs = load_available_technologies()
+
+    if not available_techs:
+        return [html.Div('No electricity technologies found.')] 
+
+    switches = []
+    for tech_id in available_techs:
+        label = get_technology_label(tech_id)
+        value = tech_overrides.get(tech_id, True)
+        switches.append(
+            dbc.Row(
+                [
+                    dbc.Col(
+                        dbc.Switch(
+                            id={'type': 'expansion-toggle', 'index': str(tech_id)},
+                            label=label,
+                            value=value,
+                        ),
+                        width='auto',
+                    )
+                ],
+                className='mb-2',
+            )
+        )
+
+    description = html.Div(
+        [
+            html.P(
+                'Toggle capacity expansion eligibility for each electricity technology. ',
+                className='mb-1',
+            ),
+            html.P(
+                'Disabling a technology prevents the optimizer from building new capacity.',
+                className='text-muted',
+            ),
+        ]
+    )
+
+    return [description] + switches
+
+
+def normalize_override_config(overrides_config):
+    """Normalize override configuration values into a mapping."""
+
+    normalized = {}
+    if isinstance(overrides_config, dict):
+        for key, value in overrides_config.items():
+            tech_id = resolve_technology_key(key)
+            if tech_id is None:
+                continue
+            normalized[tech_id] = bool(value)
+    return normalized
+
+
+def load_available_technologies():
+    """Load the technology identifiers present in the build switches file."""
+
+    if not SW_BUILDS_PATH.exists():
+        return []
+
+    tech_ids = set()
+    with SW_BUILDS_PATH.open(newline='') as fh:
+        reader = csv.DictReader(fh)
+        for row in reader:
+            tech_raw = row.get('tech')
+            try:
+                tech_id = int(tech_raw)
+            except (TypeError, ValueError):
+                continue
+            tech_ids.add(tech_id)
+
+    return sorted(tech_ids)
 
 
 # Function to convert values back to original types
