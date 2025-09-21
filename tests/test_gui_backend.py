@@ -120,6 +120,7 @@ def test_backend_disabled_toggle_propagates_flags(monkeypatch):
         captured["ccr1"] = policy.ccr1_enabled
         captured["ccr2"] = policy.ccr2_enabled
         captured["control"] = policy.control_period_length
+        captured["banking"] = policy.banking_enabled
         return real_runner(frames, **kwargs)
 
     monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: capturing_runner)
@@ -135,6 +136,7 @@ def test_backend_disabled_toggle_propagates_flags(monkeypatch):
         carbon_policy_enabled=False,
         ccr1_enabled=False,
         ccr2_enabled=False,
+        allowance_banking_enabled=False,
         control_period_years=4,
     )
 
@@ -143,6 +145,26 @@ def test_backend_disabled_toggle_propagates_flags(monkeypatch):
     assert captured.get("ccr1") is False
     assert captured.get("ccr2") is False
     assert captured.get("control") is None
+    assert captured.get("banking") is False
+
+    _cleanup_temp_dir(result)
+
+
+def test_backend_banking_toggle_disables_bank(tmp_path):
+    config = _baseline_config()
+    frames = _frames_for_years([2025, 2026])
+
+    result = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2026,
+        frames=frames,
+        allowance_banking_enabled=False,
+    )
+
+    assert "error" not in result
+    annual = result["annual"]
+    assert annual["bank"].eq(0.0).all()
 
     _cleanup_temp_dir(result)
 
@@ -195,6 +217,7 @@ def test_build_policy_frame_control_override():
     assert set(frame["year"]) == set(years)
     assert frame["policy_enabled"].all()
     assert frame["control_period_years"].dropna().unique().tolist() == [2]
+    assert frame["bank_enabled"].all()
 
 
 def test_build_policy_frame_disabled_defaults():
@@ -207,6 +230,7 @@ def test_build_policy_frame_disabled_defaults():
     assert not frame["policy_enabled"].any()
     assert frame["cap_tons"].iloc[0] > 0.0
     assert bool(frame["ccr1_enabled"].iloc[0]) is False
+    assert frame["bank_enabled"].eq(False).all()
 
 
 def test_load_config_data_accepts_various_sources(tmp_path):
