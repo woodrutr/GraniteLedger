@@ -80,7 +80,13 @@ class PowerModel(Model):
         self.carbon_ccr1_enabled = getattr(setA, 'carbon_ccr1_enabled', True)
         self.carbon_ccr2_enabled = getattr(setA, 'carbon_ccr2_enabled', True)
         self.year_list = list(setA.years)
+        try:
+            self.year_list.sort()
+        except TypeError:
+            # Mixed or non-comparable year labels retain their declared order.
+            pass
         self.first_year = self.year_list[0] if self.year_list else None
+        self.last_year = self.year_list[-1] if self.year_list else None
         self.prev_year_lookup = {
             year: self.year_list[idx - 1] if idx > 0 else None
             for idx, year in enumerate(self.year_list)
@@ -445,6 +451,26 @@ class PowerModel(Model):
             start_bank_data,
             mutable=True,
         )
+        surrender_frac_data = _format_cap_year_df(
+            all_frames.get('AnnualSurrenderFrac'),
+            'AnnualSurrenderFrac',
+            default=0.0,
+        )
+        self.declare_param(
+            'AnnualSurrenderFrac',
+            self.cap_group_year_index,
+            surrender_frac_data,
+            mutable=True,
+        )
+        carry_pct_data = _format_cap_year_df(
+            all_frames.get('CarryPct'), 'CarryPct', default=1.0
+        )
+        self.declare_param(
+            'CarryPct',
+            self.cap_group_year_index,
+            carry_pct_data,
+            mutable=True,
+        )
         # if capacity expansion is on
         if self.sw_expansion:
             self.declare_param('FOMCost', self.FOMCost_index, all_frames['FOMCost'])
@@ -568,6 +594,16 @@ class PowerModel(Model):
             'allowance_bank', self.cap_group_year_index, within=bank_within, bound=bank_bounds
         )
         self.declare_var('year_emissions', self.cap_group_year_index, bound=(0, 1000000000000))
+        self.declare_var(
+            'allowance_surrender',
+            self.cap_group_year_index,
+            bound=(0, 1000000000000),
+        )
+        self.declare_var(
+            'allowance_obligation',
+            self.cap_group_year_index,
+            bound=(0, 1000000000000),
+        )
 
         # if capacity expansion is on
         if self.sw_expansion:
@@ -895,22 +931,49 @@ class PowerModel(Model):
             """Track allowance bank evolution across years."""
 
             incoming = incoming_bank(self, cap_group, y)
-            return self.allowance_bank[(cap_group, y)] == (
+            carry_factor = (
+                self.CarryPct[(cap_group, y)] if self.carbon_allowance_bank_enabled else 0.0
+            )
+            return self.allowance_bank[(cap_group, y)] == carry_factor * (
                 incoming
                 + self.allowance_purchase[(cap_group, y)]
-                - self.year_emissions[(cap_group, y)]
+                - self.allowance_surrender[(cap_group, y)]
+            )
+
+        @self.Constraint(self.cap_group_year_index)
+        def allowance_surrender_requirement(self, cap_group, y):
+            """Require allowance surrender to meet the minimum policy fraction."""
+
+            frac = self.AnnualSurrenderFrac[(cap_group, y)]
+            return self.allowance_surrender[(cap_group, y)] >= (
+                frac * self.year_emissions[(cap_group, y)]
+            )
+
+        @self.Constraint(self.cap_group_year_index)
+        def allowance_obligation_balance(self, cap_group, y):
+            """Track outstanding compliance obligation across years."""
+
+            prev_year = self.prev_year_lookup.get(y)
+            outstanding_prev = (
+                self.allowance_obligation[(cap_group, prev_year)]
+                if (prev_year is not None)
+                else 0.0
+            )
+            return self.allowance_obligation[(cap_group, y)] == (
+                outstanding_prev
+                + self.year_emissions[(cap_group, y)]
+                - self.allowance_surrender[(cap_group, y)]
             )
 
         @self.Constraint(self.cap_group_year_index)
         def allowance_emissions_limit(self, cap_group, y):
-            """Ensure emissions do not exceed allowances plus incoming bank."""
+            """Ensure surrendered allowances do not exceed available supply."""
 
             incoming = incoming_bank(self, cap_group, y)
             return (
-                self.year_emissions[(cap_group, y)]
+                self.allowance_surrender[(cap_group, y)]
                 <= self.allowance_purchase[(cap_group, y)] + incoming
             )
-
         @self.Constraint(self.cap_group_year_index)
         def allowance_base_limit(self, cap_group, y):
             return (
@@ -941,6 +1004,13 @@ class PowerModel(Model):
                 + self.allowance_ccr1[(cap_group, y)]
                 + self.allowance_ccr2[(cap_group, y)]
             )
+
+        if self.last_year is not None:
+            @self.Constraint(self.cap_group)
+            def allowance_final_obligation_settlement(self, cap_group):
+                """Force outstanding obligations to be settled by the end of horizon."""
+                return self.allowance_obligation[(cap_group, self.last_year)] == 0
+
 
         if self.carbon_cap is not None:
             self.total_emissions_cap = pyo.Constraint(
