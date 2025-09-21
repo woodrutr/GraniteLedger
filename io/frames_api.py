@@ -188,6 +188,17 @@ class Frames(Mapping[str, pd.DataFrame]):
         updated[_normalize_name(name)] = _ensure_dataframe(name, df)
         return Frames(updated, carbon_policy_enabled=self._carbon_policy_enabled)
 
+    def _optional_frame(self, name: str) -> pd.DataFrame | None:
+        """Return a defensive copy of ``name`` if present, otherwise ``None``."""
+
+        key = _normalize_name(name)
+        frame = self._frames.get(key)
+        if frame is None:
+            return None
+        if not isinstance(frame, pd.DataFrame):  # pragma: no cover - defensive guard
+            raise TypeError(f'frame "{name}" must be provided as a pandas DataFrame')
+        return frame.copy(deep=True)
+
     # ------------------------------------------------------------------
     # Metadata accessors
     # ------------------------------------------------------------------
@@ -200,6 +211,85 @@ class Frames(Mapping[str, pd.DataFrame]):
     # ------------------------------------------------------------------
     # Accessors with schema validation
     # ------------------------------------------------------------------
+    def load(self) -> pd.DataFrame:
+        """Return validated system load indexed by region, year, and hour."""
+
+        df = self['load']
+        required = ['region', 'year', 'hour', 'Load']
+        df = _validate_columns('Load', df, required)
+
+        df['region'] = df['region'].astype(str)
+        df['year'] = _require_numeric('Load', 'year', df['year']).astype(int)
+        df['hour'] = _require_numeric('Load', 'hour', df['hour']).astype(int)
+        df['Load'] = _require_numeric('Load', 'Load', df['Load']).astype(float)
+
+        return df
+
+    def supply_curve(self) -> pd.DataFrame:
+        """Return validated supply curve data for electricity dispatch."""
+
+        df = self['supplycurve']
+        required = ['region', 'tech', 'step', 'year', 'SupplyCurve']
+        df = _validate_columns('SupplyCurve', df, required)
+
+        df['region'] = df['region'].astype(str)
+        df['tech'] = _require_numeric('SupplyCurve', 'tech', df['tech']).astype(int)
+        df['step'] = _require_numeric('SupplyCurve', 'step', df['step']).astype(int)
+        df['year'] = _require_numeric('SupplyCurve', 'year', df['year']).astype(int)
+        df['SupplyCurve'] = _require_numeric(
+            'SupplyCurve', 'SupplyCurve', df['SupplyCurve']
+        ).astype(float)
+
+        if 'hour' in df.columns:
+            df['hour'] = _require_numeric('SupplyCurve', 'hour', df['hour']).astype(int)
+        if 'season' in df.columns:
+            df['season'] = _require_numeric('SupplyCurve', 'season', df['season']).astype(int)
+
+        return df
+
+    def carbon_cap_group_membership(self) -> pd.DataFrame | None:
+        """Return the cap group membership frame if supplied."""
+
+        return self._optional_frame('CarbonCapGroupMembership')
+
+    def carbon_allowance_procurement(self) -> pd.DataFrame | None:
+        """Return allowance procurement quantities by cap group and year."""
+
+        frame = self._optional_frame('CarbonAllowanceProcurement')
+        if frame is None:
+            return None
+        if 'CarbonAllowanceProcurement' in frame.columns:
+            frame['CarbonAllowanceProcurement'] = _require_numeric(
+                'CarbonAllowanceProcurement',
+                'CarbonAllowanceProcurement',
+                frame['CarbonAllowanceProcurement'],
+            ).astype(float)
+        return frame
+
+    def carbon_price(self) -> pd.DataFrame | None:
+        """Return carbon allowance prices indexed by cap group and year."""
+
+        frame = self._optional_frame('CarbonPrice')
+        if frame is None:
+            return None
+        if 'CarbonPrice' in frame.columns:
+            frame['CarbonPrice'] = _require_numeric(
+                'CarbonPrice', 'CarbonPrice', frame['CarbonPrice']
+            ).astype(float)
+        return frame
+
+    def carbon_start_bank(self) -> pd.DataFrame | None:
+        """Return the starting allowance bank quantities if provided."""
+
+        frame = self._optional_frame('CarbonStartBank')
+        if frame is None:
+            return None
+        if 'CarbonStartBank' in frame.columns:
+            frame['CarbonStartBank'] = _require_numeric(
+                'CarbonStartBank', 'CarbonStartBank', frame['CarbonStartBank']
+            ).astype(float)
+        return frame
+
     def demand(self) -> pd.DataFrame:
         """Return validated demand data with columns (year, region, demand_mwh)."""
 

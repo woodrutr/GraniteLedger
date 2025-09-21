@@ -9,7 +9,12 @@ constraints, plus additional misc support functions.
 # Import packages
 from collections import defaultdict
 from logging import getLogger
-import pandas as pd
+from typing import Any, cast
+
+try:  # pragma: no cover - optional dependency
+    import pandas as pd
+except ImportError:  # pragma: no cover - optional dependency
+    pd = cast(Any, None)
 import pyomo.environ as pyo
 
 # Import python modules
@@ -17,10 +22,22 @@ from src.integrator.utilities import HI
 from src.common.model import Model
 
 # move to new file
+from io_loader import Frames
+
 from src.models.electricity.scripts.utilities import ElectricityMethods as em
 
 # Establish logger
 logger = getLogger(__name__)
+
+
+def _ensure_pandas() -> None:
+    """Ensure :mod:`pandas` is available before constructing the model."""
+
+    if pd is None:  # pragma: no cover - helper exercised indirectly
+        raise ImportError(
+            "pandas is required for src.models.electricity.scripts.electricity_model; "
+            "install it with `pip install pandas`."
+        )
 
 DEFAULT_TECH_EMISSIONS_RATE_TON_PER_GWH = {
     1: 1000.0,  # Coal Steam
@@ -49,7 +66,7 @@ class PowerModel(Model):
 
     Parameters
     ----------
-    all_frames : dictionary of pd.DataFrames
+    all_frames : Frames or mapping of str to pd.DataFrame
         Contains all dataframes of inputs
     setA : Sets
         Contains all other non-dataframe inputs
@@ -57,6 +74,11 @@ class PowerModel(Model):
 
     def __init__(self, all_frames, setA, *args, **kwargs):
         Model.__init__(self, *args, **kwargs)
+
+        _ensure_pandas()
+        all_frames = Frames.coerce(all_frames)
+        load_df = all_frames.load()
+        supply_curve_df = all_frames.supply_curve()
 
         ###########################################################################################
         # Settings
@@ -139,11 +161,11 @@ class PowerModel(Model):
         self.declare_set_with_sets('cap_group_year_index', self.cap_group, self.year)
 
         # Load sets
-        self.declare_set('demand_balance_index', all_frames['Load'])
+        self.declare_set('demand_balance_index', load_df)
         self.declare_set_with_sets('unmet_load_index', self.region, self.year, self.hour)
 
         # Supply price and quantity sets and subsets
-        self.declare_set('capacity_total_index', all_frames['SupplyCurve'])
+        self.declare_set('capacity_total_index', supply_curve_df)
         self.declare_set('generation_total_index', setA.generation_total_index)
         self.declare_set('generation_dispatchable_ub_index', setA.generation_dispatchable_ub_index)
         self.declare_set('Storage_index', setA.Storage_index)
@@ -256,10 +278,10 @@ class PowerModel(Model):
         self.declare_param('WeightSeason', self.season, all_frames['WeightSeason'])
 
         # load and technology parameters
-        self.declare_param('Load', self.demand_balance_index, all_frames['Load'], mutable=True)
+        self.declare_param('Load', self.demand_balance_index, load_df, mutable=True)
         self.declare_param('UnmetLoadPenalty', None, 500000)
         self.declare_param('SupplyPrice', self.capacity_total_index, all_frames['SupplyPrice'])
-        self.declare_param('SupplyCurve', self.capacity_total_index, all_frames['SupplyCurve'])
+        self.declare_param('SupplyCurve', self.capacity_total_index, supply_curve_df)
         self.declare_param('CapFactorVRE', self.generation_vre_ub_index, all_frames['CapFactorVRE'])
         self.declare_param(
             'HydroCapFactor', self.HydroCapFactor_index, all_frames['HydroCapFactor']
@@ -284,7 +306,7 @@ class PowerModel(Model):
         if self.carbon_cap is not None:
             self.declare_param('CarbonCap', None, self.carbon_cap)
 
-        membership_data = all_frames.get('CarbonCapGroupMembership')
+        membership_data = all_frames.carbon_cap_group_membership()
         if membership_data is None:
             membership_data = cap_group_region_frame
         if isinstance(membership_data, pd.Series):
@@ -313,7 +335,7 @@ class PowerModel(Model):
         )
 
         allowance_data = _format_cap_year_df(
-            all_frames.get('CarbonAllowanceProcurement'),
+            all_frames.carbon_allowance_procurement(),
             'CarbonAllowanceProcurement',
             default=0.0,
         )
@@ -325,7 +347,7 @@ class PowerModel(Model):
         )
 
         carbon_price_data = _format_cap_year_df(
-            all_frames.get('CarbonPrice'), 'CarbonPrice', default=0.0
+            all_frames.carbon_price(), 'CarbonPrice', default=0.0
         )
         self.declare_param(
             'CarbonPrice',
@@ -334,7 +356,7 @@ class PowerModel(Model):
             mutable=True,
         )
 
-        start_bank_raw = all_frames.get('CarbonStartBank')
+        start_bank_raw = all_frames.carbon_start_bank()
         start_bank_data = _format_cap_year_df(
             start_bank_raw, 'CarbonStartBank', default=0.0
         )

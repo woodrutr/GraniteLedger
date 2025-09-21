@@ -24,6 +24,8 @@ from src.models.electricity.scripts.utilities import check_results
 from src.models.electricity.scripts.electricity_model import PowerModel
 from src.common.config_setup import Config_settings
 
+from io_loader import Frames
+
 from src.integrator.utilities import select_solver
 
 # Establish logger
@@ -54,7 +56,8 @@ def build_elec_model(all_frames, setin) -> PowerModel:
     """
     # Building model
     logger.info('Build Pyomo')
-    instance = PowerModel(all_frames, setin)
+    frames = Frames.coerce(all_frames)
+    instance = PowerModel(frames, setin)
 
     # add electricity price dual
     instance.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)

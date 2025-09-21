@@ -4,6 +4,7 @@ import importlib
 import pytest
 
 from definitions import PROJECT_ROOT
+from io_loader import Frames
 
 pd = pytest.importorskip("pandas")
 
@@ -21,6 +22,7 @@ def test_years_set():
 
     config_path = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
     settings = config_setup.Config_settings(config_path, test=True)
+    settings.residential = False
     settings.regions = regions
     settings.years = years
 
@@ -45,15 +47,17 @@ def test_hours_set():
         regions = [7]
         config_path = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
         settings = config_setup.Config_settings(config_path, test=True)
+        settings.residential = False
         settings.regions = regions
         settings.years = years
         settings.sw_temporal = sw_temporal
         all_frames, setin = prep.preprocessor(prep.Sets(settings))
+        frames = Frames.coerce(all_frames)
 
         tot_load1 = pd.merge(
-            all_frames['Load'].reset_index(), all_frames['MapHourDay'].reset_index(), on='hour'
+            frames.load().reset_index(), frames['MapHourDay'].reset_index(), on='hour'
         )
-        tot_load1 = pd.merge(tot_load1, all_frames['WeightDay'], on='day')
+        tot_load1 = pd.merge(tot_load1, frames['WeightDay'], on='day')
         tot_load1.loc[:, 'tot_load'] = tot_load1['Load'] * tot_load1['WeightDay']
         sum_load = round(sum(tot_load1.tot_load), 0)
         return sum_load
@@ -102,16 +106,18 @@ def test_default_allowance_override_applies_to_remaining_groups():
 def test_carbon_cap_group_tables():
     config_path = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
     settings = config_setup.Config_settings(config_path, test=True)
+    settings.residential = False
     settings.regions = [7, 8]
     settings.years = [2025, 2030]
 
     all_frames, setin = prep.preprocessor(prep.Sets(settings))
+    frames = Frames.coerce(all_frames)
 
-    membership = all_frames['CarbonCapGroupMembership'].reset_index()
+    membership = frames['CarbonCapGroupMembership'].reset_index()
     assert set(membership['region']) == set(settings.regions)
     assert set(membership['cap_group']) == {'national'}
 
-    allowance_groups = all_frames['CarbonAllowanceProcurementByCapGroup'].reset_index()
+    allowance_groups = frames['CarbonAllowanceProcurementByCapGroup'].reset_index()
     assert set(allowance_groups['cap_group']) == {'national'}
     weights = setin.WeightYear.set_index('year')['WeightYear']
     for _, row in allowance_groups.iterrows():
@@ -121,11 +127,11 @@ def test_carbon_cap_group_tables():
         )
         assert row['CarbonAllowanceProcurement'] == pytest.approx(expected)
 
-    price_groups = all_frames['CarbonAllowancePriceByCapGroup'].reset_index()
+    price_groups = frames['CarbonAllowancePriceByCapGroup'].reset_index()
     assert set(price_groups['cap_group']) == {'national'}
     base_prices = (
-        all_frames['CarbonAllowancePrice'].reset_index()
-        if 'CarbonAllowancePrice' in all_frames
+        frames['CarbonAllowancePrice'].reset_index()
+        if 'CarbonAllowancePrice' in frames
         else pd.DataFrame(columns=['year', 'CarbonPrice'])
     )
     base_price_lookup = {
@@ -145,6 +151,7 @@ def test_carbon_cap_group_tables():
 def test_carbon_cap_group_region_override():
     config_path = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
     settings = config_setup.Config_settings(config_path, test=True)
+    settings.residential = False
     settings.regions = [7, 8]
     settings.years = [2025, 2030]
     settings.carbon_cap_groups = settings._normalize_carbon_cap_groups(
@@ -152,8 +159,9 @@ def test_carbon_cap_group_region_override():
     )
 
     all_frames, setin = prep.preprocessor(prep.Sets(settings))
+    frames = Frames.coerce(all_frames)
 
-    membership = all_frames['CarbonCapGroupMembership'].reset_index()
+    membership = frames['CarbonCapGroupMembership'].reset_index()
     assert set(membership['cap_group']) == {'national'}
     assert set(membership['region']) == {7}
 
