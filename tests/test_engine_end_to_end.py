@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib
+from collections.abc import Mapping
+
 import pytest
 
 pd = pytest.importorskip("pandas")
@@ -109,6 +111,38 @@ def test_three_year_control_period_converges(three_year_outputs):
     iterations = three_year_outputs.annual["iterations"]
     assert not iterations.empty
     assert int(iterations.max()) <= 10
+
+
+def test_progress_callback_reports_each_year():
+    frames = _three_year_frames()
+    events: list[tuple[str, dict[str, object]]] = []
+
+    def _capture(stage: str, payload: Mapping[str, object]) -> None:
+        events.append((stage, dict(payload)))
+
+    run_end_to_end_from_frames(
+        frames,
+        years=YEARS,
+        price_initial=0.0,
+        tol=1e-4,
+        relaxation=0.8,
+        progress_cb=_capture,
+    )
+
+    stages = [stage for stage, _ in events]
+    assert stages.count("run_start") == 1
+    assert stages.count("year_start") == len(YEARS)
+    assert stages.count("year_complete") == len(YEARS)
+    assert "iteration" in stages
+
+    first_year_payload = next(payload for stage, payload in events if stage == "year_start")
+    assert int(first_year_payload.get("index", -1)) == 0
+    assert int(first_year_payload.get("total_years", 0)) == len(YEARS)
+
+    final_payload = next(payload for stage, payload in reversed(events) if stage == "year_complete")
+    assert int(final_payload.get("index", -1)) == len(YEARS) - 1
+    assert "price" in final_payload
+    assert "iterations" in final_payload
 
 
 def test_bank_non_negative_after_compliance(three_year_outputs):
