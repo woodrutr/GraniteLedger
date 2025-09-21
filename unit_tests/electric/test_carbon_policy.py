@@ -19,6 +19,7 @@ def build_allowance_model(
     cap_groups = tuple(cap_groups)
     model.year = pyo.Set(initialize=years, ordered=True)
     model.cap_group = pyo.Set(initialize=cap_groups, ordered=True)
+    model.final_year = years[-1]
     model.cap_group_year = pyo.Set(
         initialize=[(g, y) for g in cap_groups for y in years],
         dimen=2,
@@ -161,7 +162,7 @@ def build_allowance_model(
     model.allowance_surrender_requirement = pyo.Constraint(
         model.cap_group_year,
         rule=lambda m, g, y: m.allowance_surrender[g, y]
-        == m.AnnualSurrenderFrac[g, y] * m.year_emissions[g, y],
+        >= m.AnnualSurrenderFrac[g, y] * m.year_emissions[g, y],
     )
     model.allowance_obligation_balance = pyo.Constraint(
         model.cap_group_year,
@@ -182,6 +183,11 @@ def build_allowance_model(
         <= m.allowance_purchase[g, y] + incoming_bank(m, g, y),
     )
 
+    model.allowance_final_obligation_settlement = pyo.Constraint(
+        model.cap_group,
+        rule=lambda m, g: m.allowance_obligation[g, m.final_year] == 0,
+    )
+
     return model
 
 
@@ -199,11 +205,11 @@ def test_allowance_bank_balance():
     model.year_emissions[key_2025].set_value(3.0)
     model.year_emissions[key_2030].set_value(7.0)
     model.allowance_surrender[key_2025].set_value(1.5)
-    model.allowance_surrender[key_2030].set_value(3.5)
+    model.allowance_surrender[key_2030].set_value(8.5)
     model.allowance_obligation[key_2025].set_value(1.5)
-    model.allowance_obligation[key_2030].set_value(5.0)
+    model.allowance_obligation[key_2030].set_value(0.0)
     model.allowance_bank[key_2025].set_value(4.5)
-    model.allowance_bank[key_2030].set_value(7.0)
+    model.allowance_bank[key_2030].set_value(2.0)
 
     balance_2025 = model.allowance_bank_balance[key_2025]
     balance_2030 = model.allowance_bank_balance[key_2030]
@@ -218,6 +224,14 @@ def test_allowance_bank_balance():
     assert model.allowance_surrender[key_2030].value <= (
         model.allowance_purchase[key_2030].value + incoming_2030
     )
+
+    required_2030 = pyo.value(
+        model.AnnualSurrenderFrac[key_2030] * model.year_emissions[key_2030]
+    )
+    assert model.allowance_surrender[key_2030].value >= required_2030
+
+    final_constraint = model.allowance_final_obligation_settlement['system']
+    assert pytest.approx(0.0) == pyo.value(final_constraint.body)
 
 
 def test_emission_limit_detects_shortfall():
