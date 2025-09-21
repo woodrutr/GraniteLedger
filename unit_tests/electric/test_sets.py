@@ -162,6 +162,82 @@ def test_carbon_cap_group_region_override():
     assert set(setin.cap_groups) == {'national'}
 
 
+def test_multi_cap_groups_preserve_labels(monkeypatch):
+    config_path = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
+    settings = config_setup.Config_settings(config_path, test=True)
+    settings.regions = [7, 8]
+    settings.years = [2025, 2030]
+    settings.carbon_cap = 100.0
+    settings.carbon_cap_groups = settings._normalize_carbon_cap_groups(
+        {
+            'rggi': {
+                'regions': [7],
+                'allowances': {2025: 5.0, 2030: 6.0},
+                'prices': {2025: 15.0},
+            },
+            'non_rggi': {
+                'regions': [8],
+                'allowances': {2025: 7.0, 2030: 8.0},
+                'prices': {2025: 20.0},
+            },
+        }
+    )
+
+    original_read_csv = prep.pd.read_csv
+
+    def _mock_read_csv(filepath, *args, **kwargs):
+        filename = Path(filepath).name if isinstance(filepath, (str, Path)) else ''
+        if filename == 'CarbonCapGroupMap.csv':
+            return pd.DataFrame(
+                {
+                    'cap_group': ['rggi', 'non_rggi'],
+                    'region': [7, 8],
+                }
+            )
+        if filename == 'SupplyCurve.csv':
+            records: list[dict[str, int | float]] = []
+            for region in (7, 8):
+                for year in (2025, 2030):
+                    for step in (1, 2):
+                        records.append(
+                            {
+                                'region': region,
+                                'tech': 1,
+                                'step': step,
+                                'year': year,
+                                'SupplyCurve': 1.0,
+                            }
+                        )
+            return pd.DataFrame(records)
+        return original_read_csv(filepath, *args, **kwargs)
+
+    monkeypatch.setattr(prep.pd, 'read_csv', _mock_read_csv)
+
+    elec_model = runner.run_elec_model(settings, solve=False)
+
+    expected_groups = {'rggi', 'non_rggi'}
+
+    assert set(elec_model.cap_group_list) == expected_groups
+    assert set(str(group) for group in elec_model.cap_group) == expected_groups
+
+    membership_groups = {group for group, _ in elec_model.cap_group_region_index}
+    assert membership_groups == expected_groups
+
+    cap_year_groups = {group for group, _ in elec_model.cap_group_year_index}
+    assert cap_year_groups == expected_groups
+
+    allowance_groups = {group for group, _ in elec_model.CarbonAllowanceProcurement}
+    assert allowance_groups == expected_groups
+
+    price_groups = {group for group, _ in elec_model.CarbonPrice}
+    assert price_groups == expected_groups
+
+    membership_param_groups = {
+        group for group, _ in elec_model.CarbonCapGroupMembership
+    }
+    assert membership_param_groups == expected_groups
+
+
 @pytest.mark.usefixtures('minimal_carbon_policy_inputs')
 def test_disabled_expansion_tech_removed_from_capacity_builds():
     """Technologies disabled in the config should not appear in build sets."""

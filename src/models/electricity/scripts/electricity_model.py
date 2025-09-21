@@ -92,7 +92,44 @@ class PowerModel(Model):
             for idx, year in enumerate(self.year_list)
         }
 
-        self.cap_group_list = list(getattr(setA, 'cap_group', []))
+        def _normalize_cap_groups(groups):
+            if groups is None:
+                return []
+            if isinstance(groups, (str, bytes)):
+                iterable = [groups]
+            elif isinstance(groups, dict):
+                iterable = list(groups)
+            else:
+                try:
+                    iterable = list(groups)
+                except TypeError:
+                    iterable = [groups]
+            normalized = []
+            for value in iterable:
+                if pd.isna(value):
+                    continue
+                normalized.append(value)
+            return normalized
+
+        cap_group_candidates = _normalize_cap_groups(getattr(setA, 'cap_groups', None))
+        if not cap_group_candidates:
+            cap_group_candidates = _normalize_cap_groups(getattr(setA, 'cap_group', []))
+        if not cap_group_candidates:
+            membership_source = getattr(setA, 'cap_group_membership', None)
+            if isinstance(membership_source, pd.DataFrame):
+                index = membership_source.index
+                if isinstance(index, pd.MultiIndex) and 'cap_group' in index.names:
+                    cap_group_candidates = _normalize_cap_groups(
+                        index.get_level_values('cap_group')
+                    )
+                elif 'cap_group' in membership_source.columns:
+                    cap_group_candidates = _normalize_cap_groups(
+                        membership_source['cap_group']
+                    )
+            elif isinstance(membership_source, pd.Series):
+                cap_group_candidates = _normalize_cap_groups(membership_source)
+
+        self.cap_group_list = list(dict.fromkeys(cap_group_candidates))
         if not self.cap_group_list:
             self.cap_group_list = ['system']
 
