@@ -17,18 +17,24 @@ def build_allowance_model(
 ):
     model = pyo.ConcreteModel()
     cap_groups = tuple(cap_groups)
-    model.year = pyo.Set(initialize=years, ordered=True)
+    try:
+        ordered_years = tuple(sorted(years))
+    except TypeError:
+        ordered_years = tuple(years)
+    if not ordered_years:
+        raise ValueError('years must contain at least one modeling year')
+    model.year = pyo.Set(initialize=ordered_years, ordered=True)
     model.cap_group = pyo.Set(initialize=cap_groups, ordered=True)
-    model.final_year = years[-1]
+    model.final_year = ordered_years[-1]
     model.cap_group_year = pyo.Set(
-        initialize=[(g, y) for g in cap_groups for y in years],
+        initialize=[(g, y) for g in cap_groups for y in ordered_years],
         dimen=2,
         ordered=True,
     )
     model.banking_enabled = banking_enabled
     model.prev_year_lookup = {
-        year: (years[idx - 1] if idx > 0 else None)
-        for idx, year in enumerate(years)
+        year: (ordered_years[idx - 1] if idx > 0 else None)
+        for idx, year in enumerate(ordered_years)
     }
 
     allowances_map = {}
@@ -50,7 +56,7 @@ def build_allowance_model(
             (group, int(year)): float(value) for (group, year), value in start_bank.items()
         }
     else:
-        first_year = years[0]
+        first_year = ordered_years[0]
         start_bank_map = {
             (group, first_year): float(start_bank) for group in cap_groups
         }
@@ -85,7 +91,7 @@ def build_allowance_model(
     surrender_map = {
         (group, int(year)): _value_lookup(annual_surrender_frac, group, year, 0.0)
         for group in cap_groups
-        for year in years
+        for year in ordered_years
     }
     model.AnnualSurrenderFrac = pyo.Param(
         model.cap_group_year,
@@ -97,7 +103,7 @@ def build_allowance_model(
     carry_map = {
         (group, int(year)): _value_lookup(carry_pct, group, year, 1.0)
         for group in cap_groups
-        for year in years
+        for year in ordered_years
     }
     model.CarryPct = pyo.Param(
         model.cap_group_year,
@@ -270,6 +276,56 @@ def test_emission_limit_detects_shortfall():
     assert model.allowance_surrender[key_2030].value <= (
         model.allowance_purchase[key_2030].value + incoming_2030
     )
+
+
+def test_final_year_obligation_must_clear():
+    years = [2030, 2025]
+    allowances = {2025: 5.0, 2030: 6.0}
+    model = build_allowance_model(
+        years,
+        allowances,
+        start_bank=0.0,
+        annual_surrender_frac=0.2,
+    )
+
+    key_2025 = ('system', 2025)
+    key_2030 = ('system', 2030)
+
+    assert model.final_year == 2030
+
+    model.allowance_purchase[key_2025].set_value(5.0)
+    model.year_emissions[key_2025].set_value(5.0)
+    model.allowance_surrender[key_2025].set_value(1.0)
+    model.allowance_bank[key_2025].set_value(4.0)
+    model.allowance_obligation[key_2025].set_value(4.0)
+
+    model.allowance_purchase[key_2030].set_value(5.0)
+    model.year_emissions[key_2030].set_value(6.0)
+    model.allowance_surrender[key_2030].set_value(3.0)
+    model.allowance_bank[key_2030].set_value(6.0)
+    model.allowance_obligation[key_2030].set_value(7.0)
+
+    balance_2025 = model.allowance_bank_balance[key_2025]
+    obligation_2025 = model.allowance_obligation_balance[key_2025]
+    balance_2030 = model.allowance_bank_balance[key_2030]
+    obligation_2030 = model.allowance_obligation_balance[key_2030]
+
+    assert pytest.approx(0.0) == pyo.value(balance_2025.body)
+    assert pytest.approx(0.0) == pyo.value(obligation_2025.body)
+    assert pytest.approx(0.0) == pyo.value(balance_2030.body)
+    assert pytest.approx(0.0) == pyo.value(obligation_2030.body)
+
+    final_constraint = model.allowance_final_obligation_settlement['system']
+    assert pytest.approx(7.0) == pyo.value(final_constraint.body)
+
+    model.allowance_purchase[key_2030].set_value(6.0)
+    model.allowance_surrender[key_2030].set_value(10.0)
+    model.allowance_bank[key_2030].set_value(0.0)
+    model.allowance_obligation[key_2030].set_value(0.0)
+
+    assert pytest.approx(0.0) == pyo.value(balance_2030.body)
+    assert pytest.approx(0.0) == pyo.value(obligation_2030.body)
+    assert pytest.approx(0.0) == pyo.value(final_constraint.body)
 
 
 def test_reported_carbon_price_matches_marginal_cost():

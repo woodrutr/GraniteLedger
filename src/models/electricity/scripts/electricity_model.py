@@ -78,6 +78,11 @@ class PowerModel(Model):
             setA, 'carbon_allowance_allow_borrowing', False
         )
         self.year_list = list(setA.years)
+        try:
+            self.year_list.sort()
+        except TypeError:
+            # Mixed or non-comparable year labels retain their declared order.
+            pass
         self.first_year = self.year_list[0] if self.year_list else None
         self.last_year = self.year_list[-1] if self.year_list else None
         self.prev_year_lookup = {
