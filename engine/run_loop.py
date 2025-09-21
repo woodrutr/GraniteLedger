@@ -11,7 +11,12 @@ except ImportError:  # pragma: no cover - optional dependency
 from dispatch.lp_network import solve_from_frames as solve_network_from_frames
 from dispatch.lp_single import solve as solve_single
 from engine.outputs import EngineOutputs
-from policy.allowance_annual import AllowanceAnnual, RGGIPolicyAnnual
+from policy.allowance_annual import (
+    RGGIPolicyAnnual,
+    allowance_initial_state,
+    clear_year as allowance_clear_year,
+    finalize_period_if_needed as allowance_finalize_period,
+)
 from policy.allowance_supply import AllowanceSupply
 
 from io_loader import Frames
@@ -423,7 +428,7 @@ def run_annual_fixed_point(
             results[year] = record
         return results
 
-    allowance = AllowanceAnnual(policy)
+    allowance_state = allowance_initial_state()
     results: dict[int, dict] = {}
 
     bank = float(policy.bank0)
@@ -434,33 +439,41 @@ def run_annual_fixed_point(
         price_guess = _initial_price_for_year(price_initial, year, previous_price)
         iteration_count = 0
         emissions = 0.0
-        market_result: dict[str, float | bool | str] | None = None
+        market_record: dict[str, float | bool | str] | None = None
+        accepted_state = None
+        base_state_for_year = allowance_state
 
         for iteration in range(1, max_iter + 1):
             iteration_count = iteration
             dispatch_output = dispatch_model(year, price_guess)
             emissions = _extract_emissions(dispatch_output)
-            market_result = allowance.clear_year(
+            trial_record, trial_state = allowance_clear_year(
+                policy,
+                base_state_for_year,
                 year,
                 emissions_tons=emissions,
                 bank_prev=bank_start,
                 expected_price_guess=price_guess,
             )
-            cleared_price = float(market_result['p_co2'])
+            market_record = trial_record
+            cleared_price = float(trial_record['p_co2'])
             if abs(cleared_price - price_guess) <= tol:
                 price_guess = cleared_price
+                accepted_state = trial_state
                 break
             price_guess = price_guess + relaxation * (cleared_price - price_guess)
         else:  # pragma: no cover - defensive guard
             raise RuntimeError(f'Allowance price failed to converge for year {year}')
 
-        assert market_result is not None  # for type checker
-        market_result = dict(market_result)
+        assert market_record is not None  # for type checker
+        assert accepted_state is not None  # for type checker
+        allowance_state = accepted_state
+        market_result = dict(market_record)
         market_result['iterations'] = iteration_count
         market_result['emissions'] = emissions
 
         bank = float(market_result['bank_new'])
-        finalize_summary = allowance.finalize_period_if_needed(year)
+        finalize_summary, allowance_state = allowance_finalize_period(policy, allowance_state, year)
         market_result['finalize'] = finalize_summary
         if finalize_summary.get('finalized'):
             bank = float(finalize_summary.get('bank_final', bank))
