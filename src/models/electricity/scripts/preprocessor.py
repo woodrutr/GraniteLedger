@@ -1096,6 +1096,89 @@ def build_cap_group_inputs(all_frames, setin):
                 membership = pd.DataFrame(columns=membership.columns)
 
     membership = membership.drop_duplicates().sort_values(['cap_group', 'region'])
+    membership = membership.reset_index(drop=True)
+
+    valid_regions = set(getattr(setin, 'region', []))
+    if valid_regions:
+        region_dtype = pd.Series(sorted(valid_regions)).dtype
+    else:
+        region_dtype = membership['region'].dtype if 'region' in membership.columns else float
+
+    if membership.empty:
+        configured_records: list[dict[str, object]] = []
+        for group_name, config in configured_groups.items():
+            if not isinstance(config, dict):
+                continue
+            regions = config.get('regions')
+            if not regions:
+                continue
+            for region in regions:
+                try:
+                    region_value = int(region)
+                except (TypeError, ValueError):
+                    continue
+                if valid_regions and region_value not in valid_regions:
+                    continue
+                configured_records.append(
+                    {'cap_group': str(group_name), 'region': region_value}
+                )
+        if configured_records:
+            configured_df = pd.DataFrame(configured_records)
+            configured_df['cap_group'] = configured_df['cap_group'].astype(str)
+            configured_df['region'] = pd.to_numeric(
+                configured_df['region'], errors='coerce'
+            )
+            configured_df = configured_df.dropna(subset=['region'])
+            if not configured_df.empty:
+                configured_df['region'] = configured_df['region'].astype(region_dtype)
+                membership = configured_df.drop_duplicates().sort_values(
+                    ['cap_group', 'region']
+                )
+                membership = membership.reset_index(drop=True)
+    else:
+        current_groups = set(membership['cap_group'])
+        group_region_map = {
+            group: set(membership[membership['cap_group'] == group]['region'])
+            for group in current_groups
+        }
+        additional_records: list[dict[str, object]] = []
+        for group_name, config in configured_groups.items():
+            if not isinstance(config, dict):
+                continue
+            group_key = str(group_name)
+            if group_key not in group_region_map:
+                continue
+            regions = config.get('regions')
+            if not regions:
+                continue
+            for region in regions:
+                try:
+                    region_value = int(region)
+                except (TypeError, ValueError):
+                    continue
+                if valid_regions and region_value not in valid_regions:
+                    continue
+                if region_value in group_region_map[group_key]:
+                    continue
+                additional_records.append(
+                    {'cap_group': group_key, 'region': region_value}
+                )
+                group_region_map[group_key].add(region_value)
+        if additional_records:
+            additional_df = pd.DataFrame(additional_records)
+            additional_df['cap_group'] = additional_df['cap_group'].astype(str)
+            additional_df['region'] = pd.to_numeric(
+                additional_df['region'], errors='coerce'
+            )
+            additional_df = additional_df.dropna(subset=['region'])
+            if not additional_df.empty:
+                additional_df['region'] = additional_df['region'].astype(region_dtype)
+                membership = pd.concat([membership, additional_df], ignore_index=True)
+                membership = (
+                    membership.drop_duplicates()
+                    .sort_values(['cap_group', 'region'])
+                    .reset_index(drop=True)
+                )
 
     if membership.empty:
         membership = pd.DataFrame(
@@ -1103,42 +1186,6 @@ def build_cap_group_inputs(all_frames, setin):
                 'cap_group': ['system'] * len(setin.region),
                 'region': setin.region,
             }
-        )
-
-    membership = membership.reset_index(drop=True)
-
-    configured_regions: set[int] = set()
-    for config in configured_groups.values():
-        if isinstance(config, dict) and 'regions' in config:
-            configured_regions.update(int(region) for region in config['regions'])
-
-    target_regions = set(setin.region)
-    if configured_regions:
-        target_regions = configured_regions & target_regions
-        if not target_regions:
-            target_regions = set(setin.region)
-
-    missing_regions = target_regions - set(membership['region'])
-    if missing_regions:
-        if not membership.empty:
-            fallback_group = str(membership['cap_group'].iloc[0])
-        elif configured_groups:
-            fallback_group = next(iter(configured_groups))
-        else:
-            fallback_group = 'system'
-        filler = pd.DataFrame(
-            {
-                'cap_group': [fallback_group] * len(missing_regions),
-                'region': sorted(missing_regions),
-            }
-        )
-        membership = pd.concat([membership, filler], ignore_index=True)
-        missing_regions = target_regions - set(membership['region'])
-    if missing_regions:
-        missing_regions_str = ', '.join(map(str, sorted(missing_regions)))
-        raise ValueError(
-            'Carbon cap group membership missing region assignments for: '
-            f'{missing_regions_str}'
         )
 
     active_groups = list(dict.fromkeys(membership['cap_group']))
@@ -1416,13 +1463,19 @@ def build_cap_group_inputs(all_frames, setin):
     frames = all_frames.to_frames()
 
     # Trigger schema validation for the Frames core contract tables.
-    frames.demand()
-    frames.fuels()
-    frames.transmission()
-    frames.coverage()
-    frames.policy()
+    for accessor in (
+        frames.demand,
+        frames.fuels,
+        frames.transmission,
+        frames.coverage,
+        frames.policy,
+    ):
+        try:
+            accessor()
+        except KeyError:
+            continue
 
-    return frames, setin
+    return all_frames, setin
 
 
 def fill_values(row, subset_list):

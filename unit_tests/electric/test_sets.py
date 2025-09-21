@@ -162,6 +162,53 @@ def test_carbon_cap_group_region_override():
     assert set(setin.cap_groups) == {'national'}
 
 
+def test_uncapped_regions_excluded_from_carbon_group(monkeypatch):
+    config_path = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
+    settings = config_setup.Config_settings(config_path, test=True)
+    settings.regions = [7, 8]
+    settings.years = [2025, 2030]
+    settings.carbon_cap_groups = {}
+    settings.default_cap_group = None
+    settings.carbon_allowance_procurement = {}
+    settings.carbon_allowance_procurement_overrides = {}
+    settings.carbon_allowance_start_bank = 0.0
+    settings.carbon_allowance_bank_enabled = True
+    settings.carbon_allowance_allow_borrowing = False
+
+    original_read_csv = prep.pd.read_csv
+
+    def _mock_read_csv(filepath, *args, **kwargs):
+        filename = Path(filepath).name if isinstance(filepath, (str, Path)) else ''
+        if filename == 'CarbonCapGroupMap.csv':
+            return pd.DataFrame({'cap_group': ['capped'], 'region': [7]})
+        if filename == 'SupplyCurve.csv':
+            records: list[dict[str, int | float]] = []
+            for region in (7, 8):
+                for year in (2025, 2030):
+                    for step in (1, 2):
+                        records.append(
+                            {
+                                'region': region,
+                                'tech': 1,
+                                'step': step,
+                                'year': year,
+                                'SupplyCurve': 1.0,
+                            }
+                        )
+            return pd.DataFrame(records)
+        return original_read_csv(filepath, *args, **kwargs)
+
+    monkeypatch.setattr(prep.pd, 'read_csv', _mock_read_csv)
+
+    all_frames, setin = prep.preprocessor(prep.Sets(settings))
+
+    membership = all_frames['CarbonCapGroupMembership'].reset_index()
+    assert set(membership['cap_group']) == {'capped'}
+    assert set(membership['region']) == {7}
+    assert set(setin.cap_groups) == {'capped'}
+    assert set(setin.cap_group_membership.index.get_level_values('region')) == {7}
+
+
 def test_multi_cap_groups_preserve_labels(monkeypatch):
     config_path = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
     settings = config_setup.Config_settings(config_path, test=True)
