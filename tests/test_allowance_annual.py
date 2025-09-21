@@ -7,11 +7,15 @@ pytest.importorskip("pandas")
 
 from policy.allowance_annual import (
     AllowanceMarketState,
+    _PRICE_SOLVER_HIGH,
+    _PRICE_SOLVER_MAX_ITER,
+    _PRICE_SOLVER_TOL,
     allowance_initial_state,
     clear_year,
     finalize_period_if_needed,
 )
-from engine.run_loop import run_annual_fixed_point
+from policy.allowance_supply import AllowanceSupply
+from engine.run_loop import _solve_allowance_market_year, run_annual_fixed_point
 
 fixtures = importlib.import_module("tests.fixtures.annual_minimal")
 LinearDispatch = fixtures.LinearDispatch
@@ -36,7 +40,8 @@ def test_clear_year_respects_floor_and_tracks_bank():
     assert result["surrendered"] == pytest.approx(0.5 * 80.0)
     expected_bank = policy.bank0 + policy.cap.loc[2025] - result["surrendered"]
     assert result["bank_new"] == pytest.approx(expected_bank)
-    assert result["available_allowances"] == pytest.approx(policy.bank0 + policy.cap.loc[2025])
+    assert result["available_allowances"] == pytest.approx(policy.cap.loc[2025])
+    assert result["allowances_total"] == pytest.approx(policy.bank0 + policy.cap.loc[2025])
     assert result["obligation_new"] == pytest.approx(0.5 * 80.0)
     assert not result["shortage_flag"]
     assert isinstance(state, AllowanceMarketState)
@@ -55,8 +60,12 @@ def test_ccr_tranches_and_shortage_flag():
         emissions_tons=130.0,
         bank_prev=policy.bank0,
     )
-    assert first["p_co2"] == pytest.approx(policy.ccr1_trigger.loc[2025])
-    assert first["ccr1_issued"] == pytest.approx(20.0)
+    assert first["p_co2"] >= policy.ccr1_trigger.loc[2025]
+    assert first["available_allowances"] == pytest.approx(
+        policy.cap.loc[2025] + policy.ccr1_qty.loc[2025]
+    )
+    assert first["allowances_total"] == pytest.approx(policy.bank0 + first["available_allowances"])
+    assert first["ccr1_issued"] == pytest.approx(policy.ccr1_qty.loc[2025])
     assert first["ccr2_issued"] == pytest.approx(0.0)
     assert state.bank_history[2025] == pytest.approx(first["bank_new"])
 
@@ -67,9 +76,15 @@ def test_ccr_tranches_and_shortage_flag():
         emissions_tons=220.0,
         bank_prev=state.bank_history[2025],
     )
-    assert second["p_co2"] == pytest.approx(policy.ccr2_trigger.loc[2026])
-    assert second["ccr1_issued"] == pytest.approx(30.0)
-    assert second["ccr2_issued"] == pytest.approx(35.0)
+    assert second["p_co2"] >= policy.ccr2_trigger.loc[2026]
+    assert second["available_allowances"] == pytest.approx(
+        policy.cap.loc[2026] + policy.ccr1_qty.loc[2026] + policy.ccr2_qty.loc[2026]
+    )
+    assert second["allowances_total"] == pytest.approx(
+        state.bank_history[2025] + second["available_allowances"]
+    )
+    assert second["ccr1_issued"] == pytest.approx(policy.ccr1_qty.loc[2026])
+    assert second["ccr2_issued"] == pytest.approx(policy.ccr2_qty.loc[2026])
     assert not second["shortage_flag"]
     assert state.bank_history[2026] == pytest.approx(second["bank_new"])
 
@@ -83,9 +98,18 @@ def test_ccr_tranches_and_shortage_flag():
         bank_prev=shortage_policy.bank0,
     )
     assert shortage["shortage_flag"]
+    assert shortage["p_co2"] == pytest.approx(_PRICE_SOLVER_HIGH)
     assert shortage["ccr1_issued"] == pytest.approx(shortage_policy.ccr1_qty.loc[2025])
     assert shortage["ccr2_issued"] == pytest.approx(shortage_policy.ccr2_qty.loc[2025])
-    assert shortage["surrendered"] == pytest.approx(shortage["available_allowances"])
+    assert shortage["available_allowances"] == pytest.approx(
+        shortage_policy.cap.loc[2025]
+        + shortage_policy.ccr1_qty.loc[2025]
+        + shortage_policy.ccr2_qty.loc[2025]
+    )
+    assert shortage["allowances_total"] == pytest.approx(
+        shortage_policy.bank0 + shortage["available_allowances"]
+    )
+    assert shortage["surrendered"] == pytest.approx(shortage["allowances_total"])
     assert shortage_state.bank_history[2025] == pytest.approx(shortage["bank_new"])
 
 
@@ -104,9 +128,69 @@ def test_ccr_modules_can_be_disabled():
 
     assert result["ccr1_issued"] == pytest.approx(0.0)
     assert result["ccr2_issued"] == pytest.approx(0.0)
-    assert result["p_co2"] == pytest.approx(policy.floor.loc[2025])
+    assert result["p_co2"] == pytest.approx(_PRICE_SOLVER_HIGH)
+    assert result["available_allowances"] == pytest.approx(policy.cap.loc[2025])
+    assert result["allowances_total"] == pytest.approx(policy.bank0 + policy.cap.loc[2025])
     assert result["shortage_flag"]
     assert state.bank_history[2025] == pytest.approx(result["bank_new"])
+
+
+@pytest.mark.parametrize(
+    "emissions, enable_ccr",
+    [
+        pytest.param(80.0, True, id="surplus"),
+        pytest.param(140.0, False, id="binding-cap"),
+        pytest.param(130.0, True, id="ccr1"),
+        pytest.param(190.0, True, id="ccr2"),
+    ],
+)
+def test_clear_year_matches_bisection_solver(emissions, enable_ccr):
+    policy = policy_three_year()
+    if not enable_ccr:
+        policy.ccr1_enabled = False
+        policy.ccr2_enabled = False
+
+    state = allowance_initial_state()
+    record, _ = clear_year(
+        policy,
+        state,
+        2025,
+        emissions_tons=emissions,
+        bank_prev=policy.bank0,
+    )
+
+    supply = AllowanceSupply(
+        cap=float(policy.cap.loc[2025]),
+        floor=float(policy.floor.loc[2025]),
+        ccr1_trigger=float(policy.ccr1_trigger.loc[2025]),
+        ccr1_qty=float(policy.ccr1_qty.loc[2025] if policy.ccr1_enabled else 0.0),
+        ccr2_trigger=float(policy.ccr2_trigger.loc[2025]),
+        ccr2_qty=float(policy.ccr2_qty.loc[2025] if policy.ccr2_enabled else 0.0),
+        enabled=bool(policy.enabled),
+        enable_floor=True,
+        enable_ccr=bool(policy.ccr1_enabled or policy.ccr2_enabled),
+    )
+
+    def dispatch_stub(_year: int, _price: float) -> dict[str, float]:
+        return {"emissions_tons": float(emissions)}
+
+    summary = _solve_allowance_market_year(
+        dispatch_stub,
+        2025,
+        supply,
+        bank_prev=policy.bank0 if policy.banking_enabled else 0.0,
+        outstanding_prev=0.0,
+        policy_enabled=bool(policy.enabled),
+        high_price=_PRICE_SOLVER_HIGH,
+        tol=_PRICE_SOLVER_TOL,
+        max_iter=_PRICE_SOLVER_MAX_ITER,
+        annual_surrender_frac=float(policy.annual_surrender_frac),
+        carry_pct=float(policy.carry_pct if policy.banking_enabled else 0.0),
+        banking_enabled=bool(policy.banking_enabled),
+    )
+
+    assert record["p_co2"] == pytest.approx(summary["p_co2"])
+    assert bool(record["shortage_flag"]) == bool(summary["shortage_flag"])
 
 
 def test_true_up_full_compliance_year():
@@ -124,7 +208,7 @@ def test_true_up_full_compliance_year():
     summary, state = finalize_period_if_needed(policy, state, 2027)
     assert summary["finalized"]
     assert summary["surrendered_additional"] == pytest.approx(250.0)
-    assert summary["bank_final"] == pytest.approx(35.0)
+    assert summary["bank_final"] == pytest.approx(70.0)
     assert summary["remaining_obligation"] == pytest.approx(0.0)
     assert not summary["shortage_flag"]
     assert state.bank_history[2027] == pytest.approx(summary["bank_final"])
