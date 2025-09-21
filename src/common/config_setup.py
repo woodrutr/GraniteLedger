@@ -117,67 +117,6 @@ class Config_settings:
         self.output_folder_name = OUTPUT_ROOT.name
         make_dir(self.OUTPUT_ROOT)
 
-    def _determine_output_folder(self, config: dict) -> str:
-        override = self._resolve_output_override(config)
-        if override is not None:
-            return override
-        config_hash = self._config_hash(config)
-        return f"{self.selected_mode}_{config_hash}"
-
-    def _resolve_output_override(self, config: dict) -> str | None:
-        override = getattr(self.args, 'output_name', None)
-        if override in (None, ''):
-            override = config.get(self._OUTPUT_OVERRIDE_KEY)
-        if override in (None, ''):
-            return None
-        return self._sanitize_output_name(override)
-
-    @classmethod
-    def _sanitize_output_name(cls, name: object) -> str:
-        sanitized = cls._OUTPUT_NAME_SANITIZER.sub('_', str(name).strip())
-        sanitized = re.sub(r'_+', '_', sanitized)
-        sanitized = sanitized.strip('_')
-        if not sanitized:
-            raise ValueError('Output directory override must include at least one valid character')
-        return sanitized
-
-    @classmethod
-    def _config_hash(cls, config: dict) -> str:
-        sanitized_config = cls._sanitize_config_for_hash(config)
-        serialized = json.dumps(
-            sanitized_config,
-            sort_keys=True,
-            default=str,
-            separators=(',', ':'),
-        )
-        return hashlib.sha256(serialized.encode('utf-8')).hexdigest()[:10]
-
-    @classmethod
-    def _sanitize_config_for_hash(cls, data):
-        if isinstance(data, dict):
-            return {
-                key: cls._sanitize_config_for_hash(value)
-                for key, value in data.items()
-                if key != cls._OUTPUT_OVERRIDE_KEY
-            }
-        if isinstance(data, list):
-            return [cls._sanitize_config_for_hash(item) for item in data]
-        return data
-
-    @staticmethod
-    def _ensure_unique_output_dir(candidate: Path) -> Path:
-        if not candidate.exists():
-            return candidate
-
-        parent = candidate.parent
-        base_name = candidate.name
-        suffix = 1
-        while True:
-            alternative = parent / f"{base_name}_{suffix:02d}"
-            if not alternative.exists():
-                return alternative
-            suffix += 1
-
         #####
         ### __INIT__: Methods and Modules Configuration
         #####
@@ -296,6 +235,67 @@ class Config_settings:
         ############################################################################################
         # __INIT__: Hydrogen Configs
         self.h2_data_folder = self.PROJECT_ROOT / config['h2_data_folder']
+
+    def _determine_output_folder(self, config: dict) -> str:
+        override = self._resolve_output_override(config)
+        if override is not None:
+            return override
+        config_hash = self._config_hash(config)
+        return f"{self.selected_mode}_{config_hash}"
+
+    def _resolve_output_override(self, config: dict) -> str | None:
+        override = getattr(self.args, 'output_name', None)
+        if override in (None, ''):
+            override = config.get(self._OUTPUT_OVERRIDE_KEY)
+        if override in (None, ''):
+            return None
+        return self._sanitize_output_name(override)
+
+    @classmethod
+    def _sanitize_output_name(cls, name: object) -> str:
+        sanitized = cls._OUTPUT_NAME_SANITIZER.sub('_', str(name).strip())
+        sanitized = re.sub(r'_+', '_', sanitized)
+        sanitized = sanitized.strip('_')
+        if not sanitized:
+            raise ValueError('Output directory override must include at least one valid character')
+        return sanitized
+
+    @classmethod
+    def _config_hash(cls, config: dict) -> str:
+        sanitized_config = cls._sanitize_config_for_hash(config)
+        serialized = json.dumps(
+            sanitized_config,
+            sort_keys=True,
+            default=str,
+            separators=(',', ':'),
+        )
+        return hashlib.sha256(serialized.encode('utf-8')).hexdigest()[:10]
+
+    @classmethod
+    def _sanitize_config_for_hash(cls, data):
+        if isinstance(data, dict):
+            return {
+                key: cls._sanitize_config_for_hash(value)
+                for key, value in data.items()
+                if key != cls._OUTPUT_OVERRIDE_KEY
+            }
+        if isinstance(data, list):
+            return [cls._sanitize_config_for_hash(item) for item in data]
+        return data
+
+    @staticmethod
+    def _ensure_unique_output_dir(candidate: Path) -> Path:
+        if not candidate.exists():
+            return candidate
+
+        parent = candidate.parent
+        base_name = candidate.name
+        suffix = 1
+        while True:
+            alternative = parent / f"{base_name}_{suffix:02d}"
+            if not alternative.exists():
+                return alternative
+            suffix += 1
 
     def _configure_carbon_policy(self, config: dict):
         """Parse carbon policy configuration data into normalized attributes."""
