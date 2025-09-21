@@ -197,6 +197,7 @@ def test_bank_accumulates_when_emissions_below_cap():
 
     initial_bank = float(policy.bank0)
     banks = outputs.annual.set_index("year")["bank"]
+    assert banks.iloc[0] >= initial_bank
     assert banks.is_monotonic_increasing
 
 
