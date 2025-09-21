@@ -41,6 +41,7 @@ class RGGIPolicyAnnual:
     full_compliance_years: Set[int] | None
     annual_surrender_frac: float = 0.5
     carry_pct: float = 1.0
+    banking_enabled: bool = True
     enabled: bool = True
     ccr1_enabled: bool = True
     ccr2_enabled: bool = True
@@ -59,6 +60,14 @@ class RGGIPolicyAnnual:
         self.enabled = bool(self.enabled)
         self.ccr1_enabled = bool(self.ccr1_enabled)
         self.ccr2_enabled = bool(self.ccr2_enabled)
+        self.banking_enabled = bool(self.banking_enabled)
+
+        if not self.enabled:
+            self.banking_enabled = False
+
+        if not self.banking_enabled:
+            self.bank0 = 0.0
+            self.carry_pct = 0.0
 
         if self.control_period_length is not None:
             try:
@@ -226,8 +235,12 @@ def clear_year(
     obligation_history.pop(year, None)
     finalized_results.pop(year, None)
 
+    banking_enabled = bool(getattr(policy, 'banking_enabled', True))
+
     emissions = max(0.0, float(emissions_tons))
     bank_prev = max(0.0, float(bank_prev))
+    if not banking_enabled:
+        bank_prev = 0.0
 
     if not getattr(policy, 'enabled', True):
         record = {
@@ -306,6 +319,9 @@ def clear_year(
     obligation = max(0.0, new_emissions_total - new_surrender_total)
     bank_unadjusted = max(0.0, available_allowances - surrendered)
     carry_pct = float(getattr(policy, 'carry_pct', 1.0))
+    if not banking_enabled:
+        bank_unadjusted = 0.0
+        carry_pct = 0.0
     bank_new = bank_unadjusted * carry_pct
 
     record = {
@@ -324,7 +340,7 @@ def clear_year(
     }
 
     year_records[year] = dict(record)
-    bank_history[year] = bank_new
+    bank_history[year] = bank_new if banking_enabled else 0.0
     obligation_history[year] = obligation
 
     new_state = AllowanceMarketState(
@@ -347,6 +363,8 @@ def finalize_period_if_needed(
 
     _ensure_pandas()
     base_state = _coerce_state(state)
+
+    banking_enabled = bool(getattr(policy, 'banking_enabled', True))
 
     existing = base_state.finalized_results.get(year)
     if existing is not None:
@@ -387,7 +405,7 @@ def finalize_period_if_needed(
 
     cp = str(record['cp_id'])
     totals = cp_totals.get(cp, ControlPeriodLedger())
-    bank_available = float(bank_history.get(year, 0.0))
+    bank_available = float(bank_history.get(year, 0.0)) if banking_enabled else 0.0
 
     outstanding = max(0.0, totals.emissions - totals.surrendered)
     surrender_additional = min(outstanding, bank_available)
@@ -405,7 +423,10 @@ def finalize_period_if_needed(
     else:
         cp_totals.pop(cp, None)
 
-    bank_history[year] = new_bank if not shortage_flag else 0.0
+    if banking_enabled and not shortage_flag:
+        bank_history[year] = new_bank
+    else:
+        bank_history[year] = 0.0
     remaining_obligation = remaining_obligation if shortage_flag else 0.0
     obligation_history[year] = remaining_obligation
 
@@ -413,10 +434,12 @@ def finalize_period_if_needed(
         'finalized': True,
         'cp_id': cp,
         'surrendered_additional': surrender_additional,
-        'bank_final': bank_history[year],
+        'bank_final': bank_history[year] if banking_enabled else 0.0,
         'remaining_obligation': remaining_obligation,
         'shortage_flag': shortage_flag,
     }
+    if not banking_enabled:
+        summary['bank_final'] = 0.0
     finalized_results[year] = dict(summary)
 
     new_state = AllowanceMarketState(

@@ -144,6 +144,31 @@ def test_true_up_shortage_if_bank_insufficient():
     assert state.bank_history[2025] == pytest.approx(summary["bank_final"])
 
 
+def test_banking_disabled_keeps_balances_zero():
+    policy = policy_three_year()
+    policy.banking_enabled = False
+    policy.bank0 = 0.0
+    policy.carry_pct = 0.0
+
+    state = allowance_initial_state()
+    result, state = clear_year(policy, state, 2025, emissions_tons=80.0, bank_prev=250.0)
+    assert result["bank_prev"] == pytest.approx(0.0)
+    assert result["bank_new"] == pytest.approx(0.0)
+    assert state.bank_history[2025] == pytest.approx(0.0)
+
+    result, state = clear_year(policy, state, 2026, emissions_tons=120.0, bank_prev=10.0)
+    assert result["bank_prev"] == pytest.approx(0.0)
+    assert result["bank_new"] == pytest.approx(0.0)
+    assert state.bank_history[2026] == pytest.approx(0.0)
+
+    result, state = clear_year(policy, state, 2027, emissions_tons=150.0, bank_prev=0.0)
+    assert result["bank_new"] == pytest.approx(0.0)
+
+    summary, state = finalize_period_if_needed(policy, state, 2027)
+    assert summary["bank_final"] == pytest.approx(0.0)
+    assert state.bank_history[2027] == pytest.approx(0.0)
+
+
 def test_run_loop_iterates_fixed_point():
     policy = policy_three_year()
     dispatch = LinearDispatch(

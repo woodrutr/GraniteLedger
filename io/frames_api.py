@@ -106,6 +106,7 @@ class PolicySpec:
     full_compliance_years: set[int]
     annual_surrender_frac: float
     carry_pct: float
+    banking_enabled: bool = True
     enabled: bool = True
     ccr1_enabled: bool = True
     ccr2_enabled: bool = True
@@ -126,6 +127,7 @@ class PolicySpec:
             full_compliance_years=self.full_compliance_years,
             annual_surrender_frac=self.annual_surrender_frac,
             carry_pct=self.carry_pct,
+            banking_enabled=self.banking_enabled,
             enabled=self.enabled,
             ccr1_enabled=self.ccr1_enabled,
             ccr2_enabled=self.ccr2_enabled,
@@ -141,11 +143,13 @@ class Frames(Mapping[str, pd.DataFrame]):
         frames: Mapping[str, pd.DataFrame] | None = None,
         *,
         carbon_policy_enabled: bool | None = None,
+        banking_enabled: bool | None = None,
     ):
         self._frames: Dict[str, pd.DataFrame] = {}
         self._carbon_policy_enabled = True if carbon_policy_enabled is None else bool(
             carbon_policy_enabled
         )
+        self._banking_enabled = True if banking_enabled is None else bool(banking_enabled)
         if frames:
             for name, df in frames.items():
                 key = _normalize_name(name)
@@ -170,15 +174,29 @@ class Frames(Mapping[str, pd.DataFrame]):
     # Construction helpers
     # ------------------------------------------------------------------
     @classmethod
-    def coerce(cls, frames: Frames | Mapping[str, pd.DataFrame] | None) -> Frames:
+    def coerce(
+        cls,
+        frames: Frames | Mapping[str, pd.DataFrame] | None,
+        *,
+        carbon_policy_enabled: bool | None = None,
+        banking_enabled: bool | None = None,
+    ) -> Frames:
         """Return ``frames`` as a :class:`Frames` instance."""
 
         if frames is None:
             raise ValueError('frames must be supplied as a Frames instance or mapping')
         if isinstance(frames, cls):
+            if carbon_policy_enabled is not None:
+                frames._carbon_policy_enabled = bool(carbon_policy_enabled)
+            if banking_enabled is not None:
+                frames._banking_enabled = bool(banking_enabled)
             return frames
         if isinstance(frames, Mapping):
-            return cls(frames)
+            return cls(
+                frames,
+                carbon_policy_enabled=carbon_policy_enabled,
+                banking_enabled=banking_enabled,
+            )
         raise TypeError('frames must be provided as Frames or a mapping of names to DataFrames')
 
     def with_frame(self, name: str, df: pd.DataFrame) -> "Frames":
@@ -186,7 +204,11 @@ class Frames(Mapping[str, pd.DataFrame]):
 
         updated = dict(self._frames)
         updated[_normalize_name(name)] = _ensure_dataframe(name, df)
-        return Frames(updated, carbon_policy_enabled=self._carbon_policy_enabled)
+        return Frames(
+            updated,
+            carbon_policy_enabled=self._carbon_policy_enabled,
+            banking_enabled=self._banking_enabled,
+        )
 
     # ------------------------------------------------------------------
     # Metadata accessors
@@ -196,6 +218,12 @@ class Frames(Mapping[str, pd.DataFrame]):
         """Return the cached carbon policy enabled flag."""
 
         return bool(self._carbon_policy_enabled)
+
+    @property
+    def banking_enabled(self) -> bool:
+        """Return the cached allowance banking enabled flag."""
+
+        return bool(self._banking_enabled)
 
     # ------------------------------------------------------------------
     # Accessors with schema validation
@@ -468,6 +496,16 @@ class Frames(Mapping[str, pd.DataFrame]):
         else:
             carry_pct = float(carry_values[0])
 
+        bank_enabled = True
+        if 'bank_enabled' in df.columns:
+            bank_series = _coerce_bool(df['bank_enabled'], 'policy', 'bank_enabled')
+            unique_bank = bank_series.unique()
+            if len(unique_bank) != 1:
+                raise ValueError(
+                    'policy frame must provide a single bank_enabled value shared across years'
+                )
+            bank_enabled = bool(unique_bank[0])
+
         ccr1_enabled = True
         if 'ccr1_enabled' in df.columns:
             ccr1_series = _coerce_bool(df['ccr1_enabled'], 'policy', 'ccr1_enabled')
@@ -504,6 +542,13 @@ class Frames(Mapping[str, pd.DataFrame]):
                     raise ValueError('control_period_years must be a positive integer')
                 control_period_years = control_int
 
+        if not policy_enabled:
+            bank_enabled = False
+
+        if not bank_enabled:
+            bank0 = 0.0
+            carry_pct = 0.0
+
         index = df['year']
         cap = pd.Series(df['cap_tons'].values, index=index)
         floor = pd.Series(df['floor_dollars'].values, index=index)
@@ -516,6 +561,7 @@ class Frames(Mapping[str, pd.DataFrame]):
         full_compliance_years = {int(year) for year, flag in zip(df['year'], df['full_compliance']) if flag}
 
         self._carbon_policy_enabled = bool(policy_enabled)
+        self._banking_enabled = bool(bank_enabled)
 
         return PolicySpec(
             cap=cap,
@@ -529,6 +575,7 @@ class Frames(Mapping[str, pd.DataFrame]):
             full_compliance_years=full_compliance_years,
             annual_surrender_frac=annual_surrender_frac,
             carry_pct=carry_pct,
+            banking_enabled=bank_enabled,
             enabled=policy_enabled,
             ccr1_enabled=ccr1_enabled,
             ccr2_enabled=ccr2_enabled,
