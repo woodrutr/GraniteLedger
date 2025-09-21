@@ -318,6 +318,7 @@ def _build_policy_frame(
     ccr1_enabled: bool | None = None,
     ccr2_enabled: bool | None = None,
     control_period_years: int | None = None,
+    banking_enabled: bool = True,
 ) -> pd.DataFrame:
     """Construct the policy frame consumed by :class:`io_loader.Frames`."""
 
@@ -329,6 +330,8 @@ def _build_policy_frame(
     market_cfg = config.get('allowance_market')
     if not isinstance(market_cfg, Mapping):
         market_cfg = {}
+
+    bank_flag = bool(carbon_policy_enabled and banking_enabled)
 
     if carbon_policy_enabled:
         ccr1_flag = _coerce_bool_flag(market_cfg.get('ccr1_enabled'), default=True)
@@ -369,6 +372,9 @@ def _build_policy_frame(
         bank0 = _coerce_float(market_cfg.get('bank0'), default=0.0)
         surrender_frac = _coerce_float(market_cfg.get('annual_surrender_frac'), default=1.0)
         carry_pct = _coerce_float(market_cfg.get('carry_pct'), default=1.0)
+        if not bank_flag:
+            bank0 = 0.0
+            carry_pct = 0.0
         full_compliance_years = _coerce_year_set(
             market_cfg.get('full_compliance_years'), fallback=[]
         )
@@ -396,6 +402,7 @@ def _build_policy_frame(
         ccr1_flag = False
         ccr2_flag = False
         control_period = None
+        bank_flag = False
 
     records: list[dict[str, Any]] = []
     for year in years_list:
@@ -417,6 +424,7 @@ def _build_policy_frame(
                 'ccr1_enabled': bool(ccr1_flag),
                 'ccr2_enabled': bool(ccr2_flag),
                 'control_period_years': control_period,
+                'bank_enabled': bool(bank_flag),
             }
         )
 
@@ -482,7 +490,12 @@ def _default_transmission() -> pd.DataFrame:
     return pd.DataFrame(columns=['from_region', 'to_region', 'limit_mw'])
 
 
-def _build_default_frames(years: Iterable[int]) -> FramesType:
+def _build_default_frames(
+    years: Iterable[int],
+    *,
+    carbon_policy_enabled: bool = True,
+    banking_enabled: bool = True,
+) -> FramesType:
     pd = _ensure_pandas()
     frames_cls = _ensure_frames_class()
 
@@ -496,7 +509,11 @@ def _build_default_frames(years: Iterable[int]) -> FramesType:
         'fuels': _default_fuels(),
         'transmission': _default_transmission(),
     }
-    return frames_cls(base_frames)
+    return frames_cls(
+        base_frames,
+        carbon_policy_enabled=carbon_policy_enabled,
+        banking_enabled=banking_enabled,
+    )
 
 
 def _ensure_years_in_demand(frames: FramesType, years: Iterable[int]) -> FramesType:
@@ -544,6 +561,7 @@ def run_policy_simulation(
     enable_ccr: bool = True,
     ccr1_enabled: bool = True,
     ccr2_enabled: bool = True,
+    allowance_banking_enabled: bool = True,
     control_period_years: int | None = None,
     frames: FramesType | Mapping[str, pd.DataFrame] | None = None,
 ) -> dict[str, Any]:
@@ -570,9 +588,22 @@ def run_policy_simulation(
     if not carbon_policy_enabled:
         enable_floor = False
         enable_ccr = False
+        allowance_banking_enabled = False
 
     try:
-        frames_obj = frames_cls.coerce(frames) if frames is not None else _build_default_frames(years)
+        frames_obj = (
+            frames_cls.coerce(
+                frames,
+                carbon_policy_enabled=carbon_policy_enabled,
+                banking_enabled=allowance_banking_enabled,
+            )
+            if frames is not None
+            else _build_default_frames(
+                years,
+                carbon_policy_enabled=carbon_policy_enabled,
+                banking_enabled=allowance_banking_enabled,
+            )
+        )
         frames_obj = _ensure_years_in_demand(frames_obj, years)
         policy_frame = _build_policy_frame(
             config,
@@ -581,6 +612,7 @@ def run_policy_simulation(
             ccr1_enabled=ccr1_enabled,
             ccr2_enabled=ccr2_enabled,
             control_period_years=control_period_years,
+            banking_enabled=allowance_banking_enabled,
         )
         frames_obj = frames_obj.with_frame('policy', policy_frame)
 
@@ -703,49 +735,44 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
                 value=(int(year_min), int(year_max)),
             )
 
-        carbon_policy_enabled = st.checkbox('Enable carbon policy', value=True)
-        enable_floor = st.checkbox(
-            'Enable Price Floor',
-            value=True,
-            disabled=not carbon_policy_enabled,
-        )
-        enable_ccr = st.checkbox(
-            'Enable CCR',
-            value=True,
-            disabled=not carbon_policy_enabled,
-        )
-        ccr1_enabled = st.checkbox(
-            'Enable CCR tranche 1',
-            value=True,
-            disabled=not carbon_policy_enabled,
-        )
-        ccr2_enabled = st.checkbox(
-            'Enable CCR tranche 2',
-            value=True,
-            disabled=not carbon_policy_enabled,
-        )
-        control_override = st.checkbox(
-            'Specify control period length',
-            value=False,
-            disabled=not carbon_policy_enabled,
-        )
-        control_period_years = None
-        if carbon_policy_enabled and control_override:
-            control_period_years = int(
-                st.number_input(
-                    'Control period length (years)',
-                    min_value=1,
-                    value=3,
-                    step=1,
-                    format='%d',
+        carbon_policy_enabled = True
+        enable_floor = False
+        enable_ccr = False
+        ccr1_enabled = False
+        ccr2_enabled = False
+        allowance_banking_enabled = False
+        control_period_years: int | None = None
+        control_override = False
+
+        with st.expander('Carbon policy', expanded=True):
+            carbon_policy_enabled = st.toggle('Enable carbon cap', value=True)
+            if carbon_policy_enabled:
+                enable_floor = st.checkbox('Enable minimum reserve price', value=True)
+                enable_ccr = st.checkbox('Enable CCR', value=True)
+                ccr1_enabled = st.checkbox(
+                    'Enable CCR tranche 1',
+                    value=True,
+                    disabled=not enable_ccr,
                 )
-        )
-        if not carbon_policy_enabled:
-            ccr1_enabled = False
-            ccr2_enabled = False
-            control_period_years = None
-            enable_floor = False
-            enable_ccr = False
+                ccr2_enabled = st.checkbox(
+                    'Enable CCR tranche 2',
+                    value=True,
+                    disabled=not enable_ccr,
+                )
+                allowance_banking_enabled = st.checkbox('Enable allowance banking', value=True)
+                control_override = st.checkbox('Specify control period length', value=False)
+                if control_override:
+                    control_period_years = int(
+                        st.number_input(
+                            'Control period length (years)',
+                            min_value=1,
+                            value=3,
+                            step=1,
+                            format='%d',
+                        )
+                    )
+            else:
+                carbon_policy_enabled = False
         run_clicked = st.button('Run', type='primary')
 
     result = st.session_state.get('last_result')
@@ -762,6 +789,7 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
                 enable_ccr=bool(enable_ccr),
                 ccr1_enabled=bool(ccr1_enabled),
                 ccr2_enabled=bool(ccr2_enabled),
+                allowance_banking_enabled=bool(allowance_banking_enabled),
                 control_period_years=control_period_years,
             )
         if 'temp_dir' in result:

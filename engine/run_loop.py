@@ -128,6 +128,8 @@ def _policy_record_for_year(policy: Any, year: int) -> dict[str, float | bool]:
     except (TypeError, ValueError):  # pragma: no cover - defensive
         record['carry_pct'] = 1.0
 
+    record['bank_enabled'] = bool(getattr(policy, 'banking_enabled', True))
+
     full_compliance_years = getattr(policy, 'full_compliance_years', set())
     try:
         record['full_compliance'] = bool(int(year) in set(full_compliance_years))
@@ -177,12 +179,15 @@ def _solve_allowance_market_year(
     max_iter: int,
     annual_surrender_frac: float,
     carry_pct: float,
+    banking_enabled: bool,
 ) -> dict[str, object]:
     """Solve for the allowance clearing price for ``year`` using bisection."""
 
     tol = max(float(tol), 0.0)
     max_iter_int = max(int(max_iter), 0)
     high_price = float(high_price)
+
+    banking_enabled = bool(banking_enabled)
 
     def _issued_quantities(price: float, allowances: float) -> tuple[float, float]:
         if not supply.enable_ccr or not supply.enabled:
@@ -200,9 +205,27 @@ def _solve_allowance_market_year(
         return issued1, issued2
 
     bank_prev = max(0.0, float(bank_prev))
+    if not banking_enabled:
+        bank_prev = 0.0
     outstanding_prev = max(0.0, float(outstanding_prev))
-    carry_pct = max(0.0, float(carry_pct))
+    carry_pct = max(0.0, float(carry_pct)) if banking_enabled else 0.0
     surrender_frac = max(0.0, min(1.0, float(annual_surrender_frac)))
+
+    def _finalize(summary: dict[str, object]) -> dict[str, object]:
+        if banking_enabled:
+            return summary
+        adjusted = dict(summary)
+        adjusted['bank_prev'] = 0.0
+        adjusted['bank_unadjusted'] = 0.0
+        adjusted['bank_new'] = 0.0
+        allowances_total = adjusted.get('allowances_total')
+        if allowances_total is None:
+            allowances_total = adjusted.get('available_allowances', 0.0)
+        adjusted['allowances_total'] = float(allowances_total)
+        finalize_section = dict(adjusted.get('finalize', {}))
+        finalize_section['bank_final'] = 0.0
+        adjusted['finalize'] = finalize_section
+        return adjusted
 
     if not policy_enabled or not supply.enabled:
         clearing_price = 0.0
@@ -257,7 +280,7 @@ def _solve_allowance_market_year(
         obligation = max(outstanding_prev + emissions_low - surrendered, 0.0)
         ccr1_issued, ccr2_issued = _issued_quantities(clearing_price, allowances_low)
         bank_carry = max(bank_unadjusted * carry_pct, 0.0)
-        return {
+        result = {
             'year': year,
             'p_co2': float(clearing_price),
             'available_allowances': float(allowances_low),
@@ -280,6 +303,7 @@ def _solve_allowance_market_year(
             },
             '_dispatch_result': dispatch_low,
         }
+        return _finalize(result)
 
     dispatch_high = dispatch_solver(year, high)
     emissions_high = _extract_emissions(dispatch_high)
@@ -297,7 +321,7 @@ def _solve_allowance_market_year(
         obligation = max(outstanding_prev + emissions_high - surrendered, 0.0)
         ccr1_issued, ccr2_issued = _issued_quantities(clearing_price, allowances_high)
         bank_carry = max(bank_unadjusted * carry_pct, 0.0)
-        return {
+        result = {
             'year': year,
             'p_co2': float(clearing_price),
             'available_allowances': float(allowances_high),
@@ -320,6 +344,7 @@ def _solve_allowance_market_year(
             },
             '_dispatch_result': dispatch_high,
         }
+        return _finalize(result)
 
     best_price = high
     best_allowances = allowances_high
@@ -364,7 +389,7 @@ def _solve_allowance_market_year(
     ccr1_issued, ccr2_issued = _issued_quantities(clearing_price, best_allowances)
     bank_carry = max(bank_unadjusted * carry_pct, 0.0)
 
-    return {
+    result = {
         'year': year,
         'p_co2': float(clearing_price),
         'available_allowances': float(best_allowances),
@@ -387,6 +412,7 @@ def _solve_allowance_market_year(
         },
         '_dispatch_result': best_dispatch,
     }
+    return _finalize(result)
 
 
 def run_annual_fixed_point(
@@ -432,11 +458,12 @@ def run_annual_fixed_point(
     allowance_state = allowance_initial_state()
     results: dict[int, dict] = {}
 
-    bank = float(policy.bank0)
+    banking_enabled = bool(getattr(policy, 'banking_enabled', True))
+    bank = float(policy.bank0) if banking_enabled else 0.0
     previous_price = float(price_initial) if not isinstance(price_initial, Mapping) else 0.0
 
     for year in years_sequence:
-        bank_start = bank
+        bank_start = bank if banking_enabled else 0.0
         price_guess = _initial_price_for_year(price_initial, year, previous_price)
         iteration_count = 0
         emissions = 0.0
@@ -474,10 +501,14 @@ def run_annual_fixed_point(
         market_result['emissions'] = emissions
 
         bank = float(market_result['bank_new'])
+        if not banking_enabled:
+            bank = 0.0
         finalize_summary, allowance_state = allowance_finalize_period(policy, allowance_state, year)
         market_result['finalize'] = finalize_summary
         if finalize_summary.get('finalized'):
             bank = float(finalize_summary.get('bank_final', bank))
+            if not banking_enabled:
+                bank = 0.0
 
         results[year] = market_result
         previous_price = price_guess
@@ -698,7 +729,8 @@ def run_end_to_end_from_frames(
 
     results: dict[int, dict[str, object]] = {}
     policy_enabled_global = bool(getattr(policy, 'enabled', True))
-    bank_prev = float(policy.bank0) if policy_enabled_global else 0.0
+    banking_enabled_global = bool(getattr(policy, 'banking_enabled', True))
+    bank_prev = float(policy.bank0) if (policy_enabled_global and banking_enabled_global) else 0.0
     bank_prev = max(0.0, bank_prev)
 
     cp_track: dict[str, dict[str, float | list[int] | None]] = {}
@@ -713,8 +745,17 @@ def run_end_to_end_from_frames(
 
         policy_enabled_year = bool(supply.enabled) and policy_enabled_global
         cp_id = str(record.get('cp_id', 'NoPolicy'))
-        surrender_frac = float(record.get('annual_surrender_frac', getattr(policy, 'annual_surrender_frac', 0.5)))
+        surrender_frac = float(
+            record.get('annual_surrender_frac', getattr(policy, 'annual_surrender_frac', 0.5))
+        )
         carry_pct = float(record.get('carry_pct', getattr(policy, 'carry_pct', 1.0)))
+        banking_enabled_year = banking_enabled_global and bool(
+            record.get('bank_enabled', banking_enabled_global)
+        )
+        if not banking_enabled_year:
+            carry_pct = 0.0
+
+        bank_prev_effective = bank_prev if banking_enabled_year else 0.0
 
         state = cp_track.setdefault(
             cp_id,
@@ -724,14 +765,14 @@ def run_end_to_end_from_frames(
                 'cap': 0.0,
                 'ccr1': 0.0,
                 'ccr2': 0.0,
-                'bank_start': bank_prev,
+                'bank_start': bank_prev_effective,
                 'outstanding': 0.0,
                 'years': [],
             },
         )
 
         if state.get('bank_start') is None:
-            state['bank_start'] = bank_prev
+            state['bank_start'] = bank_prev_effective
 
         years_list = state.setdefault('years', [])
         if isinstance(years_list, list) and year not in years_list:
@@ -743,7 +784,7 @@ def run_end_to_end_from_frames(
             dispatch_solver,
             year,
             supply,
-            bank_prev,
+            bank_prev_effective,
             outstanding_prev,
             policy_enabled=policy_enabled_year,
             high_price=price_cap,
@@ -751,6 +792,7 @@ def run_end_to_end_from_frames(
             max_iter=max_iter,
             annual_surrender_frac=surrender_frac,
             carry_pct=carry_pct,
+            banking_enabled=banking_enabled_year,
         )
 
         emissions = float(summary.get('emissions', 0.0))
@@ -778,7 +820,7 @@ def run_end_to_end_from_frames(
             finalize_summary.setdefault('surrendered_additional', 0.0)
             summary['finalize'] = finalize_summary
             results[year] = summary
-            bank_prev = float(summary.get('bank_new', 0.0))
+            bank_prev = float(summary.get('bank_new', 0.0)) if banking_enabled_year else 0.0
             state['outstanding'] = 0.0
             continue
 
@@ -828,7 +870,7 @@ def run_end_to_end_from_frames(
                 'cp_allowances_total': float(total_allowances),
             }
 
-            bank_prev = bank_carry
+            bank_prev = bank_carry if banking_enabled_year else 0.0
         else:
             bank_carry = max(float(summary.get('bank_new', 0.0)), 0.0)
             finalize_summary = {
@@ -839,7 +881,7 @@ def run_end_to_end_from_frames(
             }
             summary['bank_new'] = bank_carry
             summary['obligation_new'] = obligation
-            bank_prev = bank_carry
+            bank_prev = bank_carry if banking_enabled_year else 0.0
 
         summary['finalize'] = finalize_summary
         results[year] = summary

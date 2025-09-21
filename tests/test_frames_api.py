@@ -167,6 +167,7 @@ def test_policy_spec_round_trip() -> None:
     assert policy.ccr1_enabled is True
     assert policy.ccr2_enabled is True
     assert policy.control_period_length is None
+    assert policy.banking_enabled is True
 
 
 def test_fixed_point_runs_from_frames() -> None:
@@ -202,6 +203,7 @@ def test_policy_spec_respects_optional_columns() -> None:
     base['ccr1_enabled'] = [False, False, False]
     base['ccr2_enabled'] = [True, True, True]
     base['control_period_years'] = [2, 2, 2]
+    base['bank_enabled'] = [False, False, False]
 
     frames = Frames({"policy": base})
     policy = frames.policy().to_policy()
@@ -211,6 +213,7 @@ def test_policy_spec_respects_optional_columns() -> None:
     assert policy.ccr2_enabled is True
     assert policy.control_period_length == 2
     assert policy.full_compliance_years == {2026}
+    assert policy.banking_enabled is False
 
 
 def test_policy_disabled_allows_minimal_columns() -> None:
@@ -233,3 +236,4 @@ def test_policy_disabled_allows_minimal_columns() -> None:
     assert list(policy.cap.index) == [2025, 2026]
     assert policy.cap.eq(0.0).all()
     assert policy.bank0 == pytest.approx(0.0)
+    assert policy.banking_enabled is False

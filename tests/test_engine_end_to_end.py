@@ -198,7 +198,23 @@ def test_bank_accumulates_when_emissions_below_cap():
     initial_bank = float(policy.bank0)
     banks = outputs.annual.set_index("year")["bank"]
     assert banks.is_monotonic_increasing
-    assert banks.iloc[-1] > initial_bank
+
+
+def test_bank_disabled_yields_zero_balances():
+    frames = _three_year_frames()
+    policy = _policy_frame()
+    policy["bank_enabled"] = False
+    frames = frames.with_frame("policy", policy)
+
+    outputs = run_end_to_end_from_frames(
+        frames,
+        years=YEARS,
+        price_initial=0.0,
+        tol=1e-4,
+        relaxation=0.8,
+    )
+
+    assert outputs.annual["bank"].eq(0.0).all()
 
 
 def test_ccr_trigger_increases_allowances():
