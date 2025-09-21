@@ -77,6 +77,8 @@ class PowerModel(Model):
         self.carbon_allowance_allow_borrowing = getattr(
             setA, 'carbon_allowance_allow_borrowing', False
         )
+        self.carbon_ccr1_enabled = getattr(setA, 'carbon_ccr1_enabled', True)
+        self.carbon_ccr2_enabled = getattr(setA, 'carbon_ccr2_enabled', True)
         self.year_list = list(setA.years)
         self.first_year = self.year_list[0] if self.year_list else None
         self.prev_year_lookup = {
@@ -334,6 +336,98 @@ class PowerModel(Model):
             mutable=True,
         )
 
+        ccr1_trigger_data = _format_cap_year_df(
+            all_frames.get('CarbonCCR1Trigger'), 'CarbonCCR1Trigger', default=0.0
+        )
+        self.declare_param(
+            'CarbonCCR1Trigger',
+            self.cap_group_year_index,
+            ccr1_trigger_data,
+            mutable=True,
+        )
+
+        ccr1_quantity_data = _format_cap_year_df(
+            all_frames.get('CarbonCCR1Quantity'), 'CarbonCCR1Quantity', default=0.0
+        )
+        if not self.carbon_ccr1_enabled:
+            ccr1_quantity_data['CarbonCCR1Quantity'] = 0.0
+        self.declare_param(
+            'CarbonCCR1Quantity',
+            self.cap_group_year_index,
+            ccr1_quantity_data,
+            mutable=True,
+        )
+
+        ccr2_trigger_data = _format_cap_year_df(
+            all_frames.get('CarbonCCR2Trigger'), 'CarbonCCR2Trigger', default=0.0
+        )
+        self.declare_param(
+            'CarbonCCR2Trigger',
+            self.cap_group_year_index,
+            ccr2_trigger_data,
+            mutable=True,
+        )
+
+        ccr2_quantity_data = _format_cap_year_df(
+            all_frames.get('CarbonCCR2Quantity'), 'CarbonCCR2Quantity', default=0.0
+        )
+        if not self.carbon_ccr2_enabled:
+            ccr2_quantity_data['CarbonCCR2Quantity'] = 0.0
+        self.declare_param(
+            'CarbonCCR2Quantity',
+            self.cap_group_year_index,
+            ccr2_quantity_data,
+            mutable=True,
+        )
+
+        activation_index = pd.DataFrame(
+            index=cap_group_year_index_values, data={'value': 0.0}
+        )
+        self.declare_param(
+            'CarbonCCR1Active',
+            self.cap_group_year_index,
+            activation_index.rename(columns={'value': 'CarbonCCR1Active'}),
+            mutable=True,
+        )
+        self.declare_param(
+            'CarbonCCR2Active',
+            self.cap_group_year_index,
+            activation_index.rename(columns={'value': 'CarbonCCR2Active'}),
+            mutable=True,
+        )
+
+        def update_ccr_activation():
+            for idx in self.cap_group_year_index:
+                price = float(pyo.value(self.CarbonPrice[idx]))
+
+                trigger1 = float(pyo.value(self.CarbonCCR1Trigger[idx]))
+                qty1 = float(pyo.value(self.CarbonCCR1Quantity[idx]))
+                active1 = (
+                    1.0
+                    if (
+                        self.carbon_ccr1_enabled
+                        and qty1 > 0.0
+                        and price >= trigger1
+                    )
+                    else 0.0
+                )
+                self.CarbonCCR1Active[idx] = active1
+
+                trigger2 = float(pyo.value(self.CarbonCCR2Trigger[idx]))
+                qty2 = float(pyo.value(self.CarbonCCR2Quantity[idx]))
+                active2 = (
+                    1.0
+                    if (
+                        self.carbon_ccr2_enabled
+                        and qty2 > 0.0
+                        and price >= trigger2
+                    )
+                    else 0.0
+                )
+                self.CarbonCCR2Active[idx] = active2
+
+        self.update_ccr_activation = update_ccr_activation
+
         start_bank_raw = all_frames.get('CarbonStartBank')
         start_bank_data = _format_cap_year_df(
             start_bank_raw, 'CarbonStartBank', default=0.0
@@ -461,6 +555,9 @@ class PowerModel(Model):
         self.declare_var('storage_outflow', self.Storage_index)
         self.declare_var('storage_level', self.Storage_index)
         self.declare_var('allowance_purchase', self.cap_group_year_index, bound=(0, 1000000000000))
+        self.declare_var('allowance_base', self.cap_group_year_index, bound=(0, 1000000000000))
+        self.declare_var('allowance_ccr1', self.cap_group_year_index, bound=(0, 1000000000000))
+        self.declare_var('allowance_ccr2', self.cap_group_year_index, bound=(0, 1000000000000))
         bank_within = 'Reals' if self.carbon_allowance_allow_borrowing else 'NonNegativeReals'
         bank_bounds = (
             (-1000000000000, 1000000000000)
@@ -788,7 +885,9 @@ class PowerModel(Model):
 
             return (
                 self.allowance_purchase[(cap_group, y)]
-                <= self.CarbonAllowanceProcurement[(cap_group, y)]
+                <= self.allowance_base[(cap_group, y)]
+                + self.allowance_ccr1[(cap_group, y)]
+                + self.allowance_ccr2[(cap_group, y)]
             )
 
         @self.Constraint(self.cap_group_year_index)
@@ -812,6 +911,37 @@ class PowerModel(Model):
                 <= self.allowance_purchase[(cap_group, y)] + incoming
             )
 
+        @self.Constraint(self.cap_group_year_index)
+        def allowance_base_limit(self, cap_group, y):
+            return (
+                self.allowance_base[(cap_group, y)]
+                <= self.CarbonAllowanceProcurement[(cap_group, y)]
+            )
+
+        @self.Constraint(self.cap_group_year_index)
+        def allowance_ccr1_limit(self, cap_group, y):
+            return (
+                self.allowance_ccr1[(cap_group, y)]
+                <= self.CarbonCCR1Quantity[(cap_group, y)]
+                * self.CarbonCCR1Active[(cap_group, y)]
+            )
+
+        @self.Constraint(self.cap_group_year_index)
+        def allowance_ccr2_limit(self, cap_group, y):
+            return (
+                self.allowance_ccr2[(cap_group, y)]
+                <= self.CarbonCCR2Quantity[(cap_group, y)]
+                * self.CarbonCCR2Active[(cap_group, y)]
+            )
+
+        @self.Constraint(self.cap_group_year_index)
+        def allowance_total_balance(self, cap_group, y):
+            return self.allowance_purchase[(cap_group, y)] == (
+                self.allowance_base[(cap_group, y)]
+                + self.allowance_ccr1[(cap_group, y)]
+                + self.allowance_ccr2[(cap_group, y)]
+            )
+
         if self.carbon_cap is not None:
             self.total_emissions_cap = pyo.Constraint(
                 expr=self.total_emissions <= self.CarbonCap
@@ -820,6 +950,8 @@ class PowerModel(Model):
         self.populate_demand_balance_sets = pyo.BuildAction(
             rule=em.populate_demand_balance_sets_rule
         )
+
+        self.update_ccr_activation()
 
         # Property: ShadowPrice
         @self.Constraint(self.demand_balance_index)

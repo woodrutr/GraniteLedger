@@ -1,5 +1,8 @@
 import pytest
+pytest.importorskip('pyomo')
 import pyomo.environ as pyo
+
+from policy.allowance_supply import AllowanceSupply
 
 from src.models.electricity.scripts.runner import record_allowance_emission_prices
 
@@ -12,6 +15,14 @@ def build_allowance_model(
     allow_borrowing=False,
     cap_groups=('system',),
     membership=None,
+    *,
+    price=None,
+    ccr1_trigger=None,
+    ccr1_qty=None,
+    ccr2_trigger=None,
+    ccr2_qty=None,
+    ccr1_active=None,
+    ccr2_active=None,
 ):
     model = pyo.ConcreteModel()
     cap_groups = tuple(cap_groups)
@@ -38,6 +49,74 @@ def build_allowance_model(
     model.CarbonAllowanceProcurement = pyo.Param(
         model.cap_group_year,
         initialize=allowances_map,
+        default=0.0,
+        mutable=True,
+    )
+
+    def _map(values):
+        mapping = {}
+        if values is None:
+            return mapping
+        for key, value in values.items():
+            if isinstance(key, tuple):
+                group, year = key
+            else:
+                group, year = cap_groups[0], key
+            mapping[(group, int(year))] = float(value)
+        return mapping
+
+    price_map = _map(price)
+    model.CarbonPrice = pyo.Param(
+        model.cap_group_year,
+        initialize={idx: price_map.get(idx, 0.0) for idx in model.cap_group_year},
+        default=0.0,
+        mutable=True,
+    )
+
+    ccr1_trigger_map = _map(ccr1_trigger)
+    model.CarbonCCR1Trigger = pyo.Param(
+        model.cap_group_year,
+        initialize={idx: ccr1_trigger_map.get(idx, 0.0) for idx in model.cap_group_year},
+        default=0.0,
+        mutable=True,
+    )
+
+    ccr1_qty_map = _map(ccr1_qty)
+    model.CarbonCCR1Quantity = pyo.Param(
+        model.cap_group_year,
+        initialize={idx: ccr1_qty_map.get(idx, 0.0) for idx in model.cap_group_year},
+        default=0.0,
+        mutable=True,
+    )
+
+    ccr2_trigger_map = _map(ccr2_trigger)
+    model.CarbonCCR2Trigger = pyo.Param(
+        model.cap_group_year,
+        initialize={idx: ccr2_trigger_map.get(idx, 0.0) for idx in model.cap_group_year},
+        default=0.0,
+        mutable=True,
+    )
+
+    ccr2_qty_map = _map(ccr2_qty)
+    model.CarbonCCR2Quantity = pyo.Param(
+        model.cap_group_year,
+        initialize={idx: ccr2_qty_map.get(idx, 0.0) for idx in model.cap_group_year},
+        default=0.0,
+        mutable=True,
+    )
+
+    ccr1_active_map = _map(ccr1_active)
+    model.CarbonCCR1Active = pyo.Param(
+        model.cap_group_year,
+        initialize={idx: ccr1_active_map.get(idx, 0.0) for idx in model.cap_group_year},
+        default=0.0,
+        mutable=True,
+    )
+
+    ccr2_active_map = _map(ccr2_active)
+    model.CarbonCCR2Active = pyo.Param(
+        model.cap_group_year,
+        initialize={idx: ccr2_active_map.get(idx, 0.0) for idx in model.cap_group_year},
         default=0.0,
         mutable=True,
     )
@@ -74,6 +153,15 @@ def build_allowance_model(
     model.allowance_purchase = pyo.Var(
         model.cap_group_year, domain=pyo.NonNegativeReals
     )
+    model.allowance_base = pyo.Var(
+        model.cap_group_year, domain=pyo.NonNegativeReals
+    )
+    model.allowance_ccr1 = pyo.Var(
+        model.cap_group_year, domain=pyo.NonNegativeReals
+    )
+    model.allowance_ccr2 = pyo.Var(
+        model.cap_group_year, domain=pyo.NonNegativeReals
+    )
     model.allowance_bank = pyo.Var(model.cap_group_year, domain=bank_domain)
     model.year_emissions = pyo.Var(
         model.cap_group_year, domain=pyo.NonNegativeReals
@@ -91,7 +179,27 @@ def build_allowance_model(
     model.allowance_purchase_limit = pyo.Constraint(
         model.cap_group_year,
         rule=lambda m, g, y: m.allowance_purchase[g, y]
+        <= m.allowance_base[g, y] + m.allowance_ccr1[g, y] + m.allowance_ccr2[g, y],
+    )
+    model.allowance_base_limit = pyo.Constraint(
+        model.cap_group_year,
+        rule=lambda m, g, y: m.allowance_base[g, y]
         <= m.CarbonAllowanceProcurement[g, y],
+    )
+    model.allowance_ccr1_limit = pyo.Constraint(
+        model.cap_group_year,
+        rule=lambda m, g, y: m.allowance_ccr1[g, y]
+        <= m.CarbonCCR1Quantity[g, y] * m.CarbonCCR1Active[g, y],
+    )
+    model.allowance_ccr2_limit = pyo.Constraint(
+        model.cap_group_year,
+        rule=lambda m, g, y: m.allowance_ccr2[g, y]
+        <= m.CarbonCCR2Quantity[g, y] * m.CarbonCCR2Active[g, y],
+    )
+    model.allowance_total_balance = pyo.Constraint(
+        model.cap_group_year,
+        rule=lambda m, g, y: m.allowance_purchase[g, y]
+        == m.allowance_base[g, y] + m.allowance_ccr1[g, y] + m.allowance_ccr2[g, y],
     )
     model.allowance_bank_balance = pyo.Constraint(
         model.cap_group_year,
@@ -118,6 +226,12 @@ def test_allowance_bank_balance():
     key_2030 = ('system', 2030)
     model.allowance_purchase[key_2025].set_value(4.0)
     model.allowance_purchase[key_2030].set_value(6.0)
+    model.allowance_base[key_2025].set_value(4.0)
+    model.allowance_base[key_2030].set_value(6.0)
+    model.allowance_ccr1[key_2025].set_value(0.0)
+    model.allowance_ccr1[key_2030].set_value(0.0)
+    model.allowance_ccr2[key_2025].set_value(0.0)
+    model.allowance_ccr2[key_2030].set_value(0.0)
     model.year_emissions[key_2025].set_value(3.0)
     model.year_emissions[key_2030].set_value(7.0)
     model.allowance_bank[key_2025].set_value(3.0)
@@ -153,6 +267,12 @@ def test_emission_limit_detects_shortfall():
     key_2030 = ('system', 2030)
     model.allowance_purchase[key_2025].set_value(5.0)
     model.allowance_purchase[key_2030].set_value(5.0)
+    model.allowance_base[key_2025].set_value(5.0)
+    model.allowance_base[key_2030].set_value(5.0)
+    model.allowance_ccr1[key_2025].set_value(0.0)
+    model.allowance_ccr1[key_2030].set_value(0.0)
+    model.allowance_ccr2[key_2025].set_value(0.0)
+    model.allowance_ccr2[key_2030].set_value(0.0)
     model.year_emissions[key_2025].set_value(6.0)
     model.year_emissions[key_2030].set_value(4.0)
     model.allowance_bank[key_2025].set_value(-1.0)
@@ -169,6 +289,70 @@ def test_emission_limit_detects_shortfall():
     assert model.year_emissions[key_2030].value <= (
         model.allowance_purchase[key_2030].value + incoming_2030
     )
+
+
+@pytest.mark.parametrize(
+    'price, expected_ccr1, expected_ccr2',
+    [
+        (0.0, 0.0, 0.0),
+        (20.0, 50.0, 0.0),
+        (60.0, 50.0, 80.0),
+    ],
+)
+def test_ccr_allowances_match_supply(price, expected_ccr1, expected_ccr2):
+    years = [2025]
+    cap_group = 'system'
+    base_allowance = 100.0
+    ccr1_trigger = 20.0
+    ccr1_qty = 50.0
+    ccr2_trigger = 50.0
+    ccr2_qty = 80.0
+
+    active1 = {years[0]: 1.0 if price >= ccr1_trigger else 0.0}
+    active2 = {years[0]: 1.0 if price >= ccr2_trigger else 0.0}
+
+    model = build_allowance_model(
+        years,
+        {years[0]: base_allowance},
+        start_bank=0.0,
+        banking_enabled=False,
+        allow_borrowing=False,
+        price={years[0]: price},
+        ccr1_trigger={years[0]: ccr1_trigger},
+        ccr1_qty={years[0]: ccr1_qty},
+        ccr2_trigger={years[0]: ccr2_trigger},
+        ccr2_qty={years[0]: ccr2_qty},
+        ccr1_active=active1,
+        ccr2_active=active2,
+    )
+
+    key = (cap_group, years[0])
+    supply = AllowanceSupply(
+        cap=base_allowance,
+        floor=0.0,
+        ccr1_trigger=ccr1_trigger,
+        ccr1_qty=ccr1_qty,
+        ccr2_trigger=ccr2_trigger,
+        ccr2_qty=ccr2_qty,
+    )
+    available = supply.available_allowances(price)
+
+    model.year_emissions[key].fix(available)
+    model.allowance_bank[key].fix(0.0)
+    model.total_cost = pyo.Objective(expr=model.allowance_purchase[key])
+
+    solver = pyo.SolverFactory('appsi_highs')
+    if not solver.available(False):
+        pytest.skip('appsi_highs solver not available in test environment')
+
+    result = solver.solve(model)
+    assert result.solver.termination_condition == pyo.TerminationCondition.optimal
+
+    expected_base = min(base_allowance, available)
+    assert model.allowance_purchase[key].value == pytest.approx(available)
+    assert model.allowance_base[key].value == pytest.approx(expected_base)
+    assert model.allowance_ccr1[key].value == pytest.approx(expected_ccr1)
+    assert model.allowance_ccr2[key].value == pytest.approx(expected_ccr2)
 
 
 def test_reported_carbon_price_matches_marginal_cost():
