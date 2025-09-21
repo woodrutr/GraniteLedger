@@ -9,7 +9,8 @@ constraints, plus additional misc support functions.
 # Import packages
 from collections import defaultdict
 from logging import getLogger
-import pandas as pd
+from typing import Any, cast
+
 import pyomo.environ as pyo
 
 # Import python modules
@@ -18,6 +19,23 @@ from src.common.model import Model
 
 # move to new file
 from src.models.electricity.scripts.utilities import ElectricityMethods as em
+from io_loader import Frames
+
+try:  # pragma: no cover - optional dependency
+    import pandas as pd
+except ImportError:  # pragma: no cover - optional dependency
+    pd = cast(Any, None)
+
+
+def _ensure_pandas():
+    """Ensure :mod:`pandas` is available before building the electricity model."""
+
+    if pd is None:  # pragma: no cover - helper exercised indirectly
+        raise ImportError(
+            "pandas is required for src.models.electricity.scripts.electricity_model; "
+            "install it with `pip install pandas`."
+        )
+    return pd
 
 # Establish logger
 logger = getLogger(__name__)
@@ -49,14 +67,21 @@ class PowerModel(Model):
 
     Parameters
     ----------
-    all_frames : dictionary of pd.DataFrames
+    all_frames : io_loader.Frames or mapping of str to pandas.DataFrame
         Contains all dataframes of inputs
     setA : Sets
         Contains all other non-dataframe inputs
     """
 
     def __init__(self, all_frames, setA, *args, **kwargs):
+        _ensure_pandas()
+
         Model.__init__(self, *args, **kwargs)
+
+        frames = Frames.coerce(all_frames)
+        get_frame = frames.frame
+        optional_frame = frames.optional_frame
+        has_frame = frames.has_frame
 
         ###########################################################################################
         # Settings
@@ -150,8 +175,8 @@ class PowerModel(Model):
                 name of data frame to create into set and parameter
             """
             index_name = name + '_index'
-            self.declare_set(index_name, all_frames[name])
-            self.declare_param(name, getattr(self, index_name), all_frames[name])
+            self.declare_set(index_name, get_frame(name))
+            self.declare_param(name, getattr(self, index_name), get_frame(name))
 
         # self.declare_set_and_param('FOMCost')
         # self.declare_set_and_param('HydroCapFactor')
@@ -184,11 +209,11 @@ class PowerModel(Model):
         self.declare_set_with_sets('cap_group_year_index', self.cap_group, self.year)
 
         # Load sets
-        self.declare_set('demand_balance_index', all_frames['Load'])
+        self.declare_set('demand_balance_index', get_frame('Load'))
         self.declare_set_with_sets('unmet_load_index', self.region, self.year, self.hour)
 
         # Supply price and quantity sets and subsets
-        self.declare_set('capacity_total_index', all_frames['SupplyCurve'])
+        self.declare_set('capacity_total_index', get_frame('SupplyCurve'))
         self.declare_set('generation_total_index', setA.generation_total_index)
         self.declare_set('generation_dispatchable_ub_index', setA.generation_dispatchable_ub_index)
         self.declare_set('Storage_index', setA.Storage_index)
@@ -226,9 +251,9 @@ class PowerModel(Model):
             return formatted
 
         # Other technology sets
-        self.declare_set('HydroCapFactor_index', all_frames['HydroCapFactor'])
-        self.declare_set('generation_vre_ub_index', all_frames['CapFactorVRE'])
-        self.declare_set('H2Price_index', all_frames['H2Price'])
+        self.declare_set('HydroCapFactor_index', get_frame('HydroCapFactor'))
+        self.declare_set('generation_vre_ub_index', get_frame('CapFactorVRE'))
+        self.declare_set('H2Price_index', get_frame('H2Price'))
 
         for tss in setA.tech_subset_names:
             # create the technology subsets based on the tech_subsets input
@@ -236,15 +261,15 @@ class PowerModel(Model):
 
         # if capacity expansion is on
         if self.sw_expansion:
-            self.declare_set('capacity_builds_index', all_frames['CapCost'])
-            self.declare_set('FOMCost_index', all_frames['FOMCost'])
+            self.declare_set('capacity_builds_index', get_frame('CapCost'))
+            self.declare_set('FOMCost_index', get_frame('FOMCost'))
             self.declare_set('Build_index', setA.Build_index)
-            self.declare_set('CapacityCredit_index', all_frames['CapacityCredit'])
+            self.declare_set('CapacityCredit_index', get_frame('CapacityCredit'))
             self.declare_set('capacity_retirements_index', setA.capacity_retirements_index)
             self.declare_param(
                 'CapacityBuildLimit',
                 self.capacity_builds_index,
-                all_frames['CapacityBuildLimit'],
+                get_frame('CapacityBuildLimit'),
                 mutable=True,
             )
 
@@ -253,39 +278,39 @@ class PowerModel(Model):
         # but in general we found it easier to read if we continued to use if statements
         if self.sw_learning > 0:
             self.declare_set(
-                'LearningRate_index', all_frames['LearningRate'], switch=self.sw_expansion
+                'LearningRate_index', get_frame('LearningRate'), switch=self.sw_expansion
             )
             self.declare_set(
-                'CapCostInitial_index', all_frames['CapCostInitial'], switch=self.sw_expansion
+                'CapCostInitial_index', get_frame('CapCostInitial'), switch=self.sw_expansion
             )
             self.declare_set(
                 'SupplyCurveLearning_index',
-                all_frames['SupplyCurveLearning'],
+                get_frame('SupplyCurveLearning'),
                 switch=self.sw_expansion,
             )
 
         # if trade operation is on
         if self.sw_trade:
-            self.declare_set('TranCost_index', all_frames['TranCost'])
-            self.declare_set('TranLimit_index', all_frames['TranLimit'])
+            self.declare_set('TranCost_index', get_frame('TranCost'))
+            self.declare_set('TranLimit_index', get_frame('TranLimit'))
             self.declare_set('trade_interregional_index', setA.trade_interregional_index)
-            self.declare_set('TranCostInt_index', all_frames['TranCostInt'])
-            self.declare_set('TranLimitInt_index', all_frames['TranLimitGenInt'])
+            self.declare_set('TranCostInt_index', get_frame('TranCostInt'))
+            self.declare_set('TranLimitInt_index', get_frame('TranLimitGenInt'))
             self.declare_set('trade_interational_index', setA.trade_interational_index)
-            self.declare_set('TranLineLimitInt_index', all_frames['TranLimitCapInt'])
+            self.declare_set('TranLineLimitInt_index', get_frame('TranLimitCapInt'))
 
         # if ramping requirements are on
         if self.sw_ramp:
-            self.declare_set('RampUpCost_index', all_frames['RampUpCost'])
-            self.declare_set('RampRate_index', all_frames['RampRate'])
+            self.declare_set('RampUpCost_index', get_frame('RampUpCost'))
+            self.declare_set('RampRate_index', get_frame('RampRate'))
             self.declare_set('generation_ramp_index', setA.generation_ramp_index)
 
         # if operating reserve requirements are on
         if self.sw_reserves:
             self.declare_set('restypes', setA.restypes)
             self.declare_set('reserves_procurement_index', setA.reserves_procurement_index)
-            self.declare_set('RegReservesCost_index', all_frames['RegReservesCost'])
-            self.declare_set('ResTechUpperBound_index', all_frames['ResTechUpperBound'])
+            self.declare_set('RegReservesCost_index', get_frame('RegReservesCost'))
+            self.declare_set('ResTechUpperBound_index', get_frame('ResTechUpperBound'))
 
         ###########################################################################################
         # Parameters
@@ -293,29 +318,31 @@ class PowerModel(Model):
         # temporal parameters
         self.declare_param('y0', None, setA.start_year)
         self.declare_param('num_hr_day', None, setA.num_hr_day)
-        self.declare_param('MapHourSeason', self.hour, all_frames['MapHourSeason'])
-        self.declare_param('MapHourDay', self.hour, all_frames['MapHourDay']['day'])
-        self.declare_param('WeightYear', self.year, all_frames['WeightYear'])
-        self.declare_param('WeightHour', self.hour, all_frames['WeightHour']['WeightHour'])
-        self.declare_param('WeightDay', self.day, all_frames['WeightDay'])
-        self.declare_param('WeightSeason', self.season, all_frames['WeightSeason'])
+        map_hour_day_df = get_frame('MapHourDay')
+        weight_hour_df = get_frame('WeightHour')
+        self.declare_param('MapHourSeason', self.hour, get_frame('MapHourSeason'))
+        self.declare_param('MapHourDay', self.hour, map_hour_day_df['day'])
+        self.declare_param('WeightYear', self.year, get_frame('WeightYear'))
+        self.declare_param('WeightHour', self.hour, weight_hour_df['WeightHour'])
+        self.declare_param('WeightDay', self.day, get_frame('WeightDay'))
+        self.declare_param('WeightSeason', self.season, get_frame('WeightSeason'))
 
         # load and technology parameters
-        self.declare_param('Load', self.demand_balance_index, all_frames['Load'], mutable=True)
+        self.declare_param('Load', self.demand_balance_index, get_frame('Load'), mutable=True)
         self.declare_param('UnmetLoadPenalty', None, 500000)
-        self.declare_param('SupplyPrice', self.capacity_total_index, all_frames['SupplyPrice'])
-        self.declare_param('SupplyCurve', self.capacity_total_index, all_frames['SupplyCurve'])
-        self.declare_param('CapFactorVRE', self.generation_vre_ub_index, all_frames['CapFactorVRE'])
+        self.declare_param('SupplyPrice', self.capacity_total_index, get_frame('SupplyPrice'))
+        self.declare_param('SupplyCurve', self.capacity_total_index, get_frame('SupplyCurve'))
+        self.declare_param('CapFactorVRE', self.generation_vre_ub_index, get_frame('CapFactorVRE'))
         self.declare_param(
-            'HydroCapFactor', self.HydroCapFactor_index, all_frames['HydroCapFactor']
+            'HydroCapFactor', self.HydroCapFactor_index, get_frame('HydroCapFactor')
         )
-        self.declare_param('BatteryEfficiency', setA.T_stor, all_frames['BatteryEfficiency'])
-        self.declare_param('HourstoBuy', setA.T_stor, all_frames['HourstoBuy'])
-        self.declare_param('H2Price', self.H2Price_index, all_frames['H2Price'], mutable=True)
+        self.declare_param('BatteryEfficiency', setA.T_stor, get_frame('BatteryEfficiency'))
+        self.declare_param('HourstoBuy', setA.T_stor, get_frame('HourstoBuy'))
+        self.declare_param('H2Price', self.H2Price_index, get_frame('H2Price'), mutable=True)
         self.declare_param('StorageLevelCost', None, 0.00000001)
         self.declare_param('H2Heatrate', None, setA.H2Heatrate)
-        if 'EmissionsRate' in all_frames:
-            self.declare_param('EmissionsRate', self.T_gen, all_frames['EmissionsRate'])
+        if has_frame('EmissionsRate'):
+            self.declare_param('EmissionsRate', self.T_gen, get_frame('EmissionsRate'))
         else:
             emissions_series = pd.Series(
                 {
@@ -329,7 +356,7 @@ class PowerModel(Model):
         if self.carbon_cap is not None:
             self.declare_param('CarbonCap', None, self.carbon_cap)
 
-        membership_data = all_frames.get('CarbonCapGroupMembership')
+        membership_data = optional_frame('CarbonCapGroupMembership')
         if membership_data is None:
             membership_data = cap_group_region_frame
         if isinstance(membership_data, pd.Series):
@@ -358,7 +385,7 @@ class PowerModel(Model):
         )
 
         allowance_data = _format_cap_year_df(
-            all_frames.get('CarbonAllowanceProcurement'),
+            optional_frame('CarbonAllowanceProcurement'),
             'CarbonAllowanceProcurement',
             default=0.0,
         )
@@ -370,7 +397,7 @@ class PowerModel(Model):
         )
 
         carbon_price_data = _format_cap_year_df(
-            all_frames.get('CarbonPrice'), 'CarbonPrice', default=0.0
+            optional_frame('CarbonPrice'), 'CarbonPrice', default=0.0
         )
         self.declare_param(
             'CarbonPrice',
@@ -380,7 +407,7 @@ class PowerModel(Model):
         )
 
         ccr1_trigger_data = _format_cap_year_df(
-            all_frames.get('CarbonCCR1Trigger'), 'CarbonCCR1Trigger', default=0.0
+            optional_frame('CarbonCCR1Trigger'), 'CarbonCCR1Trigger', default=0.0
         )
         self.declare_param(
             'CarbonCCR1Trigger',
@@ -390,7 +417,7 @@ class PowerModel(Model):
         )
 
         ccr1_quantity_data = _format_cap_year_df(
-            all_frames.get('CarbonCCR1Quantity'), 'CarbonCCR1Quantity', default=0.0
+            optional_frame('CarbonCCR1Quantity'), 'CarbonCCR1Quantity', default=0.0
         )
         if not self.carbon_ccr1_enabled:
             ccr1_quantity_data['CarbonCCR1Quantity'] = 0.0
@@ -402,7 +429,7 @@ class PowerModel(Model):
         )
 
         ccr2_trigger_data = _format_cap_year_df(
-            all_frames.get('CarbonCCR2Trigger'), 'CarbonCCR2Trigger', default=0.0
+            optional_frame('CarbonCCR2Trigger'), 'CarbonCCR2Trigger', default=0.0
         )
         self.declare_param(
             'CarbonCCR2Trigger',
@@ -412,7 +439,7 @@ class PowerModel(Model):
         )
 
         ccr2_quantity_data = _format_cap_year_df(
-            all_frames.get('CarbonCCR2Quantity'), 'CarbonCCR2Quantity', default=0.0
+            optional_frame('CarbonCCR2Quantity'), 'CarbonCCR2Quantity', default=0.0
         )
         if not self.carbon_ccr2_enabled:
             ccr2_quantity_data['CarbonCCR2Quantity'] = 0.0
@@ -471,7 +498,7 @@ class PowerModel(Model):
 
         self.update_ccr_activation = update_ccr_activation
 
-        start_bank_raw = all_frames.get('CarbonStartBank')
+        start_bank_raw = optional_frame('CarbonStartBank')
         start_bank_data = _format_cap_year_df(
             start_bank_raw, 'CarbonStartBank', default=0.0
         )
@@ -489,7 +516,7 @@ class PowerModel(Model):
             mutable=True,
         )
         surrender_frac_data = _format_cap_year_df(
-            all_frames.get('AnnualSurrenderFrac'),
+            optional_frame('AnnualSurrenderFrac'),
             'AnnualSurrenderFrac',
             default=0.0,
         )
@@ -500,7 +527,7 @@ class PowerModel(Model):
             mutable=True,
         )
         carry_pct_data = _format_cap_year_df(
-            all_frames.get('CarryPct'), 'CarryPct', default=1.0
+            optional_frame('CarryPct'), 'CarryPct', default=1.0
         )
         self.declare_param(
             'CarryPct',
@@ -510,23 +537,23 @@ class PowerModel(Model):
         )
         # if capacity expansion is on
         if self.sw_expansion:
-            self.declare_param('FOMCost', self.FOMCost_index, all_frames['FOMCost'])
+            self.declare_param('FOMCost', self.FOMCost_index, get_frame('FOMCost'))
             self.declare_param(
-                'CapacityCredit', self.CapacityCredit_index, all_frames['CapacityCredit']
+                'CapacityCredit', self.CapacityCredit_index, get_frame('CapacityCredit')
             )
 
             # if capacity expansion and learning are on
             if self.sw_learning > 0:
                 self.declare_param(
-                    'LearningRate', self.LearningRate_index, all_frames['LearningRate']
+                    'LearningRate', self.LearningRate_index, get_frame('LearningRate')
                 )
                 self.declare_param(
-                    'CapCostInitial', self.CapCostInitial_index, all_frames['CapCostInitial']
+                    'CapCostInitial', self.CapCostInitial_index, get_frame('CapCostInitial')
                 )
                 self.declare_param(
                     'SupplyCurveLearning',
                     self.SupplyCurveLearning_index,
-                    all_frames['SupplyCurveLearning'],
+                    get_frame('SupplyCurveLearning'),
                 )
 
             # if learning is not to be solved nonlinearly directly in the obj
@@ -538,40 +565,40 @@ class PowerModel(Model):
                 self.declare_param(
                     'CapCostLearning',
                     self.capacity_builds_index,
-                    all_frames['CapCost'],
+                    get_frame('CapCost'),
                     mutable=mute,
                 )
 
         # if trade operation is on
         if self.sw_trade:
             self.declare_param('TransLoss', None, setA.TransLoss)
-            self.declare_param('TranCost', self.TranCost_index, all_frames['TranCost'])
-            self.declare_param('TranLimit', self.TranLimit_index, all_frames['TranLimit'])
-            self.declare_param('TranCostInt', self.TranCostInt_index, all_frames['TranCostInt'])
+            self.declare_param('TranCost', self.TranCost_index, get_frame('TranCost'))
+            self.declare_param('TranLimit', self.TranLimit_index, get_frame('TranLimit'))
+            self.declare_param('TranCostInt', self.TranCostInt_index, get_frame('TranCostInt'))
             self.declare_param(
-                'TranLimitGenInt', self.TranLimitInt_index, all_frames['TranLimitGenInt']
+                'TranLimitGenInt', self.TranLimitInt_index, get_frame('TranLimitGenInt')
             )
             self.declare_param(
-                'TranLimitCapInt', self.TranLineLimitInt_index, all_frames['TranLimitCapInt']
+                'TranLimitCapInt', self.TranLineLimitInt_index, get_frame('TranLimitCapInt')
             )
 
         # if reserve margin requirements are on
         if self.sw_rm:
-            self.declare_param('ReserveMargin', self.region, all_frames['ReserveMargin'])
+            self.declare_param('ReserveMargin', self.region, get_frame('ReserveMargin'))
 
         # if ramping requirements are on
         if self.sw_ramp:
-            self.declare_param('RampUpCost', self.RampUpCost_index, all_frames['RampUpCost'])
-            self.declare_param('RampDownCost', self.RampUpCost_index, all_frames['RampDownCost'])
-            self.declare_param('RampRate', self.RampRate_index, all_frames['RampRate'])
+            self.declare_param('RampUpCost', self.RampUpCost_index, get_frame('RampUpCost'))
+            self.declare_param('RampDownCost', self.RampUpCost_index, get_frame('RampDownCost'))
+            self.declare_param('RampRate', self.RampRate_index, get_frame('RampRate'))
 
         # if operating reserve requirements are on
         if self.sw_reserves:
             self.declare_param(
-                'RegReservesCost', self.RegReservesCost_index, all_frames['RegReservesCost']
+                'RegReservesCost', self.RegReservesCost_index, get_frame('RegReservesCost')
             )
             self.declare_param(
-                'ResTechUpperBound', self.ResTechUpperBound_index, all_frames['ResTechUpperBound']
+                'ResTechUpperBound', self.ResTechUpperBound_index, get_frame('ResTechUpperBound')
             )
 
         ##########################

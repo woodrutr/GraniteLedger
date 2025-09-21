@@ -150,6 +150,28 @@ def test_boolean_columns_reject_invalid_tokens() -> None:
         frames.fuels()
 
 
+def test_frame_helper_methods_provide_copies_and_defaults() -> None:
+    """Ensure helper accessors return defensive copies and optional defaults."""
+
+    base = pd.DataFrame({"value": [1.0, 2.0]})
+    frames = Frames({"Example": base})
+
+    assert frames.has_frame("example") is True
+
+    retrieved = frames.frame("EXAMPLE")
+    assert retrieved.equals(base)
+    assert retrieved is not base
+
+    optional_existing = frames.optional_frame("example")
+    assert optional_existing.equals(base)
+    assert optional_existing is not base
+
+    assert frames.optional_frame("missing") is None
+
+    default_df = pd.DataFrame({"value": []})
+    assert frames.optional_frame("missing", default=default_df) is default_df
+
+
 def test_policy_spec_round_trip() -> None:
     """The policy accessor should convert to an :class:`RGGIPolicyAnnual`."""
 

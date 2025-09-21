@@ -25,6 +25,7 @@ from src.models.electricity.scripts.electricity_model import PowerModel
 from src.common.config_setup import Config_settings
 
 from src.integrator.utilities import select_solver
+from io_loader import Frames
 
 # Establish logger
 logger = getLogger(__name__)
@@ -37,12 +38,12 @@ data_root = Path(PROJECT_ROOT, 'src/models/electricity/input')
 # RUN MODEL
 
 
-def build_elec_model(all_frames, setin) -> PowerModel:
+def build_elec_model(frames, setin) -> PowerModel:
     """building pyomo electricity model
 
     Parameters
     ----------
-    all_frames : dict of pd.DataFrame
+    frames : io_loader.Frames or mapping of str to pandas.DataFrame
         input data frames
     setin : Sets
         input settings Sets
@@ -54,7 +55,8 @@ def build_elec_model(all_frames, setin) -> PowerModel:
     """
     # Building model
     logger.info('Build Pyomo')
-    instance = PowerModel(all_frames, setin)
+    frames_obj = Frames.coerce(frames)
+    instance = PowerModel(frames_obj, setin)
 
     # add electricity price dual
     instance.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)
@@ -198,7 +200,7 @@ def run_elec_model(settings: Config_settings, solve=True) -> PowerModel:
 
     logger.info('Preprocessing')
 
-    all_frames, setin = prep.preprocessor(prep.Sets(settings))
+    frames, setin = prep.preprocessor(prep.Sets(settings))
 
     logger.debug(
         f'Proceeding to build model for years: {settings.years} and regions: {settings.regions}'
@@ -208,7 +210,7 @@ def run_elec_model(settings: Config_settings, solve=True) -> PowerModel:
     ###############################################################################################
     # Build model
 
-    instance = build_elec_model(all_frames, setin)
+    instance = build_elec_model(frames, setin)
     timer.toc('build model finished')
 
     # stop here if no solve requested...
