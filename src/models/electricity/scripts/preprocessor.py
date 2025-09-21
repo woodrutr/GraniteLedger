@@ -450,6 +450,8 @@ class Sets:
         self.carbon_allowance_allow_borrowing = getattr(
             settings, 'carbon_allowance_allow_borrowing', False
         )
+        self.carbon_ccr1_enabled = getattr(settings, 'carbon_ccr1_enabled', True)
+        self.carbon_ccr2_enabled = getattr(settings, 'carbon_ccr2_enabled', True)
         self.carbon_cap_groups = getattr(settings, 'carbon_cap_groups', {}) or {}
         self.active_carbon_cap_groups = {}
         self.cap_groups = []
@@ -1128,6 +1130,73 @@ def build_cap_group_inputs(all_frames, setin):
     all_frames = all_frames.with_frame('CarbonAllowancePrice', price_indexed)
     all_frames = all_frames.with_frame('CarbonAllowancePriceByCapGroup', price_indexed)
     all_frames = all_frames.with_frame('CarbonPrice', price_indexed)
+
+    def prepare_ccr_table(source_name, value_col, missing_year_msg, missing_value_msg):
+        df = prepare_cap_group_table(
+            all_frames.get(source_name),
+            value_col,
+            missing_year_msg,
+            missing_value_msg,
+        )
+        if df.empty:
+            return df
+        df[value_col] = df[value_col].fillna(0.0).astype(float)
+        return df
+
+    ccr1_trigger_df = prepare_ccr_table(
+        'CarbonCCR1Trigger',
+        'CarbonCCR1Trigger',
+        'CarbonCCR1Trigger input must include a year column',
+        'CarbonCCR1Trigger input must include a CarbonCCR1Trigger column',
+    )
+    ccr1_qty_df = prepare_ccr_table(
+        'CarbonCCR1Quantity',
+        'CarbonCCR1Quantity',
+        'CarbonCCR1Quantity input must include a year column',
+        'CarbonCCR1Quantity input must include a CarbonCCR1Quantity column',
+    )
+    ccr2_trigger_df = prepare_ccr_table(
+        'CarbonCCR2Trigger',
+        'CarbonCCR2Trigger',
+        'CarbonCCR2Trigger input must include a year column',
+        'CarbonCCR2Trigger input must include a CarbonCCR2Trigger column',
+    )
+    ccr2_qty_df = prepare_ccr_table(
+        'CarbonCCR2Quantity',
+        'CarbonCCR2Quantity',
+        'CarbonCCR2Quantity input must include a year column',
+        'CarbonCCR2Quantity input must include a CarbonCCR2Quantity column',
+    )
+
+    if not getattr(setin, 'carbon_ccr1_enabled', True) and not ccr1_qty_df.empty:
+        ccr1_qty_df['CarbonCCR1Quantity'] = 0.0
+    if not getattr(setin, 'carbon_ccr2_enabled', True) and not ccr2_qty_df.empty:
+        ccr2_qty_df['CarbonCCR2Quantity'] = 0.0
+
+    if not ccr1_trigger_df.empty:
+        if {'cap_group', 'year'}.issubset(ccr1_trigger_df.columns):
+            ccr1_trigger_indexed = ccr1_trigger_df.set_index(['cap_group', 'year'])
+        else:
+            ccr1_trigger_indexed = ccr1_trigger_df
+        all_frames = all_frames.with_frame('CarbonCCR1Trigger', ccr1_trigger_indexed)
+    if not ccr1_qty_df.empty:
+        if {'cap_group', 'year'}.issubset(ccr1_qty_df.columns):
+            ccr1_qty_indexed = ccr1_qty_df.set_index(['cap_group', 'year'])
+        else:
+            ccr1_qty_indexed = ccr1_qty_df
+        all_frames = all_frames.with_frame('CarbonCCR1Quantity', ccr1_qty_indexed)
+    if not ccr2_trigger_df.empty:
+        if {'cap_group', 'year'}.issubset(ccr2_trigger_df.columns):
+            ccr2_trigger_indexed = ccr2_trigger_df.set_index(['cap_group', 'year'])
+        else:
+            ccr2_trigger_indexed = ccr2_trigger_df
+        all_frames = all_frames.with_frame('CarbonCCR2Trigger', ccr2_trigger_indexed)
+    if not ccr2_qty_df.empty:
+        if {'cap_group', 'year'}.issubset(ccr2_qty_df.columns):
+            ccr2_qty_indexed = ccr2_qty_df.set_index(['cap_group', 'year'])
+        else:
+            ccr2_qty_indexed = ccr2_qty_df
+        all_frames = all_frames.with_frame('CarbonCCR2Quantity', ccr2_qty_indexed)
 
     start_bank_df = prepare_cap_group_table(
         all_frames.get('CarbonStartBank'),
