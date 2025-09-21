@@ -155,8 +155,6 @@ class PowerModel(Model):
                 cap_group_candidates = _normalize_cap_groups(membership_source)
 
         self.cap_group_list = list(dict.fromkeys(cap_group_candidates))
-        if not self.cap_group_list:
-            self.cap_group_list = ['system']
 
         # 0=no learning, 1=linear iterations, 2=nonlinear learning
         self.sw_learning = setA.sw_learning
