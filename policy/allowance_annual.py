@@ -200,6 +200,12 @@ def _subtract_record_from_totals(
     return ControlPeriodLedger(new_emissions, new_surrendered, new_years)
 
 
+_PRICE_SOLVER_TOL = 1e-6
+_PRICE_SOLVER_MAX_ITER = 50
+_PRICE_SOLVER_HIGH = 1000.0
+_PRICE_SPAN_EPS = 1e-6
+
+
 def clear_year(
     policy: RGGIPolicyAnnual,
     state: AllowanceMarketState | None,
@@ -212,7 +218,6 @@ def clear_year(
     """Clear the allowance market for ``year`` and return the new ledger state."""
 
     _ensure_pandas()
-    _ = expected_price_guess  # maintained for API compatibility
     base_state = _coerce_state(state)
 
     cp_totals = dict(base_state.cp_totals)
@@ -265,46 +270,113 @@ def clear_year(
         )
         return dict(record), new_state
 
-    cap = _value(policy.cap, year)
-    floor = _value(policy.floor, year)
-    ccr1_trigger = _value(policy.ccr1_trigger, year)
-    ccr1_qty = _value(policy.ccr1_qty, year)
-    ccr2_trigger = _value(policy.ccr2_trigger, year)
-    ccr2_qty = _value(policy.ccr2_qty, year)
+    cap = max(0.0, _value(policy.cap, year))
+    floor = float(_value(policy.floor, year))
+    ccr1_trigger = float(_value(policy.ccr1_trigger, year))
+    ccr1_qty_raw = _value(policy.ccr1_qty, year)
+    ccr2_trigger = float(_value(policy.ccr2_trigger, year))
+    ccr2_qty_raw = _value(policy.ccr2_qty, year)
     cp = _cp_for_year(policy, year)
 
     totals = cp_totals.get(cp, ControlPeriodLedger())
 
     outstanding_prev = max(0.0, totals.emissions - totals.surrendered)
+    ccr1_enabled = bool(getattr(policy, 'ccr1_enabled', True))
+    ccr2_enabled = bool(getattr(policy, 'ccr2_enabled', True))
+    ccr1_qty = max(0.0, ccr1_qty_raw if ccr1_enabled else 0.0)
+    ccr2_qty = max(0.0, ccr2_qty_raw if ccr2_enabled else 0.0)
 
-    price = max(0.0, floor)
-    available = bank_prev + cap
+    tol = _PRICE_SOLVER_TOL
+    span_tol = max(tol, _PRICE_SPAN_EPS)
+    max_iter = _PRICE_SOLVER_MAX_ITER
 
-    def issue(trigger: float, qty: float, enabled: bool) -> float:
-        nonlocal available, price
-        if not enabled or qty <= 0.0:
-            return 0.0
-        shortfall = emissions - available
-        if shortfall <= 0.0:
-            return 0.0
-        issued = min(qty, shortfall)
-        available += issued
-        price = max(price, trigger)
-        return issued
+    min_price = max(0.0, floor)
+    low_bound = min_price
 
-    ccr1_enabled = getattr(policy, 'ccr1_enabled', True)
-    ccr2_enabled = getattr(policy, 'ccr2_enabled', True)
-    ccr1_issued = issue(ccr1_trigger, ccr1_qty, ccr1_enabled)
-    ccr2_issued = issue(ccr2_trigger, ccr2_qty, ccr2_enabled)
+    candidates = [min_price, _PRICE_SOLVER_HIGH]
+    if expected_price_guess is not None:
+        try:
+            candidates.append(float(expected_price_guess))
+        except (TypeError, ValueError):
+            pass
+    if ccr1_qty > 0.0:
+        candidates.append(ccr1_trigger)
+    if ccr2_qty > 0.0:
+        candidates.append(ccr2_trigger)
+    high_bound = max(candidates)
 
-    available_allowances = bank_prev + cap + ccr1_issued + ccr2_issued
-    shortage_flag = emissions > available_allowances + 1e-9
+    def minted_allowances(price: float) -> tuple[float, float, float]:
+        minted = cap
+        issued1 = 0.0
+        issued2 = 0.0
+        if ccr1_qty > 0.0 and price >= ccr1_trigger:
+            issued1 = ccr1_qty
+            minted += issued1
+        if ccr2_qty > 0.0 and price >= ccr2_trigger:
+            issued2 = ccr2_qty
+            minted += issued2
+        return minted, issued1, issued2
+
+    minted_low, ccr1_low, ccr2_low = minted_allowances(low_bound)
+    total_allowances_low = bank_prev + minted_low
+    if total_allowances_low >= emissions - tol:
+        clearing_price = max(low_bound, min_price)
+        if clearing_price != low_bound:
+            minted_low, ccr1_low, ccr2_low = minted_allowances(clearing_price)
+        minted_final = minted_low
+        ccr1_final = ccr1_low
+        ccr2_final = ccr2_low
+        total_allowances = bank_prev + minted_final
+    else:
+        minted_high, ccr1_high, ccr2_high = minted_allowances(high_bound)
+        total_allowances_high = bank_prev + minted_high
+        if total_allowances_high < emissions - tol:
+            clearing_price = max(high_bound, min_price)
+            if clearing_price != high_bound:
+                minted_high, ccr1_high, ccr2_high = minted_allowances(clearing_price)
+            minted_final = minted_high
+            ccr1_final = ccr1_high
+            ccr2_final = ccr2_high
+            total_allowances = bank_prev + minted_final
+        else:
+            best_price = high_bound
+            best_minted = minted_high
+            best_ccr1 = ccr1_high
+            best_ccr2 = ccr2_high
+            low_current = low_bound
+            high_current = high_bound
+            for iteration in range(1, max_iter + 1):
+                mid = 0.5 * (low_current + high_current)
+                minted_mid, ccr1_mid, ccr2_mid = minted_allowances(mid)
+                total_allowances_mid = bank_prev + minted_mid
+                if total_allowances_mid >= emissions - tol:
+                    best_price = mid
+                    best_minted = minted_mid
+                    best_ccr1 = ccr1_mid
+                    best_ccr2 = ccr2_mid
+                    high_current = mid
+                    if abs(minted_mid - emissions) <= tol:
+                        break
+                else:
+                    low_current = mid
+                if abs(high_current - low_current) <= span_tol:
+                    break
+
+            clearing_price = max(best_price, min_price)
+            if clearing_price != best_price:
+                best_minted, best_ccr1, best_ccr2 = minted_allowances(clearing_price)
+            minted_final = best_minted
+            ccr1_final = best_ccr1
+            ccr2_final = best_ccr2
+            total_allowances = bank_prev + minted_final
+
+    shortage_flag = emissions > total_allowances + tol
 
     frac = max(0.0, min(1.0, float(policy.annual_surrender_frac)))
     required_current = frac * emissions
     outstanding_before = outstanding_prev + emissions
     surrender_target = min(required_current, outstanding_before)
-    surrendered = min(surrender_target, available_allowances)
+    surrendered = min(surrender_target, total_allowances)
 
     new_emissions_total = totals.emissions + emissions
     new_surrender_total = totals.surrendered + surrendered
@@ -317,7 +389,7 @@ def clear_year(
     cp_totals[cp] = updated_totals
 
     obligation = max(0.0, new_emissions_total - new_surrender_total)
-    bank_unadjusted = max(0.0, available_allowances - surrendered)
+    bank_unadjusted = max(0.0, total_allowances - surrendered)
     carry_pct = float(getattr(policy, 'carry_pct', 1.0))
     if not banking_enabled:
         bank_unadjusted = 0.0
@@ -329,10 +401,11 @@ def clear_year(
         'cp_id': cp,
         'emissions': emissions,
         'bank_prev': bank_prev,
-        'available_allowances': available_allowances,
-        'p_co2': price,
-        'ccr1_issued': ccr1_issued,
-        'ccr2_issued': ccr2_issued,
+        'available_allowances': minted_final,
+        'allowances_total': total_allowances,
+        'p_co2': clearing_price,
+        'ccr1_issued': ccr1_final,
+        'ccr2_issued': ccr2_final,
         'surrendered': surrendered,
         'bank_new': bank_new,
         'obligation_new': obligation,
