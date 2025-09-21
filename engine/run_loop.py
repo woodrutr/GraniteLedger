@@ -22,6 +22,9 @@ from policy.allowance_supply import AllowanceSupply
 from io_loader import Frames
 
 
+ProgressCallback = Callable[[str, Mapping[str, object]], None]
+
+
 def _ensure_pandas() -> None:
     """Ensure :mod:`pandas` is available before running the engine."""
 
@@ -180,14 +183,42 @@ def _solve_allowance_market_year(
     annual_surrender_frac: float,
     carry_pct: float,
     banking_enabled: bool,
+    progress_cb: ProgressCallback | None = None,
 ) -> dict[str, object]:
-    """Solve for the allowance clearing price for ``year`` using bisection."""
+    """Solve for the allowance clearing price for ``year`` using bisection.
+
+    When provided, ``progress_cb`` receives updates for each iteration using the
+    signature ``progress_cb(stage, payload)`` where ``stage`` is the literal
+    string ``"iteration"`` and ``payload`` includes the ``year``, current
+    iteration number, and clearing price estimates.
+    """
 
     tol = max(float(tol), 0.0)
     max_iter_int = max(int(max_iter), 0)
     high_price = float(high_price)
 
     banking_enabled = bool(banking_enabled)
+
+    def _report_progress(
+        stage: str,
+        iteration: int,
+        price: float | None,
+        *,
+        status: str,
+        shortage: bool | None = None,
+    ) -> None:
+        if progress_cb is None:
+            return
+        payload: dict[str, object] = {
+            "year": int(year),
+            "iteration": int(iteration),
+            "status": status,
+        }
+        if price is not None:
+            payload["price"] = float(price)
+        if shortage is not None:
+            payload["shortage"] = bool(shortage)
+        progress_cb(stage, payload)
 
     def _issued_quantities(price: float, allowances: float) -> tuple[float, float]:
         if not supply.enable_ccr or not supply.enabled:
@@ -235,6 +266,13 @@ def _solve_allowance_market_year(
         ccr1_issued, ccr2_issued = _issued_quantities(clearing_price, allowances)
         minted_allowances = float(max(allowances, emissions))
         total_allowances = minted_allowances  # bank is zero when policy disabled
+        _report_progress(
+            "iteration",
+            0,
+            clearing_price,
+            status="policy-disabled",
+            shortage=False,
+        )
         return {
             'year': year,
             'p_co2': float(clearing_price),
@@ -280,6 +318,13 @@ def _solve_allowance_market_year(
         obligation = max(outstanding_prev + emissions_low - surrendered, 0.0)
         ccr1_issued, ccr2_issued = _issued_quantities(clearing_price, allowances_low)
         bank_carry = max(bank_unadjusted * carry_pct, 0.0)
+        _report_progress(
+            "iteration",
+            0,
+            clearing_price,
+            status="surplus",
+            shortage=False,
+        )
         result = {
             'year': year,
             'p_co2': float(clearing_price),
@@ -321,6 +366,13 @@ def _solve_allowance_market_year(
         obligation = max(outstanding_prev + emissions_high - surrendered, 0.0)
         ccr1_issued, ccr2_issued = _issued_quantities(clearing_price, allowances_high)
         bank_carry = max(bank_unadjusted * carry_pct, 0.0)
+        _report_progress(
+            "iteration",
+            max_iter_int,
+            clearing_price,
+            status="shortage",
+            shortage=True,
+        )
         result = {
             'year': year,
             'p_co2': float(clearing_price),
@@ -362,6 +414,14 @@ def _solve_allowance_market_year(
         allowances_mid = supply.available_allowances(mid)
         total_allowances_mid = bank_prev + allowances_mid
         iteration_count = iteration
+        shortage_mid = total_allowances_mid < emissions_mid
+        _report_progress(
+            "iteration",
+            iteration,
+            mid,
+            status="bisection",
+            shortage=shortage_mid,
+        )
         if total_allowances_mid >= emissions_mid:
             best_price = mid
             best_allowances = allowances_mid
@@ -388,6 +448,14 @@ def _solve_allowance_market_year(
     shortage_flag = best_emissions > total_allowances + tol
     ccr1_issued, ccr2_issued = _issued_quantities(clearing_price, best_allowances)
     bank_carry = max(bank_unadjusted * carry_pct, 0.0)
+
+    _report_progress(
+        "iteration",
+        iteration_count,
+        clearing_price,
+        status="final",
+        shortage=shortage_flag,
+    )
 
     result = {
         'year': year,
@@ -716,8 +784,14 @@ def run_end_to_end_from_frames(
     enable_ccr: bool = True,
     price_cap: float = 1000.0,
     use_network: bool = False,
+    progress_cb: ProgressCallback | None = None,
 ) -> EngineOutputs:
-    """Run the integrated dispatch and allowance engine returning structured outputs."""
+    """Run the integrated dispatch and allowance engine returning structured outputs.
+
+    When ``progress_cb`` is provided the callable receives updates for the
+    overall run as well as each simulated year using the ``(stage, payload)``
+    convention described in :func:`_solve_allowance_market_year`.
+    """
 
     _ensure_pandas()
 
@@ -726,6 +800,16 @@ def run_end_to_end_from_frames(
     policy = policy_spec.to_policy()
     dispatch_solver = _dispatch_from_frames(frames_obj, use_network=use_network)
     years_sequence = _coerce_years(policy, years)
+    total_years = len(years_sequence)
+
+    if progress_cb is not None:
+        progress_cb(
+            "run_start",
+            {
+                "total_years": total_years,
+                "years": list(years_sequence),
+            },
+        )
 
     results: dict[int, dict[str, object]] = {}
     policy_enabled_global = bool(getattr(policy, 'enabled', True))
@@ -736,6 +820,16 @@ def run_end_to_end_from_frames(
     cp_track: dict[str, dict[str, float | list[int] | None]] = {}
 
     for idx, year in enumerate(years_sequence):
+        if progress_cb is not None:
+            progress_cb(
+                "year_start",
+                {
+                    "year": int(year),
+                    "index": idx,
+                    "total_years": total_years,
+                },
+            )
+
         supply, record = _build_allowance_supply(
             policy,
             year,
@@ -793,6 +887,7 @@ def run_end_to_end_from_frames(
             annual_surrender_frac=surrender_frac,
             carry_pct=carry_pct,
             banking_enabled=banking_enabled_year,
+            progress_cb=progress_cb,
         )
 
         emissions = float(summary.get('emissions', 0.0))
@@ -822,6 +917,25 @@ def run_end_to_end_from_frames(
             results[year] = summary
             bank_prev = float(summary.get('bank_new', 0.0)) if banking_enabled_year else 0.0
             state['outstanding'] = 0.0
+            if progress_cb is not None:
+                payload: dict[str, object] = {
+                    "year": int(year),
+                    "index": idx,
+                    "total_years": total_years,
+                    "shortage": bool(summary.get('shortage_flag', False)),
+                }
+                price_value = summary.get('p_co2')
+                try:
+                    if price_value is not None:
+                        payload['price'] = float(price_value)
+                except (TypeError, ValueError):
+                    pass
+                iterations_value = summary.get('iterations')
+                try:
+                    payload['iterations'] = int(iterations_value)
+                except (TypeError, ValueError):
+                    payload['iterations'] = 0
+                progress_cb('year_complete', payload)
             continue
 
         is_final_year = bool(record.get('full_compliance', False))
@@ -885,6 +999,26 @@ def run_end_to_end_from_frames(
 
         summary['finalize'] = finalize_summary
         results[year] = summary
+
+        if progress_cb is not None:
+            payload = {
+                'year': int(year),
+                'index': idx,
+                'total_years': total_years,
+                'shortage': bool(summary.get('shortage_flag', False)),
+            }
+            price_value = summary.get('p_co2')
+            try:
+                if price_value is not None:
+                    payload['price'] = float(price_value)
+            except (TypeError, ValueError):
+                pass
+            iterations_value = summary.get('iterations')
+            try:
+                payload['iterations'] = int(iterations_value)
+            except (TypeError, ValueError):
+                payload['iterations'] = 0
+            progress_cb('year_complete', payload)
 
     ordered_years = sorted(results)
     return _build_engine_outputs(ordered_years, results, dispatch_solver)
