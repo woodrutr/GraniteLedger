@@ -8,19 +8,285 @@ It established the parameters and sets that will be used in the model. It contai
 
 """
 
+from __future__ import annotations
+
 ###################################################################################################
 # Setup
 
 # Import pacakges
 from pathlib import Path
-import pandas as pd
 import os
 import copy
-from pandas.api.types import is_float_dtype, is_integer_dtype
+from typing import Any, Mapping, cast
+
+try:  # pragma: no cover - optional dependency
+    import pandas as pd
+except ImportError:  # pragma: no cover - optional dependency
+    pd = cast(object, None)
 
 # Import python modules
 from definitions import PROJECT_ROOT
 from src.common.utilities import scale_load, scale_load_with_enduses
+from io_loader import Frames
+
+
+def _ensure_pandas():
+    """Ensure :mod:`pandas` is available before using the preprocessor."""
+
+    if pd is None:  # pragma: no cover - helper exercised indirectly
+        raise ImportError(
+            "pandas is required for src.models.electricity.scripts.preprocessor; "
+            "install it with `pip install pandas`."
+        )
+    return pd
+
+
+def _is_float_dtype(dtype: Any) -> bool:
+    """Return ``True`` if ``dtype`` is recognised as a floating dtype."""
+
+    _ensure_pandas()
+    from pandas.api.types import is_float_dtype as _is_float
+
+    return bool(_is_float(dtype))
+
+
+def _is_integer_dtype(dtype: Any) -> bool:
+    """Return ``True`` if ``dtype`` is recognised as an integer dtype."""
+
+    _ensure_pandas()
+    from pandas.api.types import is_integer_dtype as _is_int
+
+    return bool(_is_int(dtype))
+
+
+class FrameStore:
+    """Mutable helper that stores frames using the :class:`Frames` contract."""
+
+    def __init__(
+        self,
+        frames: Frames | Mapping[str, pd.DataFrame] | None = None,
+        *,
+        carbon_policy_enabled: bool | None = None,
+    ) -> None:
+        if frames is None:
+            mapping: Mapping[str, pd.DataFrame] | None = None
+        elif isinstance(frames, Frames):
+            mapping = {key: frames[key] for key in frames}
+        else:
+            mapping = dict(frames)
+        self._frames = Frames(mapping, carbon_policy_enabled=carbon_policy_enabled)
+
+    def __getitem__(self, key: str) -> pd.DataFrame:
+        return self._frames[key]
+
+    def __setitem__(self, key: str, value: pd.DataFrame) -> None:
+        self._frames = self._frames.with_frame(key, value)
+
+    def with_frame(self, key: str, value: pd.DataFrame) -> "FrameStore":
+        self._frames = self._frames.with_frame(key, value)
+        return self
+
+    def get(self, key: str, default: Any = None) -> pd.DataFrame | Any:
+        try:
+            return self._frames[key]
+        except KeyError:
+            return default
+
+    def __contains__(self, key: object) -> bool:
+        try:
+            self._frames[key]  # type: ignore[index]
+        except KeyError:
+            return False
+        return True
+
+    def __iter__(self):
+        return iter(self._frames)
+
+    def __len__(self) -> int:
+        return len(self._frames)
+
+    def keys(self):
+        return self._frames.keys()
+
+    def items(self):
+        for key in self._frames:
+            yield key, self._frames[key]
+
+    def to_frames(self) -> Frames:
+        return self._frames
+
+
+def _build_demand_frame(load_df: pd.DataFrame | None) -> pd.DataFrame:
+    """Aggregate hourly load into annual regional demand."""
+
+    _ensure_pandas()
+
+    if load_df is None or load_df.empty:
+        return pd.DataFrame(columns=['year', 'region', 'demand_mwh'])
+
+    df = load_df.copy()
+    if not isinstance(df, pd.DataFrame):  # pragma: no cover - defensive guard
+        raise TypeError('load data must be provided as a pandas DataFrame')
+
+    if not isinstance(df.index, pd.RangeIndex):
+        if isinstance(df.index, pd.MultiIndex) or df.index.name is not None:
+            df = df.reset_index()
+
+    required = {'year', 'region', 'Load'}
+    missing = required - set(df.columns)
+    if missing:
+        missing_str = ', '.join(sorted(missing))
+        raise ValueError(f'Load frame is missing required columns: {missing_str}')
+
+    df = df[['year', 'region', 'Load']].copy()
+    df['year'] = pd.to_numeric(df['year'], errors='coerce')
+    df['Load'] = pd.to_numeric(df['Load'], errors='coerce')
+    df = df.dropna(subset=['year', 'region', 'Load'])
+    df['year'] = df['year'].astype(int)
+
+    aggregated = (
+        df.groupby(['year', 'region'], as_index=False)['Load']
+        .sum()
+        .rename(columns={'Load': 'demand_mwh'})
+    )
+
+    return aggregated[['year', 'region', 'demand_mwh']]
+
+
+def _build_transmission_frame(tranlimit_df: pd.DataFrame | None) -> pd.DataFrame:
+    """Normalise transmission limits into the Frames contract structure."""
+
+    _ensure_pandas()
+
+    if tranlimit_df is None or tranlimit_df.empty:
+        return pd.DataFrame(columns=['from_region', 'to_region', 'limit_mw'])
+
+    df = tranlimit_df.copy()
+    if not isinstance(df.index, pd.RangeIndex):
+        if isinstance(df.index, pd.MultiIndex) or df.index.name is not None:
+            df = df.reset_index()
+
+    required = {'region', 'region1', 'TranLimit'}
+    missing = required - set(df.columns)
+    if missing:
+        missing_str = ', '.join(sorted(missing))
+        raise ValueError(
+            f'TranLimit frame is missing required columns: {missing_str}'
+        )
+
+    df = df[['region', 'region1', 'TranLimit']].dropna(subset=['region', 'region1'])
+    df['limit_mw'] = pd.to_numeric(df['TranLimit'], errors='coerce')
+    df = df.dropna(subset=['limit_mw'])
+    df['limit_mw'] = df['limit_mw'].astype(float)
+    if (df['limit_mw'] < 0.0).any():
+        raise ValueError('TranLimit input must provide non-negative TranLimit values')
+
+    df = df.rename(columns={'region': 'from_region', 'region1': 'to_region'})
+    df['from_region'] = df['from_region'].astype(str)
+    df['to_region'] = df['to_region'].astype(str)
+
+    aggregated = (
+        df.groupby(['from_region', 'to_region'], as_index=False)['limit_mw']
+        .max()
+        .sort_values(['from_region', 'to_region'])
+        .reset_index(drop=True)
+    )
+
+    return aggregated[['from_region', 'to_region', 'limit_mw']]
+
+
+def _default_coverage_frame(setin) -> pd.DataFrame:
+    """Return a coverage frame marking all configured regions as uncovered."""
+
+    _ensure_pandas()
+
+    regions = list(getattr(setin, 'region', []) or [])
+    if not regions:
+        return pd.DataFrame(columns=['region', 'year', 'covered'])
+
+    return pd.DataFrame(
+        {
+            'region': regions,
+            'year': [-1] * len(regions),
+            'covered': [False] * len(regions),
+        }
+    )
+
+
+def _default_policy_frame(setin) -> pd.DataFrame:
+    """Construct a default allowance policy table that disables the policy."""
+
+    _ensure_pandas()
+
+    years = list(getattr(setin, 'years', []) or [])
+    if not years:
+        start_year = getattr(setin, 'start_year', None)
+        years = [int(start_year)] if start_year is not None else []
+
+    columns = [
+        'year',
+        'cap_tons',
+        'floor_dollars',
+        'ccr1_trigger',
+        'ccr1_qty',
+        'ccr2_trigger',
+        'ccr2_qty',
+        'cp_id',
+        'full_compliance',
+        'bank0',
+        'annual_surrender_frac',
+        'carry_pct',
+        'policy_enabled',
+    ]
+
+    if not years:
+        return pd.DataFrame(columns=columns)
+
+    enabled = bool(getattr(setin, 'carbon_cap', False))
+    bank0 = float(getattr(setin, 'carbon_allowance_start_bank', 0.0))
+
+    data = {
+        'year': [int(year) for year in years],
+        'cap_tons': [0.0] * len(years),
+        'floor_dollars': [0.0] * len(years),
+        'ccr1_trigger': [0.0] * len(years),
+        'ccr1_qty': [0.0] * len(years),
+        'ccr2_trigger': [0.0] * len(years),
+        'ccr2_qty': [0.0] * len(years),
+        'cp_id': ['NoPolicy'] * len(years),
+        'full_compliance': [False] * len(years),
+        'bank0': [bank0] + [0.0] * (len(years) - 1),
+        'annual_surrender_frac': [0.0] * len(years),
+        'carry_pct': [1.0] * len(years),
+        'policy_enabled': [enabled] * len(years),
+    }
+
+    return pd.DataFrame(data, columns=columns)
+
+
+def _attach_contract_frames(all_frames: FrameStore, setin) -> FrameStore:
+    """Ensure the Frames core contract tables are present with validated schemas."""
+
+    if 'demand' not in all_frames:
+        load_df = all_frames.get('Load')
+        demand_frame = _build_demand_frame(load_df)
+        all_frames['demand'] = demand_frame
+
+    if 'transmission' not in all_frames:
+        transmission_source = all_frames.get('TranLimit')
+        transmission_frame = _build_transmission_frame(transmission_source)
+        all_frames['transmission'] = transmission_frame
+
+    if 'fuels' not in all_frames:
+        all_frames['fuels'] = pd.DataFrame(columns=['fuel', 'covered'])
+
+    if 'coverage' not in all_frames:
+        all_frames['coverage'] = _default_coverage_frame(setin)
+
+    if 'policy' not in all_frames:
+        all_frames['policy'] = _default_policy_frame(setin)
+
+    return all_frames
 
 # switch to load data from csvs(0) or from db(1)
 # note: this is a future feature, currently not available
@@ -62,6 +328,8 @@ def apply_allowance_overrides(
     cap_groups: list[str],
 ) -> pd.DataFrame:
     """Apply run configuration overrides to the allowance procurement data."""
+
+    _ensure_pandas()
 
     if not overrides or not cap_groups:
         return allowances_df
@@ -282,30 +550,27 @@ class Sets:
 
 
 ### Load csvs
-def readin_csvs(all_frames):
-    """Reads in all of the CSV files from the input dir and returns a dictionary of dataframes,
-    where the key is the file name and the value is the table data.
+def readin_csvs(
+    frames: Frames | Mapping[str, pd.DataFrame] | None = None,
+) -> Frames:
+    """Read CSV input data returning a :class:`Frames` container."""
 
-    Parameters
-    ----------
-    all_frames : dictionary
-        empty dictionary to be filled with dataframes
+    _ensure_pandas()
 
-    Returns
-    -------
-    dictionary
-        completed dictionary filled with dataframes from the input directory
-    """
+    frames_obj = Frames() if frames is None else Frames.coerce(frames)
     csv_dir = Path(data_root, 'cem_inputs')
     for filename in os.listdir(csv_dir):
         f = Path(csv_dir, filename)
-        if os.path.isfile(f):
-            all_frames[filename[:-4]] = pd.read_csv(f)
-    return all_frames
+        if f.is_file():
+            df = pd.read_csv(f)
+            frames_obj = frames_obj.with_frame(filename[:-4], df)
+    return frames_obj
 
 
 ### Load table from SQLite DB
-def readin_sql(all_frames):
+def readin_sql(
+    frames: Frames | Mapping[str, pd.DataFrame] | None = None,
+) -> Frames:
     """Reads in all of the tables from a SQL databased and returns a dictionary of dataframes,
     where the key is the table name and the value is the table data.
 
@@ -316,9 +581,12 @@ def readin_sql(all_frames):
 
     Returns
     -------
-    dictionary
-        completed dictionary filled with dataframes from the input directory
+    Frames
+        completed container filled with dataframes from the input directory
     """
+    _ensure_pandas()
+
+    frames_obj = Frames() if frames is None else Frames.coerce(frames)
     db_dir = data_root / 'cem_inputs_database.db'
     engine = create_engine('sqlite:///' + db_dir)
     Session = sessionmaker(bind=engine)
@@ -330,12 +598,13 @@ def readin_sql(all_frames):
     metadata.reflect(engine)
 
     for table in metadata.tables.keys():
-        all_frames[table] = load_data(table, metadata, engine)
-        all_frames[table] = all_frames[table].drop(columns=['id'])
+        df = load_data(table, metadata, engine)
+        df = df.drop(columns=['id'])
+        frames_obj = frames_obj.with_frame(table, df)
 
     session.close()
 
-    return all_frames
+    return frames_obj
 
 
 def load_data(tablename, metadata, engine):
@@ -355,6 +624,8 @@ def load_data(tablename, metadata, engine):
     dataframe
         table from SQL db as a dataframe
     """
+    _ensure_pandas()
+
     table = Table(tablename, metadata, autoload_with=engine)
     query = select(table.c).where()
 
@@ -467,7 +738,7 @@ def _prepare_capacity_limit_overrides(df: pd.DataFrame, base_df: pd.DataFrame):
     )
 
     tech_dtype = base_df['tech'].dtype
-    if is_integer_dtype(tech_dtype) or is_float_dtype(tech_dtype):
+    if _is_integer_dtype(tech_dtype) or _is_float_dtype(tech_dtype):
         prepared['tech'] = pd.to_numeric(prepared['tech'], errors='coerce')
     else:
         prepared['tech'] = prepared['tech'].astype(str)
@@ -485,14 +756,14 @@ def _prepare_capacity_limit_overrides(df: pd.DataFrame, base_df: pd.DataFrame):
 
     prepared['region'] = prepared['region'].astype(region_dtype)
     prepared['year'] = prepared['year'].astype(year_dtype)
-    if is_integer_dtype(tech_dtype) or is_float_dtype(tech_dtype):
+    if _is_integer_dtype(tech_dtype) or _is_float_dtype(tech_dtype):
         prepared['tech'] = prepared['tech'].astype(tech_dtype)
     else:
         prepared['tech'] = prepared['tech'].astype(base_df['tech'].dtype)
 
     per_step = prepared[prepared['step'].notna()].copy()
     if not per_step.empty:
-        if is_integer_dtype(step_dtype) or is_float_dtype(step_dtype):
+        if _is_integer_dtype(step_dtype) or _is_float_dtype(step_dtype):
             per_step['step'] = per_step['step'].astype(step_dtype)
         else:
             per_step['step'] = per_step['step'].astype(base_df['step'].dtype)
@@ -656,6 +927,8 @@ def _apply_cap_group_value_overrides(df, group_definitions, value_col, override_
 def build_cap_group_inputs(all_frames, setin):
     """Construct cap group membership and allowance/price tables."""
 
+    _ensure_pandas()
+
     cap_group_map = all_frames.get('CarbonCapGroupMap')
     fallback_membership = all_frames.get('CarbonCapGroup')
 
@@ -748,9 +1021,9 @@ def build_cap_group_inputs(all_frames, setin):
     membership_index['CarbonCapGroupMembership'] = 1.0
     membership_index = membership_index.set_index(['cap_group', 'region'])
 
-    all_frames['CarbonCapGroupMembership'] = membership_index[
-        ['CarbonCapGroupMembership']
-    ]
+    all_frames = all_frames.with_frame(
+        'CarbonCapGroupMembership', membership_index[['CarbonCapGroupMembership']]
+    )
 
     setin.cap_groups = active_groups
     setin.cap_group_membership = membership_index
@@ -835,8 +1108,10 @@ def build_cap_group_inputs(all_frames, setin):
         allowances_indexed = allowances_df.set_index(['cap_group', 'year'])
     else:
         allowances_indexed = allowances_df
-    all_frames['CarbonAllowanceProcurement'] = allowances_indexed
-    all_frames['CarbonAllowanceProcurementByCapGroup'] = allowances_indexed
+    all_frames = all_frames.with_frame('CarbonAllowanceProcurement', allowances_indexed)
+    all_frames = all_frames.with_frame(
+        'CarbonAllowanceProcurementByCapGroup', allowances_indexed
+    )
 
     price_df = prepare_cap_group_table(
         all_frames.get('CarbonAllowancePrice'),
@@ -850,9 +1125,9 @@ def build_cap_group_inputs(all_frames, setin):
         price_indexed = price_df.set_index(['cap_group', 'year'])
     else:
         price_indexed = price_df
-    all_frames['CarbonAllowancePrice'] = price_indexed
-    all_frames['CarbonAllowancePriceByCapGroup'] = price_indexed
-    all_frames['CarbonPrice'] = price_indexed
+    all_frames = all_frames.with_frame('CarbonAllowancePrice', price_indexed)
+    all_frames = all_frames.with_frame('CarbonAllowancePriceByCapGroup', price_indexed)
+    all_frames = all_frames.with_frame('CarbonPrice', price_indexed)
 
     start_bank_df = prepare_cap_group_table(
         all_frames.get('CarbonStartBank'),
@@ -876,9 +1151,18 @@ def build_cap_group_inputs(all_frames, setin):
         start_bank_indexed = start_bank_df.set_index(['cap_group', 'year'])
     else:
         start_bank_indexed = start_bank_df
-    all_frames['CarbonStartBank'] = start_bank_indexed
+    all_frames = all_frames.with_frame('CarbonStartBank', start_bank_indexed)
 
-    return all_frames, setin
+    frames = all_frames.to_frames()
+
+    # Trigger schema validation for the Frames core contract tables.
+    frames.demand()
+    frames.fuels()
+    frames.transmission()
+    frames.coverage()
+    frames.policy()
+
+    return frames, setin
 
 
 def fill_values(row, subset_list):
@@ -1284,22 +1568,31 @@ def preprocessor(setin):
 
     Returns
     -------
-    all_frames : dictionary
-        dictionary of dataframes where the key is the file name and the value is the table data
+    all_frames : Frames
+        container of dataframes where the key is the file name and the value is the table data
     setin : Sets
         an initial batch of sets that are used to solve electricity model
     """
 
     # READ IN INPUT DATA
 
+    _ensure_pandas()
+
     # read in raw data
-    all_frames = {}
+    frames_container: Frames | None = None
     if db_switch == 0:
         # add csv input files to all frames
-        all_frames = readin_csvs(all_frames)
+        frames_container = readin_csvs()
     elif db_switch == 1:
         # add sql db tables to all frames
-        all_frames = readin_sql(all_frames)
+        frames_container = readin_sql()
+    else:
+        frames_container = Frames()
+
+    carbon_policy_enabled = bool(getattr(setin, 'carbon_cap', False))
+    all_frames = FrameStore(
+        frames_container, carbon_policy_enabled=carbon_policy_enabled
+    )
 
     # Ensure emissions data are available for all generation technologies
     emissions_df = all_frames.get('EmissionsRate')
@@ -1405,20 +1698,21 @@ def preprocessor(setin):
     all_frames['WeightDay'] = time_map(cw_temporal, {'Map_day': 'day', 'WeightDay': 'WeightDay'})
 
     # weights per season
-    all_frames['WeightSeason'] = cw_temporal[
+    weight_season = cw_temporal[
         ['Map_s', 'Map_hour', 'WeightDay', 'WeightHour']
     ].drop_duplicates()
-    all_frames['WeightSeason'].loc[:, 'WeightSeason'] = (
-        all_frames['WeightSeason']['WeightDay'] * all_frames['WeightSeason']['WeightHour']
+    weight_season = weight_season.assign(
+        WeightSeason=weight_season['WeightDay'] * weight_season['WeightHour']
     )
-    all_frames['WeightSeason'] = (
-        all_frames['WeightSeason']
+    weight_season = (
+        weight_season
         .drop(columns=['WeightDay', 'WeightHour', 'Map_hour'])
         .groupby(['Map_s'])
         .agg('sum')
         .reset_index()
         .rename(columns={'Map_s': 'season'})
     )
+    all_frames['WeightSeason'] = weight_season
 
     if 'CarbonAllowanceProcurement' in all_frames:
         allowances_df = all_frames['CarbonAllowanceProcurement'].reset_index()
@@ -1457,11 +1751,14 @@ def preprocessor(setin):
     ]
 
     # Update load to be the total demand in each time segment rather than the average
-    all_frames['Load'] = pd.merge(
+    load_df = pd.merge(
         all_frames['Load'], all_frames['WeightHour'], how='left', on=['hour']
     )
-    all_frames['Load']['Load'] = all_frames['Load']['Load'] * all_frames['Load']['WeightHour']
-    all_frames['Load'] = all_frames['Load'].drop(columns=['WeightHour'])
+    load_df['Load'] = load_df['Load'] * load_df['WeightHour']
+    load_df = load_df.drop(columns=['WeightHour'])
+    all_frames['Load'] = load_df
+
+    all_frames = _attach_contract_frames(all_frames, setin)
 
     # add seasons to data without seasons
     all_frames['SupplyCurve'] = add_season_index(cw_temporal, all_frames['SupplyCurve'], 1)
@@ -1482,7 +1779,13 @@ def preprocessor(setin):
             the original dict of data frames with updated price units
         """
         for name in names:
-            dic[name].loc[:, name] = dic[name][name] * 1000
+            if name not in dic:
+                continue
+            df = dic[name].copy()
+            if name not in df.columns:
+                continue
+            df.loc[:, name] = df[name] * 1000
+            dic[name] = df
         return dic
 
     all_frames = price_MWh_to_GWh(
@@ -1502,14 +1805,14 @@ def preprocessor(setin):
     # Recalculate Supply Curve Learning
 
     # save first year of supply curve summer capacity for learning
-    all_frames['SupplyCurveLearning'] = all_frames['SupplyCurve'][
+    supply_curve_learning = all_frames['SupplyCurve'][
         (all_frames['SupplyCurve']['year'] == setin.start_year)
         & (all_frames['SupplyCurve']['season'] == 2)
-    ]
+    ].copy()
 
     # set up first year capacity for learning.
-    all_frames['SupplyCurveLearning'] = (
-        pd.merge(all_frames['SupplyCurveLearning'], all_frames['CapCost'], how='outer')
+    supply_curve_learning = (
+        pd.merge(supply_curve_learning, all_frames['CapCost'], how='outer')
         .drop(columns=['season', 'year', 'CapCost', 'region', 'step'])
         .rename(columns={'SupplyCurve': 'SupplyCurveLearning'})
         .groupby(['tech'])
@@ -1518,9 +1821,11 @@ def preprocessor(setin):
     )
 
     # if cap = 0, set to minimum unit size (0.1 for now)
-    all_frames['SupplyCurveLearning'].loc[
-        all_frames['SupplyCurveLearning']['SupplyCurveLearning'] == 0.0, 'SupplyCurveLearning'
+    supply_curve_learning.loc[
+        supply_curve_learning['SupplyCurveLearning'] == 0.0, 'SupplyCurveLearning'
     ] = 0.01
+
+    all_frames['SupplyCurveLearning'] = supply_curve_learning
 
     all_frames['CapacityCredit'] = capacitycredit_df(all_frames, setin)
     all_frames['CapacityBuildLimit'] = build_capacity_build_limits(all_frames, setin)
