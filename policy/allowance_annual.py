@@ -27,27 +27,38 @@ class ConfigError(ValueError):
     """Configuration error raised when allowance policy inputs are invalid."""
 
 
+def _leading_year_from_digits(value: Any) -> int | None:
+    """Return the leading four-digit year found in ``value`` if present."""
+
+    digits = "".join(ch for ch in str(value) if ch.isdigit())
+    if len(digits) >= 4:
+        return int(digits[:4])
+    return None
+
+
 def _infer_compliance_year(label: Any, resolution: str) -> int:
     """Return the calendar year associated with ``label`` for ``resolution``."""
 
     if isinstance(label, Integral):
         value = int(label)
-        if resolution != "annual" and abs(value) >= 1000:
-            return int(value // 1000)
+        if resolution != "annual":
+            leading = _leading_year_from_digits(value)
+            if leading is not None:
+                return leading
         return value
     if isinstance(label, Real) and not isinstance(label, bool):
         value = int(label)
-        if resolution != "annual" and abs(value) >= 1000:
-            return int(value // 1000)
+        if resolution != "annual":
+            leading = _leading_year_from_digits(label)
+            if leading is not None:
+                return leading
         return value
     if isinstance(label, str):
         stripped = label.strip()
         if stripped:
-            digits = "".join(ch for ch in stripped if ch.isdigit())
-            if digits:
-                if resolution != "annual" and len(digits) > 4:
-                    return int(digits[:4])
-                return int(digits)
+            leading = _leading_year_from_digits(stripped)
+            if leading is not None:
+                return leading
     if pd is not None:
         try:
             timestamp = pd.to_datetime(label, errors="coerce")
@@ -198,14 +209,19 @@ class RGGIPolicyAnnual:
             try:
                 return int(year_value)
             except (TypeError, ValueError):
-                pass
+                raise ValueError(f"Unable to convert stored compliance year {year_value!r}")
         try:
             return _infer_compliance_year(period, self.resolution)
         except ValueError:
+            pass
+        if pd is not None:
             try:
-                return int(period)  # pragma: no cover - fallback
-            except (TypeError, ValueError):
-                return hash(period)
+                timestamp = pd.to_datetime(period, errors="coerce")
+            except Exception:  # pragma: no cover - defensive guard
+                timestamp = None
+            if timestamp is not None and not pd.isna(timestamp):
+                return int(timestamp.year)
+        raise ValueError(f"Unable to determine compliance year for period {period!r}")
 
 
 @dataclass(frozen=True)
