@@ -68,13 +68,29 @@ app.title = 'BlueSky Model Runner'
 
 docs_dir = os.path.abspath('docs/build/html')
 
-# use the current python interpreter to run the html docs in the background
-with open(os.devnull, 'w') as devnull:
-    http_server_process = subprocess.Popen(
-        [sys.executable, '-m', 'http.server', '8000', '--directory', docs_dir],
-        stdout=devnull,
-        stderr=devnull,
-    )
+
+def _launch_docs_server():
+    """Start the HTML documentation server bound to localhost."""
+
+    # Use the current Python interpreter to serve the built docs in the
+    # background. Binding to 127.0.0.1 limits exposure to the local machine.
+    with open(os.devnull, 'w') as devnull:
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                '-m',
+                'http.server',
+                '8000',
+                '--bind',
+                '127.0.0.1',
+                '--directory',
+                docs_dir,
+            ],
+            stdout=devnull,
+            stderr=devnull,
+        )
+
+    return process
 
 # blusesky image in assets folder
 image_src = app.get_asset_url('ProjectBlueSkywebheaderimageblack.jpg')
@@ -86,7 +102,7 @@ app.layout = dbc.Container(
             dbc.Col(
                 dbc.Button(
                     'Code Documentation',
-                    href='http://localhost:8000/index.html',
+                    href='http://127.0.0.1:8000/index.html',
                     color='info',
                     className='mt-3',
                     target='_blank',
@@ -581,18 +597,25 @@ def run_mode(n_clicks, selected_mode):
         error_msg = f'Error, not able to run {selected_mode}. Please check the log script/terminal, exit out of browser, and restart.'
         return error_msg, 0
 
+import os
+import subprocess
+import sys
+
+# ... your callback definitions above ...
+
+http_server_process = None
+debug_mode = dash_debug_enabled()
+
+if debug_mode:
+    print(
+        'Dash debug mode enabled via '
+        f"{DASH_DEBUG_ENV_VAR}. Do not enable this in production environments."
+    )
 
 if __name__ == "__main__":
-    http_server_process = None
-    debug_mode = dash_debug_enabled()
-
-    if debug_mode:
-        print(
-            'Dash debug mode enabled via '
-            f"{DASH_DEBUG_ENV_VAR}. Do not enable this in production environments."
-        )
-
     try:
+        # Only expose the documentation server when running this module directly.
+        # Bind explicitly to loopback so it is not accessible externally.
         with open(os.devnull, "w") as devnull:
             http_server_process = subprocess.Popen(
                 [
@@ -601,7 +624,7 @@ if __name__ == "__main__":
                     "http.server",
                     "--bind",
                     "127.0.0.1",
-                    "8000",
+                    "8000",   # docs server port
                     "--directory",
                     docs_dir,
                 ],
@@ -610,6 +633,10 @@ if __name__ == "__main__":
             )
 
         app.run_server(debug=debug_mode, host="127.0.0.1", port=8080)
+    except Exception:
+        if http_server_process:
+            http_server_process.terminate()
+        raise
     finally:
         if http_server_process:
             http_server_process.terminate()
