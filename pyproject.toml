@@ -11,7 +11,7 @@ extend-exclude = [
     "main.py",
     "output",
     "policy",
-    "run_dash_app.bat",
+    "run_streamlit_app.bat",
     "sample",
     "src",
     "tests/fixtures",

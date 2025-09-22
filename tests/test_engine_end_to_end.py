@@ -263,7 +263,7 @@ def test_ccr_trigger_increases_allowances():
     policy = frames.policy().to_policy()
     outputs = run_end_to_end_from_frames(
         frames,
-        years=YEEARS,
+        years=YEARS,
         price_initial=0.0,
         tol=1e-4,
         relaxation=0.8,
