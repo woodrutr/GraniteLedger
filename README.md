@@ -351,6 +351,31 @@ You're all set! The BlueSky Prototype model should now be running, and you can i
 
 To revert to the default assumptions, refresh the browser or reload the default configuration file.
 
+#### Dash GUI debug mode (development only)
+
+The Dash-based GUI defined in [`gui/dash_app.py`](gui/dash_app.py) now keeps the
+Dash server's debug functionality disabled by default to avoid exposing the
+interactive debugger in any shared or production deployment. Debug mode must
+**never** be enabled in production environments because it allows arbitrary code
+execution through the Werkzeug debugger.
+
+Developers who need the automatic reloader or live debugger locally can opt in
+by setting the `BLUESKY_DASH_DEBUG` environment variable before launching the
+app:
+
+```bash
+# Linux or macOS
+export BLUESKY_DASH_DEBUG=1
+python gui/dash_app.py
+
+# Windows (PowerShell)
+$Env:BLUESKY_DASH_DEBUG = 1
+python gui/dash_app.py
+```
+
+Unset the variable or set it to any other value when you are done debugging to
+return to the secure default behavior.
+
 ### Command Prompt Steps
 See the tab below for instructions on how to run the model using the command prompt.
 
