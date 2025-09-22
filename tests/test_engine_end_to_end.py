@@ -343,6 +343,117 @@ def test_control_period_mass_balance():
     assert total_supply == pytest.approx(total_surrendered + ending_bank + remaining)
 
 
+def test_daily_resolution_matches_annual_totals():
+    base_frames = baseline_frames(year=2025, load_mwh=1_000_000.0)
+    annual_policy = pd.DataFrame(
+        [
+            {
+                "year": 2025,
+                "cap_tons": 10_000_000.0,
+                "floor_dollars": 0.0,
+                "ccr1_trigger": 0.0,
+                "ccr1_qty": 0.0,
+                "ccr2_trigger": 0.0,
+                "ccr2_qty": 0.0,
+                "cp_id": "CP1",
+                "full_compliance": True,
+                "bank0": 0.0,
+                "annual_surrender_frac": 1.0,
+                "carry_pct": 1.0,
+                "policy_enabled": True,
+                "bank_enabled": True,
+                "resolution": "annual",
+            }
+        ]
+    )
+    frames_annual = base_frames.with_frame("policy", annual_policy)
+
+    annual_outputs = run_end_to_end_from_frames(
+        frames_annual,
+        years=[2025],
+        price_initial=0.0,
+        tol=1e-4,
+        relaxation=0.8,
+    )
+
+    demand_total = float(base_frames.demand()["demand_mwh"].iloc[0])
+    demand_period = pd.DataFrame(
+        [
+            {"year": 2025001, "region": "default", "demand_mwh": demand_total / 2.0},
+            {"year": 2025002, "region": "default", "demand_mwh": demand_total / 2.0},
+        ]
+    )
+
+    frames_daily = base_frames.with_frame("demand", demand_period)
+
+    daily_records = []
+    for period in (1, 2):
+        period_key = 2025 * 1000 + period
+        daily_records.append(
+            {
+                "year": period_key,
+                "cap_tons": 5_000_000.0,
+                "floor_dollars": 0.0,
+                "ccr1_trigger": 0.0,
+                "ccr1_qty": 0.0,
+                "ccr2_trigger": 0.0,
+                "ccr2_qty": 0.0,
+                "cp_id": "CP1",
+                "full_compliance": period == 2,
+                "bank0": 0.0,
+                "annual_surrender_frac": 1.0,
+                "carry_pct": 1.0,
+                "policy_enabled": True,
+                "bank_enabled": True,
+                "resolution": "daily",
+            }
+        )
+
+    daily_policy = pd.DataFrame(daily_records)
+    frames_daily = frames_daily.with_frame("policy", daily_policy)
+
+    daily_outputs = run_end_to_end_from_frames(
+        frames_daily,
+        years=[2025001, 2025002],
+        price_initial=0.0,
+        tol=1e-4,
+        relaxation=0.8,
+    )
+
+    annual_df = annual_outputs.annual.set_index("year").sort_index()
+    daily_df = daily_outputs.annual.set_index("year").sort_index()
+
+    pd.testing.assert_index_equal(daily_df.index, annual_df.index)
+    pd.testing.assert_frame_equal(daily_df, annual_df, check_exact=False, atol=1e-6, rtol=1e-9)
+
+    def _sorted(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+        if df.empty:
+            return df
+        return df.sort_values(columns).reset_index(drop=True)
+
+    pd.testing.assert_frame_equal(
+        _sorted(daily_outputs.emissions_by_region, ["year", "region"]),
+        _sorted(annual_outputs.emissions_by_region, ["year", "region"]),
+        check_exact=False,
+        atol=1e-6,
+        rtol=1e-9,
+    )
+    pd.testing.assert_frame_equal(
+        _sorted(daily_outputs.price_by_region, ["year", "region"]),
+        _sorted(annual_outputs.price_by_region, ["year", "region"]),
+        check_exact=False,
+        atol=1e-6,
+        rtol=1e-9,
+    )
+    pd.testing.assert_frame_equal(
+        _sorted(daily_outputs.flows, ["year", "from_region", "to_region"]),
+        _sorted(annual_outputs.flows, ["year", "from_region", "to_region"]),
+        check_exact=False,
+        atol=1e-6,
+        rtol=1e-9,
+    )
+
+
 def test_zero_cap_policy_still_enforced():
     frames = _three_year_frames()
 
