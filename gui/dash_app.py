@@ -47,13 +47,29 @@ app.title = 'BlueSky Model Runner'
 
 docs_dir = os.path.abspath('docs/build/html')
 
-# use the current python interpreter to run the html docs in the background
-with open(os.devnull, 'w') as devnull:
-    http_server_process = subprocess.Popen(
-        [sys.executable, '-m', 'http.server', '8000', '--directory', docs_dir],
-        stdout=devnull,
-        stderr=devnull,
-    )
+
+def _launch_docs_server():
+    """Start the HTML documentation server bound to localhost."""
+
+    # Use the current Python interpreter to serve the built docs in the
+    # background. Binding to 127.0.0.1 limits exposure to the local machine.
+    with open(os.devnull, 'w') as devnull:
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                '-m',
+                'http.server',
+                '8000',
+                '--bind',
+                '127.0.0.1',
+                '--directory',
+                docs_dir,
+            ],
+            stdout=devnull,
+            stderr=devnull,
+        )
+
+    return process
 
 # blusesky image in assets folder
 image_src = app.get_asset_url('ProjectBlueSkywebheaderimageblack.jpg')
@@ -65,7 +81,7 @@ app.layout = dbc.Container(
             dbc.Col(
                 dbc.Button(
                     'Code Documentation',
-                    href='http://localhost:8000/index.html',
+                    href='http://127.0.0.1:8000/index.html',
                     color='info',
                     className='mt-3',
                     target='_blank',
@@ -562,7 +578,12 @@ def run_mode(n_clicks, selected_mode):
 
 
 if __name__ == '__main__':
+    # Only expose the documentation server when running this module directly.
+    http_server_process = None
+
     try:
+        http_server_process = _launch_docs_server()
         app.run_server(debug=True, host='localhost', port=8080)
     finally:
-        http_server_process.terminate()
+        if http_server_process is not None:
+            http_server_process.terminate()
