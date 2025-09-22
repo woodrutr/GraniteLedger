@@ -90,10 +90,12 @@ class Config_settings:
             if not hasattr(self.args, 'capacity_build_limits'):
                 self.args.capacity_build_limits = None
         self.PROJECT_ROOT = PROJECT_ROOT
+        self.config_path = Path(config_path)
 
         # __INIT__: Dump toml, sse args to set mode
         with open(config_path, 'rb') as src:
             config = tomllib.load(src)
+        self._raw_config = copy.deepcopy(config)
 
         ############################################################################################
         # Universal Configs
@@ -140,6 +142,8 @@ class Config_settings:
             self.run_method = 'run_standalone'
 
         # __INIT__: Combinations of Modules and Mode --> run guidance
+        self.method_options = {}
+
         match self.selected_mode:
             case 'unified-combo':
                 # No elec case
@@ -228,13 +232,19 @@ class Config_settings:
         )
 
         raw_capacity_limits = capacity_build_limits
+        capacity_limits_source = 'runtime_argument'
         if raw_capacity_limits is None:
             raw_capacity_limits = getattr(self.args, 'capacity_build_limits', None)
+            capacity_limits_source = 'runtime_argument'
         if raw_capacity_limits is None:
             raw_capacity_limits = config.get('capacity_build_limits')
+            capacity_limits_source = 'config_file'
+        if raw_capacity_limits is None:
+            capacity_limits_source = 'none'
         self.capacity_build_limits = self._normalize_capacity_build_limits(
             raw_capacity_limits
         )
+        self.capacity_build_limits_source = capacity_limits_source
 
         ############################################################################################
         # __INIT__: Residential Configs
@@ -255,6 +265,151 @@ class Config_settings:
         self.h2_data_folder = self.PROJECT_ROOT / config.get(
             'h2_data_folder', 'input/hydrogen/all_regions'
         )
+
+    def build_user_inputs_snapshot(self) -> dict:
+        """Return a structured mapping of user-selected configuration inputs."""
+
+        def _copy_mapping(data):
+            if isinstance(data, Mapping):
+                return {key: _copy_mapping(value) for key, value in data.items()}
+            if isinstance(data, list):
+                return [_copy_mapping(item) for item in data]
+            if isinstance(data, tuple):
+                return [_copy_mapping(item) for item in data]
+            if isinstance(data, set):
+                return sorted(_copy_mapping(item) for item in data)
+            return data
+
+        mode_source = 'config_file'
+        if getattr(self.args, 'op_mode', None):
+            mode_source = 'runtime_argument'
+
+        run_metadata = OrderedDict(
+            selected_mode=self.selected_mode,
+            default_mode=self.default_mode,
+            mode_source=mode_source,
+            run_method=self.run_method,
+            method_options=_copy_mapping(getattr(self, 'method_options', {})),
+            output_directory=str(self.OUTPUT_ROOT),
+            output_folder_name=self.output_folder_name,
+            config_path=str(self.config_path),
+            config_hash=self._config_hash(self._raw_config),
+            output_name_from_args=getattr(self.args, 'output_name', None),
+            output_name_from_config=self._raw_config.get(self._OUTPUT_OVERRIDE_KEY),
+        )
+
+        cli_arguments = OrderedDict(
+            op_mode=getattr(self.args, 'op_mode', None),
+            debug=bool(getattr(self.args, 'debug', False)),
+            output_name=getattr(self.args, 'output_name', None),
+            capacity_build_limits_provided=(
+                getattr(self.args, 'capacity_build_limits', None) is not None
+            ),
+        )
+
+        modules = OrderedDict(
+            electricity=bool(self.electricity),
+            hydrogen=bool(self.hydrogen),
+            residential=bool(self.residential),
+        )
+
+        iterative_settings = OrderedDict(
+            tol=self.tol,
+            force_10=bool(self.force_10),
+            max_iter=self.max_iter,
+        )
+
+        temporal_settings = OrderedDict(
+            sw_temporal=self.sw_temporal,
+            sw_agg_years=self.sw_agg_years,
+            start_year=self.start_year,
+            years=list(self.years),
+        )
+
+        spatial_settings = OrderedDict(regions=list(self.regions))
+
+        electricity_settings = OrderedDict(
+            switches=OrderedDict(
+                sw_trade=self.sw_trade,
+                sw_expansion=self.sw_expansion,
+                sw_rm=self.sw_rm,
+                sw_ramp=self.sw_ramp,
+                sw_reserves=self.sw_reserves,
+                sw_learning=self.sw_learning,
+            ),
+            expansion_overrides=_copy_mapping(
+                self._raw_config.get('electricity_expansion_overrides', {})
+            ),
+            disabled_expansion_techs=sorted(self.disabled_expansion_techs),
+        )
+
+        residential_settings = OrderedDict()
+        for key in (
+            'scale_load',
+            'view_regions',
+            'view_years',
+            'sensitivity',
+            'change_var',
+            'percent_change',
+            'complex',
+        ):
+            if hasattr(self, key):
+                value = getattr(self, key)
+                if isinstance(value, (list, tuple, set)):
+                    residential_settings[key] = list(value)
+                else:
+                    residential_settings[key] = value
+
+        hydrogen_settings = OrderedDict(h2_data_folder=str(self.h2_data_folder))
+
+        carbon_policy = OrderedDict(
+            enabled=bool(self.carbon_policy_enabled),
+            ccr1_enabled=bool(self.carbon_ccr1_enabled),
+            ccr2_enabled=bool(self.carbon_ccr2_enabled),
+            control_period_years=self.carbon_control_period_years,
+            carbon_cap=self.carbon_cap,
+            allowance_procurement=_copy_mapping(self.carbon_allowance_procurement),
+            allowance_procurement_overrides=_copy_mapping(
+                self.carbon_allowance_procurement_overrides
+            ),
+            allowance_start_bank=self.carbon_allowance_start_bank,
+            allowance_bank_enabled=bool(self.carbon_allowance_bank_enabled),
+            allowance_allow_borrowing=bool(self.carbon_allowance_allow_borrowing),
+            allowance_market=_copy_mapping(self._raw_config.get('allowance_market', {})),
+            default_cap_group=(
+                _copy_mapping(vars(self.default_cap_group)) if self.default_cap_group else None
+            ),
+            cap_groups=[
+                OrderedDict(
+                    name=name,
+                    config=_copy_mapping(group_config),
+                )
+                for name, group_config in self.carbon_cap_groups.items()
+            ],
+        )
+
+        capacity_limits = OrderedDict(
+            source=self.capacity_build_limits_source,
+            values=_copy_mapping(self.get_capacity_build_limits()),
+        )
+
+        snapshot = OrderedDict(
+            run_metadata=run_metadata,
+            cli_arguments=cli_arguments,
+            modules=modules,
+            iterative_settings=iterative_settings,
+            temporal_settings=temporal_settings,
+            spatial_settings=spatial_settings,
+            electricity_settings=electricity_settings,
+            residential_settings=residential_settings,
+            hydrogen_settings=hydrogen_settings,
+            carbon_policy=carbon_policy,
+            capacity_build_limits=capacity_limits,
+            missing_validations=sorted(self.missing_checks),
+            raw_configuration=_copy_mapping(self._raw_config),
+        )
+
+        return snapshot
 
     def _determine_output_folder(self, config: dict) -> str:
         override = self._resolve_output_override(config)
