@@ -334,6 +334,14 @@ def _build_policy_frame(
 
     bank_flag = bool(carbon_policy_enabled and banking_enabled)
 
+    resolution_raw = market_cfg.get('resolution', 'annual')
+    if isinstance(resolution_raw, str):
+        resolution = resolution_raw.strip().lower() or 'annual'
+    else:
+        resolution = str(resolution_raw).strip().lower() or 'annual'
+    if resolution not in {'annual', 'daily'}:
+        resolution = 'annual'
+
     if carbon_policy_enabled:
         ccr1_flag = _coerce_bool_flag(market_cfg.get('ccr1_enabled'), default=True)
         ccr2_flag = _coerce_bool_flag(market_cfg.get('ccr2_enabled'), default=True)
@@ -426,6 +434,7 @@ def _build_policy_frame(
                 'ccr2_enabled': bool(ccr2_flag),
                 'control_period_years': control_period,
                 'bank_enabled': bool(bank_flag),
+                'resolution': resolution,
             }
         )
 
@@ -1172,6 +1181,65 @@ def _cleanup_session_temp_dirs() -> None:
     st.session_state['temp_dirs'] = []
 
 
+def _build_run_summary(settings: Mapping[str, Any], *, config_label: str) -> list[tuple[str, str]]:
+    """Return human-readable configuration details for confirmation dialogs."""
+
+    def _as_int(value: Any) -> int | None:
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _bool_label(value: bool) -> str:
+        return 'Yes' if value else 'No'
+
+    start_year = _as_int(settings.get('start_year'))
+    end_year = _as_int(settings.get('end_year'))
+
+    if start_year is None and end_year is None:
+        year_display = 'Not specified'
+    else:
+        if start_year is None:
+            start_year = end_year
+        if end_year is None:
+            end_year = start_year
+        if start_year == end_year:
+            year_display = f'{start_year}'
+        else:
+            year_display = f'{start_year} – {end_year}'
+
+    carbon_enabled = bool(settings.get('carbon_policy_enabled', True))
+    enable_floor = bool(settings.get('enable_floor', False)) if carbon_enabled else False
+    enable_ccr = bool(settings.get('enable_ccr', False)) if carbon_enabled else False
+    ccr1_enabled = bool(settings.get('ccr1_enabled', False)) if enable_ccr else False
+    ccr2_enabled = bool(settings.get('ccr2_enabled', False)) if enable_ccr else False
+    banking_enabled = (
+        bool(settings.get('allowance_banking_enabled', False)) if carbon_enabled else False
+    )
+
+    control_period = settings.get('control_period_years') if carbon_enabled else None
+    if not carbon_enabled:
+        control_display = 'Not applicable'
+    elif control_period is None:
+        control_display = 'Automatic'
+    else:
+        control_display = str(control_period)
+
+    return [
+        ('Configuration', config_label),
+        ('Simulation years', year_display),
+        ('Carbon cap enabled', _bool_label(carbon_enabled)),
+        ('Minimum reserve price', _bool_label(enable_floor)),
+        ('CCR enabled', _bool_label(enable_ccr)),
+        ('CCR tranche 1', _bool_label(ccr1_enabled)),
+        ('CCR tranche 2', _bool_label(ccr2_enabled)),
+        ('Allowance banking enabled', _bool_label(banking_enabled)),
+        ('Control period length', control_display),
+    ]
+
+
 def _render_results(result: dict[str, Any]) -> None:  # pragma: no cover - UI rendering
     _ensure_streamlit()
     if 'error' in result:
@@ -1309,7 +1377,30 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
                     )
             else:
                 carbon_policy_enabled = False
-        run_clicked = st.button('Run', type='primary')
+        if not carbon_policy_enabled:
+            enable_floor = False
+            enable_ccr = False
+            ccr1_enabled = False
+            ccr2_enabled = False
+            allowance_banking_enabled = False
+            control_period_years = None
+        elif not enable_ccr:
+            ccr1_enabled = False
+            ccr2_enabled = False
+
+        run_params: dict[str, Any] = {
+            'config_source': config_source,
+            'start_year': int(start_year),
+            'end_year': int(end_year),
+            'carbon_policy_enabled': bool(carbon_policy_enabled),
+            'enable_floor': bool(enable_floor),
+            'enable_ccr': bool(enable_ccr),
+            'ccr1_enabled': bool(ccr1_enabled),
+            'ccr2_enabled': bool(ccr2_enabled),
+            'allowance_banking_enabled': bool(allowance_banking_enabled),
+            'control_period_years': control_period_years,
+        }
+        run_clicked = st.button('Run Model', type='primary')
 
     assumption_notes: list[str] = []
     assumption_errors: list[str] = []
@@ -1361,20 +1452,80 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
     else:
         st.info('Default assumption tables are unavailable. Install pandas to edit inputs through the GUI.')
 
-    result = st.session_state.get('last_result')
+    execute_run = False
+    run_inputs: dict[str, Any] | None = None
+    pending_run = st.session_state.get('pending_run')
 
     if run_clicked:
         if assumption_errors:
             st.error('Resolve the assumption data issues above before running the simulation.')
         else:
-            _cleanup_session_temp_dirs()
-            progress_text = st.empty()
-            progress_bar = st.progress(0)
-            progress_state: dict[str, Any] = {
-                'total_years': 1,
-                'current_index': -1,
-                'current_year': None,
+            st.session_state['pending_run'] = {
+                'params': run_params,
+                'summary': _build_run_summary(run_params, config_label=config_label),
             }
+            pending_run = st.session_state['pending_run']
+
+    if isinstance(pending_run, Mapping):
+        confirmation_box = st.warning(
+            'You are about to run the model with the following configuration:'
+        )
+        summary_details = pending_run.get('summary', [])
+        if isinstance(summary_details, list) and summary_details:
+            summary_lines = '\n'.join(
+                f'- **{label}:** {value}' for label, value in summary_details
+            )
+            confirmation_box.markdown(summary_lines)
+        else:
+            confirmation_box.markdown('*No configuration details available.*')
+        confirmation_box.markdown('**Do you want to continue and run the model?**')
+        confirm_col, cancel_col = confirmation_box.columns(2)
+        confirm_clicked = confirm_col.button('Confirm Run', type='primary', key='confirm_run')
+        cancel_clicked = cancel_col.button('Cancel', key='cancel_run')
+
+        if cancel_clicked:
+            st.session_state.pop('pending_run', None)
+            pending_run = None
+        elif confirm_clicked:
+            pending_params = pending_run.get('params')
+            if isinstance(pending_params, Mapping):
+                run_inputs = dict(pending_params)
+                execute_run = True
+            st.session_state.pop('pending_run', None)
+            pending_run = None
+
+    if run_inputs is not None:
+        config_source = run_inputs.get('config_source', config_source)
+        start_year = run_inputs.get('start_year', start_year)
+        end_year = run_inputs.get('end_year', end_year)
+        carbon_policy_enabled = run_inputs.get('carbon_policy_enabled', carbon_policy_enabled)
+        enable_floor = run_inputs.get('enable_floor', enable_floor)
+        enable_ccr = run_inputs.get('enable_ccr', enable_ccr)
+        ccr1_enabled = run_inputs.get('ccr1_enabled', ccr1_enabled)
+        ccr2_enabled = run_inputs.get('ccr2_enabled', ccr2_enabled)
+        allowance_banking_enabled = run_inputs.get(
+            'allowance_banking_enabled', allowance_banking_enabled
+        )
+        control_period_years = run_inputs.get('control_period_years', control_period_years)
+
+    result = st.session_state.get('last_result')
+
+    if execute_run:
+        _cleanup_session_temp_dirs()
+        progress_text = st.empty()
+        progress_bar = st.progress(0)
+        progress_state: dict[str, Any] = {
+            'total_years': 1,
+            'current_index': -1,
+            'current_year': None,
+        }
+
+        def _update_progress(stage: str, payload: Mapping[str, object]) -> None:
+            def _as_int(value: object, default: int = 0) -> int:
+                try:
+                    return int(value)  # type: ignore[arg-type]
+                except (TypeError, ValueError):
+                    return default
 
             def _update_progress(stage: str, payload: Mapping[str, object]) -> None:
                 def _as_int(value: object, default: int = 0) -> int:

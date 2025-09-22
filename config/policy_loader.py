@@ -252,6 +252,18 @@ def load_annual_policy(cfg: Mapping[str, Any]) -> RGGIPolicyAnnual:
         if control_period_years <= 0:
             raise ValueError("control_period_years must be a positive integer")
 
+    resolution_raw = cfg_dict.get("resolution") or cfg_dict.get("type")
+    resolution = "annual"
+    if resolution_raw not in (None, ""):
+        if isinstance(resolution_raw, str):
+            resolution_candidate = resolution_raw.strip().lower()
+        else:
+            resolution_candidate = str(resolution_raw).strip().lower()
+        if resolution_candidate in {"annual", "daily"}:
+            resolution = resolution_candidate
+        else:
+            raise ValueError("resolution must be either 'annual' or 'daily'")
+
     if enabled:
         try:
             cap_series = _coerce_numeric_series(series_from_year_map(cfg_dict, "cap"), "cap")
@@ -347,6 +359,7 @@ def load_annual_policy(cfg: Mapping[str, Any]) -> RGGIPolicyAnnual:
         ccr1_enabled=ccr1_enabled,
         ccr2_enabled=ccr2_enabled,
         control_period_length=control_period_years,
+        resolution=resolution,
     )
 
 

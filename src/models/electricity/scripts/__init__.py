@@ -1,5 +1,9 @@
 """Electricity script package exports."""
 
-from .incentives import IncentiveRecord, TechnologyIncentives
+from .incentives import (
+    IncentiveRecord,
+    TechnologyIncentiveModule,
+    TechnologyIncentives,
+)
 
-__all__ = ['IncentiveRecord', 'TechnologyIncentives']
+__all__ = ['IncentiveRecord', 'TechnologyIncentiveModule', 'TechnologyIncentives']

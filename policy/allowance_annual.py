@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Set, TYPE_CHECKING, cast
+from numbers import Integral, Real
+from typing import Any, Set, TYPE_CHECKING, cast
 
 try:  # pragma: no cover - exercised via ImportError handling
     import pandas as pd
@@ -26,6 +27,48 @@ class ConfigError(ValueError):
     """Configuration error raised when allowance policy inputs are invalid."""
 
 
+def _leading_year_from_digits(value: Any) -> int | None:
+    """Return the leading four-digit year found in ``value`` if present."""
+
+    digits = "".join(ch for ch in str(value) if ch.isdigit())
+    if len(digits) >= 4:
+        return int(digits[:4])
+    return None
+
+
+def _infer_compliance_year(label: Any, resolution: str) -> int:
+    """Return the calendar year associated with ``label`` for ``resolution``."""
+
+    if isinstance(label, Integral):
+        value = int(label)
+        if resolution != "annual":
+            leading = _leading_year_from_digits(value)
+            if leading is not None:
+                return leading
+        return value
+    if isinstance(label, Real) and not isinstance(label, bool):
+        value = int(label)
+        if resolution != "annual":
+            leading = _leading_year_from_digits(label)
+            if leading is not None:
+                return leading
+        return value
+    if isinstance(label, str):
+        stripped = label.strip()
+        if stripped:
+            leading = _leading_year_from_digits(stripped)
+            if leading is not None:
+                return leading
+    if pd is not None:
+        try:
+            timestamp = pd.to_datetime(label, errors="coerce")
+        except Exception:  # pragma: no cover - defensive
+            timestamp = None
+        if timestamp is not None and not pd.isna(timestamp):
+            return int(timestamp.year)
+    raise ValueError(f"Unable to infer compliance year for period label {label!r}")
+
+
 @dataclass
 class RGGIPolicyAnnual:
     """Inputs describing an annual-resolution allowance market."""
@@ -46,6 +89,8 @@ class RGGIPolicyAnnual:
     ccr1_enabled: bool = True
     ccr2_enabled: bool = True
     control_period_length: int | None = None
+    resolution: str = "annual"
+    _period_to_year_map: dict[Any, int] = field(init=False, repr=False, default_factory=dict)
 
     def __post_init__(self) -> None:
         _ensure_pandas()
@@ -55,6 +100,42 @@ class RGGIPolicyAnnual:
             full_compliance = set()
         else:
             full_compliance = {int(year) for year in self.full_compliance_years}
+        self.resolution = str(self.resolution or "annual").strip().lower()
+
+        index_obj = getattr(self.cap, "index", None)
+        index_values = list(index_obj) if index_obj is not None else []
+        period_to_year: dict[Any, int] = {}
+        for label in index_values:
+            try:
+                period_to_year[label] = _infer_compliance_year(label, self.resolution)
+            except ValueError:  # pragma: no cover - defensive guard
+                try:
+                    period_to_year[label] = int(label)
+                except (TypeError, ValueError):
+                    period_to_year[label] = label  # type: ignore[assignment]
+        self._period_to_year_map = period_to_year
+
+        if self.full_compliance_years is None:
+            full_compliance = set()
+        else:
+            full_compliance = set()
+            for entry in self.full_compliance_years:
+                if entry in period_to_year:
+                    full_compliance.add(int(entry))  # maintain backward compatibility
+                else:
+                    try:
+                        target_year = _infer_compliance_year(entry, self.resolution)
+                    except ValueError:
+                        continue
+                    for label, calendar_year in period_to_year.items():
+                        if calendar_year == target_year:
+                            full_compliance.add(int(label))
+            if not full_compliance and self.full_compliance_years:
+                for entry in self.full_compliance_years:
+                    try:
+                        full_compliance.add(int(entry))
+                    except (TypeError, ValueError):
+                        continue
         self.full_compliance_years = full_compliance
 
         self.enabled = bool(self.enabled)
@@ -83,13 +164,12 @@ class RGGIPolicyAnnual:
         if not self.full_compliance_years and control_length:
             series_index = getattr(self.cap, 'index', None)
             if series_index is not None:
-                ordered_years = [int(year) for year in series_index]
-                compliance_years = {
-                    year
-                    for idx, year in enumerate(ordered_years, start=1)
-                    if idx % control_length == 0
+                ordered_labels = list(series_index)
+                compliance_periods = {
+                    int(ordered_labels[idx - 1])
+                    for idx in range(control_length, len(ordered_labels) + 1, control_length)
                 }
-                self.full_compliance_years = compliance_years
+                self.full_compliance_years = compliance_periods
 
         if self.enabled:
             missing: list[str] = []
@@ -118,6 +198,30 @@ class RGGIPolicyAnnual:
                 raise ConfigError(
                     f'enabled carbon policy requires data for: {missing_list}'
                 )
+
+    def compliance_year_for(self, period: Any) -> int:
+        """Return the calendar year associated with ``period``."""
+
+        if period in self._period_to_year_map:
+            year_value = self._period_to_year_map[period]
+            if isinstance(year_value, Integral):
+                return int(year_value)
+            try:
+                return int(year_value)
+            except (TypeError, ValueError):
+                raise ValueError(f"Unable to convert stored compliance year {year_value!r}")
+        try:
+            return _infer_compliance_year(period, self.resolution)
+        except ValueError:
+            pass
+        if pd is not None:
+            try:
+                timestamp = pd.to_datetime(period, errors="coerce")
+            except Exception:  # pragma: no cover - defensive guard
+                timestamp = None
+            if timestamp is not None and not pd.isna(timestamp):
+                return int(timestamp.year)
+        raise ValueError(f"Unable to determine compliance year for period {period!r}")
 
 
 @dataclass(frozen=True)

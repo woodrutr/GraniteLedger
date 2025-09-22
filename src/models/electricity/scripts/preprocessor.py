@@ -214,6 +214,15 @@ def _default_coverage_frame(setin) -> pd.DataFrame:
     )
 
 
+def _is_carbon_policy_enabled(setin) -> bool:
+    """Return ``True`` when the carbon policy should be treated as enabled."""
+
+    explicit_flag = getattr(setin, 'carbon_policy_enabled', None)
+    if explicit_flag is not None:
+        return bool(explicit_flag)
+    return getattr(setin, 'carbon_cap', None) is not None
+
+
 def _default_policy_frame(setin) -> pd.DataFrame:
     """Construct a default allowance policy table that disables the policy."""
 
@@ -243,7 +252,7 @@ def _default_policy_frame(setin) -> pd.DataFrame:
     if not years:
         return pd.DataFrame(columns=columns)
 
-    enabled = bool(getattr(setin, 'carbon_cap', False))
+    enabled = _is_carbon_policy_enabled(setin)
     bank0 = float(getattr(setin, 'carbon_allowance_start_bank', 0.0))
 
     data = {
@@ -524,6 +533,10 @@ class Sets:
         self.sw_ramp = settings.sw_ramp
         self.sw_learning = settings.sw_learning
         self.sw_reserves = settings.sw_reserves
+        explicit_policy_flag = getattr(settings, 'carbon_policy_enabled', None)
+        self.carbon_policy_enabled = (
+            None if explicit_policy_flag is None else bool(explicit_policy_flag)
+        )
         self.carbon_cap = settings.carbon_cap
         self.carbon_allowance_procurement_overrides = (
             getattr(settings, 'carbon_allowance_procurement', {})
@@ -1909,7 +1922,7 @@ def preprocessor(setin):
     else:
         frames_container = Frames()
 
-    carbon_policy_enabled = bool(getattr(setin, 'carbon_cap', False))
+    carbon_policy_enabled = _is_carbon_policy_enabled(setin)
     all_frames = FrameStore(
         frames_container, carbon_policy_enabled=carbon_policy_enabled
     )
@@ -1917,8 +1930,8 @@ def preprocessor(setin):
     incentives = getattr(setin, 'technology_incentives', TechnologyIncentives())
     if not isinstance(incentives, TechnologyIncentives):
         incentives = TechnologyIncentives()
-    for frame_name, frame_df in incentives.to_frames().items():
-        all_frames[frame_name] = frame_df
+    for module in incentives.modules():
+        all_frames = module.apply(all_frames)
 
     # Ensure emissions data are available for all generation technologies
     emissions_df = all_frames.get('EmissionsRate')

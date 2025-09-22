@@ -43,7 +43,12 @@ def _run_supply_simulation(
     frames = Frames({"policy": pd.DataFrame(policy_rows)})
     dispatch = _linear_dispatch(emission_params)
 
-    def fake_dispatch_from_frames(frames_obj, *, use_network=False):  # pragma: no cover - simple shim
+    def fake_dispatch_from_frames(  # pragma: no cover - simple shim
+        frames_obj,
+        *,
+        use_network=False,
+        period_weights=None,
+    ):
         return dispatch
 
     monkeypatch.setattr(run_loop, "_dispatch_from_frames", fake_dispatch_from_frames)

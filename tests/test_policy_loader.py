@@ -105,6 +105,7 @@ def test_load_annual_policy_builds_series_and_validates_alignment():
     assert policy.ccr1_enabled is True
     assert policy.ccr2_enabled is True
     assert policy.control_period_length is None
+    assert policy.resolution == "annual"
 
 
 def test_load_annual_policy_flags_missing_series_years():
@@ -171,3 +172,49 @@ def test_disabled_policy_allows_missing_inputs():
     assert len(policy.cap) == 0
     assert policy.ccr1_enabled is True
     assert policy.ccr2_enabled is True
+    assert policy.resolution == "annual"
+
+
+def test_load_annual_policy_supports_daily_resolution():
+    cfg = {
+        "years": [2025],
+        "cap": {2025: 50.0},
+        "floor": {2025: 2.0},
+        "ccr1_trigger": {2025: 5.0},
+        "ccr1_qty": {2025: 10.0},
+        "ccr2_trigger": {2025: 9.0},
+        "ccr2_qty": {2025: 20.0},
+        "cp_id": {2025: "CP"},
+        "bank0": 5.0,
+        "annual_surrender_frac": 0.5,
+        "carry_pct": 1.0,
+        "resolution": "daily",
+    }
+
+    policy = load_annual_policy(cfg)
+
+    assert policy.resolution == "daily"
+
+
+def test_daily_policy_compliance_year_mapping():
+    cfg = {
+        "years": [2025001, 2025002],
+        "cap": {2025001: 80.0, 2025002: 75.0},
+        "floor": {2025001: 2.0, 2025002: 2.5},
+        "ccr1_trigger": {2025001: 5.0, 2025002: 5.0},
+        "ccr1_qty": {2025001: 10.0, 2025002: 10.0},
+        "ccr2_trigger": {2025001: 9.0, 2025002: 9.0},
+        "ccr2_qty": {2025001: 15.0, 2025002: 15.0},
+        "cp_id": {2025001: "CP", 2025002: "CP"},
+        "bank0": 0.0,
+        "annual_surrender_frac": 1.0,
+        "carry_pct": 1.0,
+        "resolution": "daily",
+    }
+
+    policy = load_annual_policy(cfg)
+
+    assert policy.compliance_year_for(2025001) == 2025
+    assert policy.compliance_year_for("2025002") == 2025
+    assert policy.compliance_year_for(2025) == 2025
+    assert policy.compliance_year_for("2025") == 2025

@@ -9,7 +9,7 @@ from typing import Dict, Iterable, Tuple
 
 import pandas as pd
 
-from policy.allowance_annual import RGGIPolicyAnnual
+from policy.allowance_annual import ConfigError, RGGIPolicyAnnual
 
 _DEMAND_KEY = "demand"
 _UNITS_KEY = "units"
@@ -111,6 +111,7 @@ class PolicySpec:
     ccr1_enabled: bool = True
     ccr2_enabled: bool = True
     control_period_years: int | None = None
+    resolution: str = "annual"
 
     def to_policy(self) -> RGGIPolicyAnnual:
         """Instantiate :class:`RGGIPolicyAnnual` from the stored specification."""
@@ -132,6 +133,7 @@ class PolicySpec:
             ccr1_enabled=self.ccr1_enabled,
             ccr2_enabled=self.ccr2_enabled,
             control_period_length=self.control_period_years,
+            resolution=self.resolution,
         )
 
 
@@ -463,7 +465,12 @@ class Frames(Mapping[str, pd.DataFrame]):
     def policy(self) -> PolicySpec:
         """Return the allowance policy specification."""
 
-        df = self[_POLICY_KEY].copy(deep=True)
+        try:
+            df = self[_POLICY_KEY].copy(deep=True)
+        except KeyError as exc:
+            if self._carbon_policy_enabled:
+                raise ConfigError("enabled carbon policy requires a 'policy' frame") from exc
+            raise
         required = [
             'year',
             'cap_tons',
@@ -497,7 +504,9 @@ class Frames(Mapping[str, pd.DataFrame]):
 
         if policy_enabled and missing_columns:
             missing_list = ', '.join(sorted(missing_columns))
-            raise ValueError(f'policy frame is missing required columns: {missing_list}')
+            raise ConfigError(
+                f'enabled carbon policy requires columns: {missing_list}'
+            )
 
         if missing_columns:
             for column in missing_columns:
@@ -515,6 +524,22 @@ class Frames(Mapping[str, pd.DataFrame]):
                     df[column] = 0.0
 
         df = _validate_columns('policy', df, required)
+
+        resolution = 'annual'
+        if 'resolution' in df.columns:
+            resolution_series = df['resolution'].dropna()
+            unique_res = {
+                str(value).strip().lower()
+                for value in resolution_series.unique()
+                if str(value).strip()
+            }
+            if len(unique_res) > 1:
+                raise ValueError(
+                    'policy frame must provide a single resolution value shared across years'
+                )
+            if unique_res:
+                resolution = unique_res.pop()
+            df = df.drop(columns=['resolution'])
 
         df['year'] = _require_numeric('policy', 'year', df['year']).astype(int)
         if df['year'].duplicated().any():
@@ -646,6 +671,7 @@ class Frames(Mapping[str, pd.DataFrame]):
             ccr1_enabled=ccr1_enabled,
             ccr2_enabled=ccr2_enabled,
             control_period_years=control_period_years,
+            resolution=resolution,
         )
 
 
