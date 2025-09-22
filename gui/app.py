@@ -7,6 +7,7 @@ and report clear error messages.
 
 from __future__ import annotations
 
+import io
 import importlib.util
 import logging
 import shutil
@@ -560,6 +561,516 @@ def _write_outputs_to_temp(outputs) -> tuple[Path, dict[str, bytes]]:
     return temp_dir, csv_files
 
 
+def _read_uploaded_dataframe(uploaded_file: Any | None) -> pd.DataFrame | None:
+    """Return a DataFrame parsed from ``uploaded_file`` or ``None`` on failure."""
+
+    if uploaded_file is None:
+        return None
+
+    pd = _ensure_pandas()
+    try:
+        if hasattr(uploaded_file, 'getvalue'):
+            raw = uploaded_file.getvalue()
+        elif hasattr(uploaded_file, 'read'):
+            raw = uploaded_file.read()
+        else:
+            raw = uploaded_file
+
+        buffer: io.BytesIO | io.StringIO
+        if isinstance(raw, bytes):
+            buffer = io.BytesIO(raw)
+        else:
+            buffer = io.StringIO(str(raw))
+
+        df = pd.read_csv(buffer)
+    except Exception as exc:
+        _ensure_streamlit()
+        st.error(f'Unable to read CSV: {exc}')
+        return None
+
+    if df.empty:
+        _ensure_streamlit()
+        st.warning('Uploaded CSV is empty.')
+
+    return df
+
+
+def _validate_frame_override(
+    frames_obj: FramesType,
+    frame_name: str,
+    df: pd.DataFrame,
+) -> tuple[FramesType | None, str | None]:
+    """Return a new ``Frames`` object with ``frame_name`` replaced by ``df``."""
+
+    validator_name = frame_name.lower()
+    try:
+        candidate = frames_obj.with_frame(frame_name, df)
+        validator = getattr(candidate, validator_name, None)
+        if callable(validator):
+            validator()
+        else:
+            candidate.frame(frame_name)
+        return candidate, None
+    except Exception as exc:  # pragma: no cover - defensive guard
+        return None, str(exc)
+
+
+def _render_demand_controls(
+    frames_obj: FramesType,
+    years: Iterable[int],
+) -> tuple[FramesType, list[str], list[str]]:  # pragma: no cover - UI helper
+    _ensure_streamlit()
+    pd = _ensure_pandas()
+
+    notes: list[str] = []
+    errors: list[str] = []
+    frames_out = frames_obj
+
+    demand_default = frames_obj.demand()
+    if not demand_default.empty:
+        st.caption('Current demand assumptions')
+        st.dataframe(demand_default, use_container_width=True)
+    else:
+        st.info('No default demand data found. Provide values via the controls or upload a CSV.')
+
+    manual_df: pd.DataFrame | None = None
+    manual_note: str | None = None
+
+    target_years = sorted({int(year) for year in years}) if years else []
+    if not target_years and not demand_default.empty:
+        target_years = sorted({int(year) for year in demand_default['year'].unique()})
+    if not target_years:
+        target_years = [2025]
+
+    use_manual = st.checkbox('Create demand profile with controls', value=False, key='demand_manual_toggle')
+    if use_manual:
+        st.caption('Set a baseline load, per-region multipliers, and annual growth to construct demand.')
+        if not demand_default.empty:
+            first_year = target_years[0]
+            base_year_data = demand_default[demand_default['year'] == first_year]
+            default_base = float(base_year_data['demand_mwh'].mean()) if not base_year_data.empty else float(_DEFAULT_LOAD_MWH)
+        else:
+            default_base = float(_DEFAULT_LOAD_MWH)
+
+        base_value = float(
+            st.number_input(
+                'Baseline demand for the first year (MWh)',
+                min_value=0.0,
+                value=max(0.0, default_base),
+                step=10_000.0,
+                format='%0.0f',
+            )
+        )
+        growth_pct = float(
+            st.slider(
+                'Annual growth rate (%)',
+                min_value=-20.0,
+                max_value=20.0,
+                value=0.0,
+                step=0.25,
+                key='demand_growth',
+            )
+        )
+
+        if not demand_default.empty:
+            region_labels = sorted({str(region) for region in demand_default['region'].unique()})
+            region_defaults = (
+                demand_default[demand_default['year'] == target_years[0]]
+                .set_index('region')['demand_mwh']
+                .to_dict()
+            )
+        else:
+            region_labels = ['default']
+            region_defaults = {}
+
+        manual_records: list[dict[str, Any]] = []
+        for region in region_labels:
+            default_region_value = float(region_defaults.get(region, base_value or _DEFAULT_LOAD_MWH))
+            multiplier_default = 1.0
+            if base_value > 0.0:
+                multiplier_default = default_region_value / base_value
+            multiplier_default = float(max(0.1, min(3.0, multiplier_default)))
+
+            multiplier = float(
+                st.slider(
+                    f'{region} demand multiplier',
+                    min_value=0.1,
+                    max_value=3.0,
+                    value=multiplier_default,
+                    step=0.05,
+                    key=f'demand_scale_{region}',
+                )
+            )
+
+            for index, year in enumerate(target_years):
+                growth_factor = (1.0 + growth_pct / 100.0) ** index
+                demand_val = base_value * multiplier * growth_factor
+                manual_records.append(
+                    {
+                        'year': int(year),
+                        'region': region,
+                        'demand_mwh': float(demand_val),
+                    }
+                )
+
+        manual_df = pd.DataFrame(manual_records)
+        manual_note = (
+            f'Demand constructed from GUI controls with baseline {base_value:,.0f} MWh, '
+            f'growth {growth_pct:0.2f}% across {len(region_labels)} region(s) '
+            f'and {len(target_years)} year(s).'
+        )
+
+    uploaded = st.file_uploader('Upload demand CSV', type='csv', key='demand_csv')
+    if uploaded is not None:
+        upload_df = _read_uploaded_dataframe(uploaded)
+        if upload_df is not None:
+            if manual_df is not None:
+                st.info('Uploaded demand CSV overrides manual adjustments.')
+                manual_df = None
+                manual_note = None
+            candidate, error = _validate_frame_override(frames_out, 'demand', upload_df)
+            if candidate is None:
+                message = f'Demand CSV invalid: {error}'
+                st.error(message)
+                errors.append(message)
+            else:
+                frames_out = candidate
+                notes.append(
+                    f'Demand table loaded from {uploaded.name} ({len(upload_df)} row(s)).'
+                )
+
+    if manual_df is not None:
+        candidate, error = _validate_frame_override(frames_out, 'demand', manual_df)
+        if candidate is None:
+            message = f'Demand override invalid: {error}'
+            st.error(message)
+            errors.append(message)
+        else:
+            frames_out = candidate
+            if manual_note:
+                notes.append(manual_note)
+
+    return frames_out, notes, errors
+
+
+def _render_units_controls(frames_obj: FramesType) -> tuple[FramesType, list[str], list[str]]:  # pragma: no cover - UI helper
+    _ensure_streamlit()
+    pd = _ensure_pandas()
+
+    notes: list[str] = []
+    errors: list[str] = []
+    frames_out = frames_obj
+
+    units_default = frames_obj.units()
+    if not units_default.empty:
+        st.caption('Current generating units')
+        st.dataframe(units_default, use_container_width=True)
+    else:
+        st.info('No generating units are defined. Upload a CSV to provide unit characteristics.')
+
+    manual_df: pd.DataFrame | None = None
+    manual_note: str | None = None
+    edit_inline = st.checkbox('Edit units inline', value=False, key='units_manual_toggle')
+    if edit_inline and not units_default.empty:
+        st.caption('Adjust unit properties with the controls below.')
+        manual_records: list[dict[str, Any]] = []
+        for index, row in units_default.iterrows():
+            unit_label = str(row['unit_id'])
+            st.markdown(f'**{unit_label}**')
+            col_meta = st.columns(3)
+            with col_meta[0]:
+                unit_id = st.text_input(
+                    'Unit ID',
+                    value=unit_label,
+                    key=f'units_unit_id_{index}',
+                ).strip()
+                if not unit_id:
+                    unit_id = unit_label
+            with col_meta[1]:
+                region = st.text_input(
+                    'Region',
+                    value=str(row['region']),
+                    key=f'units_region_{index}',
+                ).strip()
+                if not region:
+                    region = str(row['region'])
+            with col_meta[2]:
+                fuel = st.text_input(
+                    'Fuel',
+                    value=str(row['fuel']),
+                    key=f'units_fuel_{index}',
+                ).strip()
+                if not fuel:
+                    fuel = str(row['fuel'])
+
+            col_perf = st.columns(3)
+            with col_perf[0]:
+                cap_mw = st.number_input(
+                    'Capacity (MW)',
+                    min_value=0.0,
+                    value=float(row['cap_mw']),
+                    step=1.0,
+                    key=f'units_cap_{index}',
+                )
+            with col_perf[1]:
+                availability = st.slider(
+                    'Availability',
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(row['availability']),
+                    step=0.01,
+                    key=f'units_availability_{index}',
+                )
+            with col_perf[2]:
+                heat_rate = st.number_input(
+                    'Heat rate (MMBtu/MWh)',
+                    min_value=0.0,
+                    value=float(row['hr_mmbtu_per_mwh']),
+                    step=0.1,
+                    key=f'units_heat_rate_{index}',
+                )
+
+            col_cost = st.columns(3)
+            with col_cost[0]:
+                vom = st.number_input(
+                    'VOM ($/MWh)',
+                    min_value=0.0,
+                    value=float(row['vom_per_mwh']),
+                    step=0.1,
+                    key=f'units_vom_{index}',
+                )
+            with col_cost[1]:
+                fuel_price = st.number_input(
+                    'Fuel price ($/MMBtu)',
+                    min_value=0.0,
+                    value=float(row['fuel_price_per_mmbtu']),
+                    step=0.1,
+                    key=f'units_fuel_price_{index}',
+                )
+            with col_cost[2]:
+                emission_factor = st.number_input(
+                    'Emission factor (ton/MWh)',
+                    min_value=0.0,
+                    value=float(row['ef_ton_per_mwh']),
+                    step=0.01,
+                    key=f'units_ef_{index}',
+                )
+
+            manual_records.append(
+                {
+                    'unit_id': unit_id,
+                    'region': region,
+                    'fuel': fuel,
+                    'cap_mw': float(cap_mw),
+                    'availability': float(availability),
+                    'hr_mmbtu_per_mwh': float(heat_rate),
+                    'vom_per_mwh': float(vom),
+                    'fuel_price_per_mmbtu': float(fuel_price),
+                    'ef_ton_per_mwh': float(emission_factor),
+                }
+            )
+
+        manual_df = pd.DataFrame(manual_records)
+        manual_note = f'Units modified via GUI controls ({len(manual_records)} unit(s)).'
+    elif edit_inline:
+        st.info('Upload a units CSV to edit inline.')
+
+    uploaded = st.file_uploader('Upload units CSV', type='csv', key='units_csv')
+    if uploaded is not None:
+        upload_df = _read_uploaded_dataframe(uploaded)
+        if upload_df is not None:
+            if manual_df is not None:
+                st.info('Uploaded units CSV overrides inline edits.')
+                manual_df = None
+                manual_note = None
+            candidate, error = _validate_frame_override(frames_out, 'units', upload_df)
+            if candidate is None:
+                message = f'Units CSV invalid: {error}'
+                st.error(message)
+                errors.append(message)
+            else:
+                frames_out = candidate
+                notes.append(f'Units loaded from {uploaded.name} ({len(upload_df)} row(s)).')
+
+    if manual_df is not None:
+        candidate, error = _validate_frame_override(frames_out, 'units', manual_df)
+        if candidate is None:
+            message = f'Units override invalid: {error}'
+            st.error(message)
+            errors.append(message)
+        else:
+            frames_out = candidate
+            if manual_note:
+                notes.append(manual_note)
+
+    return frames_out, notes, errors
+
+
+def _render_fuels_controls(frames_obj: FramesType) -> tuple[FramesType, list[str], list[str]]:  # pragma: no cover - UI helper
+    _ensure_streamlit()
+    pd = _ensure_pandas()
+
+    notes: list[str] = []
+    errors: list[str] = []
+    frames_out = frames_obj
+
+    fuels_default = frames_obj.fuels()
+    if not fuels_default.empty:
+        st.caption('Current fuel coverage')
+        st.dataframe(fuels_default, use_container_width=True)
+    else:
+        st.info('No fuel data available. Upload a CSV to specify fuel coverage.')
+
+    manual_df: pd.DataFrame | None = None
+    manual_note: str | None = None
+    edit_inline = st.checkbox('Edit fuel coverage inline', value=False, key='fuels_manual_toggle')
+    if edit_inline and not fuels_default.empty:
+        st.caption('Toggle coverage and update emission factors as needed.')
+        manual_records: list[dict[str, Any]] = []
+        has_emission_column = 'co2_ton_per_mmbtu' in fuels_default.columns
+        for index, row in fuels_default.iterrows():
+            fuel_label = str(row['fuel'])
+            col_line = st.columns(3 if has_emission_column else 2)
+            with col_line[0]:
+                fuel_name = st.text_input(
+                    'Fuel',
+                    value=fuel_label,
+                    key=f'fuels_name_{index}',
+                ).strip()
+                if not fuel_name:
+                    fuel_name = fuel_label
+            with col_line[1]:
+                covered = st.checkbox(
+                    'Covered',
+                    value=bool(row['covered']),
+                    key=f'fuels_covered_{index}',
+                )
+            emission_value: float | None = None
+            if has_emission_column:
+                with col_line[2]:
+                    emission_value = float(
+                        st.number_input(
+                            'CO₂ tons/MMBtu',
+                            min_value=0.0,
+                            value=float(row.get('co2_ton_per_mmbtu', 0.0)),
+                            step=0.01,
+                            key=f'fuels_emission_{index}',
+                        )
+                    )
+
+            record: dict[str, Any] = {'fuel': fuel_name, 'covered': bool(covered)}
+            if has_emission_column:
+                record['co2_ton_per_mmbtu'] = float(emission_value or 0.0)
+            manual_records.append(record)
+
+        manual_df = pd.DataFrame(manual_records)
+        manual_note = f'Fuel coverage edited inline ({len(manual_records)} fuel(s)).'
+    elif edit_inline:
+        st.info('Upload a fuels CSV to edit inline.')
+
+    uploaded = st.file_uploader('Upload fuels CSV', type='csv', key='fuels_csv')
+    if uploaded is not None:
+        upload_df = _read_uploaded_dataframe(uploaded)
+        if upload_df is not None:
+            if manual_df is not None:
+                st.info('Uploaded fuels CSV overrides inline edits.')
+                manual_df = None
+                manual_note = None
+            candidate, error = _validate_frame_override(frames_out, 'fuels', upload_df)
+            if candidate is None:
+                message = f'Fuels CSV invalid: {error}'
+                st.error(message)
+                errors.append(message)
+            else:
+                frames_out = candidate
+                notes.append(f'Fuels loaded from {uploaded.name} ({len(upload_df)} row(s)).')
+
+    if manual_df is not None:
+        candidate, error = _validate_frame_override(frames_out, 'fuels', manual_df)
+        if candidate is None:
+            message = f'Fuels override invalid: {error}'
+            st.error(message)
+            errors.append(message)
+        else:
+            frames_out = candidate
+            if manual_note:
+                notes.append(manual_note)
+
+    return frames_out, notes, errors
+
+
+def _render_transmission_controls(
+    frames_obj: FramesType,
+) -> tuple[FramesType, list[str], list[str]]:  # pragma: no cover - UI helper
+    _ensure_streamlit()
+    pd = _ensure_pandas()
+
+    notes: list[str] = []
+    errors: list[str] = []
+    frames_out = frames_obj
+
+    transmission_default = frames_obj.transmission()
+    if not transmission_default.empty:
+        st.caption('Current transmission limits')
+        st.dataframe(transmission_default, use_container_width=True)
+    else:
+        st.info('No transmission limits specified. Add entries below or upload a CSV.')
+
+    manual_df: pd.DataFrame | None = None
+    manual_note: str | None = None
+    edit_inline = st.checkbox('Edit transmission limits inline', value=False, key='transmission_manual_toggle')
+    if edit_inline:
+        editable = transmission_default.copy()
+        if editable.empty:
+            editable = pd.DataFrame(columns=['from_region', 'to_region', 'limit_mw'])
+        st.caption('Use the table to add or modify directional flow limits (MW).')
+        edited = st.data_editor(
+            editable,
+            num_rows='dynamic',
+            use_container_width=True,
+            key='transmission_editor',
+        )
+        if isinstance(edited, pd.DataFrame):
+            manual_df = edited.copy()
+        else:
+            manual_df = pd.DataFrame(edited)
+        manual_df = manual_df.dropna(how='all')
+        manual_df = manual_df.reindex(columns=['from_region', 'to_region', 'limit_mw'])
+        manual_note = f'Transmission table edited inline ({len(manual_df)} record(s)).'
+
+    uploaded = st.file_uploader('Upload transmission CSV', type='csv', key='transmission_csv')
+    if uploaded is not None:
+        upload_df = _read_uploaded_dataframe(uploaded)
+        if upload_df is not None:
+            if manual_df is not None:
+                st.info('Uploaded transmission CSV overrides inline edits.')
+                manual_df = None
+                manual_note = None
+            candidate, error = _validate_frame_override(frames_out, 'transmission', upload_df)
+            if candidate is None:
+                message = f'Transmission CSV invalid: {error}'
+                st.error(message)
+                errors.append(message)
+            else:
+                frames_out = candidate
+                notes.append(
+                    f'Transmission limits loaded from {uploaded.name} ({len(upload_df)} row(s)).'
+                )
+
+    if manual_df is not None:
+        candidate, error = _validate_frame_override(frames_out, 'transmission', manual_df)
+        if candidate is None:
+            message = f'Transmission override invalid: {error}'
+            st.error(message)
+            errors.append(message)
+        else:
+            frames_out = candidate
+            if manual_note:
+                notes.append(manual_note)
+
+    return frames_out, notes, errors
+
+
 def run_policy_simulation(
     config_source: Any | None,
     *,
@@ -573,6 +1084,7 @@ def run_policy_simulation(
     allowance_banking_enabled: bool = True,
     control_period_years: int | None = None,
     frames: FramesType | Mapping[str, pd.DataFrame] | None = None,
+    assumption_notes: Iterable[str] | None = None,
     progress_cb: Callable[[str, Mapping[str, object]], None] | None = None,
 ) -> dict[str, Any]:
     """Execute the allowance engine and return structured results.
@@ -640,6 +1152,8 @@ def run_policy_simulation(
         )
         temp_dir, csv_files = _write_outputs_to_temp(outputs)
 
+        overrides = [str(note) for note in assumption_notes] if assumption_notes else []
+
         result = {
             'annual': outputs.annual.copy(),
             'emissions_by_region': outputs.emissions_by_region.copy(),
@@ -648,6 +1162,7 @@ def run_policy_simulation(
             'csv_files': csv_files,
             'temp_dir': temp_dir,
             'years': years,
+            'documentation': {'assumption_overrides': overrides},
         }
         return result
     except Exception as exc:  # pragma: no cover - defensive path
@@ -751,6 +1266,18 @@ def _render_results(result: dict[str, Any]) -> None:  # pragma: no cover - UI re
     else:
         st.info('No annual results to display.')
 
+    documentation = result.get('documentation')
+    overrides: list[str] = []
+    if isinstance(documentation, Mapping):
+        overrides = [str(entry) for entry in documentation.get('assumption_overrides', [])]
+
+    st.subheader('Assumption overrides')
+    if overrides:
+        for note in overrides:
+            st.markdown(f'- {note}')
+    else:
+        st.caption('No assumption overrides were applied in this run.')
+
     st.subheader('Download outputs')
     for filename, content in sorted(result['csv_files'].items()):
         st.download_button(
@@ -808,6 +1335,9 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
                 max_value=int(year_max),
                 value=(int(year_min), int(year_max)),
             )
+
+        start_year_val = int(start_year)
+        end_year_val = int(end_year)
 
         carbon_policy_enabled = True
         enable_floor = False
@@ -872,16 +1402,69 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
         }
         run_clicked = st.button('Run Model', type='primary')
 
+    assumption_notes: list[str] = []
+    assumption_errors: list[str] = []
+    selected_years: list[int] = []
+    try:
+        selected_years = _select_years(candidate_years, start_year_val, end_year_val)
+    except Exception:
+        selected_years = []
+    if not selected_years:
+        step = 1 if end_year_val >= start_year_val else -1
+        selected_years = list(range(start_year_val, end_year_val + step, step))
+
+    frames_for_run: FramesType | None = None
+    try:
+        frames_for_run = _build_default_frames(
+            selected_years or [start_year_val],
+            carbon_policy_enabled=bool(carbon_policy_enabled),
+            banking_enabled=bool(allowance_banking_enabled),
+        )
+    except Exception as exc:  # pragma: no cover - defensive UI path
+        frames_for_run = None
+        st.warning(f'Unable to prepare default assumption tables: {exc}')
+
+    if frames_for_run is not None:
+        st.subheader('Assumption overrides')
+        st.caption('Adjust core assumption tables or upload CSV files to override the defaults.')
+        demand_tab, units_tab, fuels_tab, transmission_tab = st.tabs(
+            ['Demand', 'Units', 'Fuels', 'Transmission']
+        )
+        with demand_tab:
+            frames_for_run, notes, errors = _render_demand_controls(frames_for_run, selected_years)
+            assumption_notes.extend(notes)
+            assumption_errors.extend(errors)
+        with units_tab:
+            frames_for_run, notes, errors = _render_units_controls(frames_for_run)
+            assumption_notes.extend(notes)
+            assumption_errors.extend(errors)
+        with fuels_tab:
+            frames_for_run, notes, errors = _render_fuels_controls(frames_for_run)
+            assumption_notes.extend(notes)
+            assumption_errors.extend(errors)
+        with transmission_tab:
+            frames_for_run, notes, errors = _render_transmission_controls(frames_for_run)
+            assumption_notes.extend(notes)
+            assumption_errors.extend(errors)
+
+        if assumption_errors:
+            st.warning('Resolve the highlighted assumption issues before running the simulation.')
+    else:
+        st.info('Default assumption tables are unavailable. Install pandas to edit inputs through the GUI.')
+
     execute_run = False
     run_inputs: dict[str, Any] | None = None
     pending_run = st.session_state.get('pending_run')
 
     if run_clicked:
-        st.session_state['pending_run'] = {
-            'params': run_params,
-            'summary': _build_run_summary(run_params, config_label=config_label),
-        }
-        pending_run = st.session_state['pending_run']
+        if assumption_errors:
+            st.error('Resolve the assumption data issues above before running the simulation.')
+        else:
+            st.session_state['pending_run'] = {
+                'params': run_params,
+                'summary': _build_run_summary(run_params, config_label=config_label),
+            }
+            pending_run = st.session_state['pending_run']
 
     if isinstance(pending_run, Mapping):
         confirmation_box = st.warning(
@@ -944,91 +1527,100 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
                 except (TypeError, ValueError):
                     return default
 
-            def _as_float(value: object) -> float | None:
-                try:
-                    if value is None:
+            def _update_progress(stage: str, payload: Mapping[str, object]) -> None:
+                def _as_int(value: object, default: int = 0) -> int:
+                    try:
+                        return int(value)  # type: ignore[arg-type]
+                    except (TypeError, ValueError):
+                        return default
+
+                def _as_float(value: object) -> float | None:
+                    try:
+                        if value is None:
+                            return None
+                        return float(value)  # type: ignore[arg-type]
+                    except (TypeError, ValueError):
                         return None
-                    return float(value)  # type: ignore[arg-type]
-                except (TypeError, ValueError):
-                    return None
 
-            if stage == 'run_start':
-                total = _as_int(payload.get('total_years'), 0)
-                if total <= 0:
-                    total = 1
-                progress_state['total_years'] = total
-                progress_state['current_index'] = -1
-                progress_state['current_year'] = None
-                progress_bar.progress(0)
-                progress_text.text(f'Preparing simulation for {total} year(s)...')
-                return
+                if stage == 'run_start':
+                    total = _as_int(payload.get('total_years'), 0)
+                    if total <= 0:
+                        total = 1
+                    progress_state['total_years'] = total
+                    progress_state['current_index'] = -1
+                    progress_state['current_year'] = None
+                    progress_bar.progress(0)
+                    progress_text.text(f'Preparing simulation for {total} year(s)...')
+                    return
 
-            if stage == 'year_start':
-                index = _as_int(payload.get('index'), 0)
-                year_val = payload.get('year')
-                total = max(progress_state.get('total_years', 1), 1)
-                progress_state['current_index'] = index
-                progress_state['current_year'] = year_val
-                completed_fraction = max(0.0, min(1.0, index / total))
-                progress_bar.progress(int(completed_fraction * 100))
-                year_display = str(year_val) if year_val is not None else 'N/A'
-                progress_text.text(f'Simulating year {year_display} ({index + 1} of {total})')
-                return
+                if stage == 'year_start':
+                    index = _as_int(payload.get('index'), 0)
+                    year_val = payload.get('year')
+                    total = max(progress_state.get('total_years', 1), 1)
+                    progress_state['current_index'] = index
+                    progress_state['current_year'] = year_val
+                    completed_fraction = max(0.0, min(1.0, index / total))
+                    progress_bar.progress(int(completed_fraction * 100))
+                    year_display = str(year_val) if year_val is not None else 'N/A'
+                    progress_text.text(f'Simulating year {year_display} ({index + 1} of {total})')
+                    return
 
-            if stage == 'iteration':
-                year_val = payload.get('year', progress_state.get('current_year'))
-                iteration = _as_int(payload.get('iteration'), 0)
-                price_val = _as_float(payload.get('price'))
-                year_display = str(year_val) if year_val is not None else 'N/A'
-                if price_val is not None:
-                    progress_text.text(
-                        f'Year {year_display}: iteration {iteration} (price ≈ {price_val:,.2f})'
-                    )
-                else:
-                    progress_text.text(f'Year {year_display}: iteration {iteration}')
-                return
+                if stage == 'iteration':
+                    year_val = payload.get('year', progress_state.get('current_year'))
+                    iteration = _as_int(payload.get('iteration'), 0)
+                    price_val = _as_float(payload.get('price'))
+                    year_display = str(year_val) if year_val is not None else 'N/A'
+                    if price_val is not None:
+                        progress_text.text(
+                            f'Year {year_display}: iteration {iteration} (price ≈ {price_val:,.2f})'
+                        )
+                    else:
+                        progress_text.text(f'Year {year_display}: iteration {iteration}')
+                    return
 
-            if stage == 'year_complete':
-                index = _as_int(payload.get('index'), progress_state.get('current_index', -1))
-                total = max(progress_state.get('total_years', 1), 1)
-                progress_state['current_index'] = index
-                year_val = payload.get('year', progress_state.get('current_year'))
-                progress_state['current_year'] = year_val
-                completed_fraction = max(0.0, min(1.0, (index + 1) / total))
-                progress_bar.progress(min(100, int(completed_fraction * 100)))
-                price_val = _as_float(payload.get('price'))
-                year_display = str(year_val) if year_val is not None else str(index + 1)
-                if price_val is not None:
-                    progress_text.text(
-                        f'Completed year {year_display} of {total} (price {price_val:,.2f})'
-                    )
-                else:
-                    progress_text.text(f'Completed year {year_display} of {total}')
-                return
+                if stage == 'year_complete':
+                    index = _as_int(payload.get('index'), progress_state.get('current_index', -1))
+                    total = max(progress_state.get('total_years', 1), 1)
+                    progress_state['current_index'] = index
+                    year_val = payload.get('year', progress_state.get('current_year'))
+                    progress_state['current_year'] = year_val
+                    completed_fraction = max(0.0, min(1.0, (index + 1) / total))
+                    progress_bar.progress(min(100, int(completed_fraction * 100)))
+                    price_val = _as_float(payload.get('price'))
+                    year_display = str(year_val) if year_val is not None else str(index + 1)
+                    if price_val is not None:
+                        progress_text.text(
+                            f'Completed year {year_display} of {total} (price {price_val:,.2f})'
+                        )
+                    else:
+                        progress_text.text(f'Completed year {year_display} of {total}')
+                    return
 
-        try:
-            result = run_policy_simulation(
-                config_source,
-                start_year=int(start_year),
-                end_year=int(end_year),
-                carbon_policy_enabled=bool(carbon_policy_enabled),
-                enable_floor=bool(enable_floor),
-                enable_ccr=bool(enable_ccr),
-                ccr1_enabled=bool(ccr1_enabled),
-                ccr2_enabled=bool(ccr2_enabled),
-                allowance_banking_enabled=bool(allowance_banking_enabled),
-                control_period_years=control_period_years,
-                progress_cb=_update_progress,
-            )
-        except Exception as exc:  # pragma: no cover - defensive guard
-            LOGGER.exception('Policy simulation failed during execution')
-            result = {'error': str(exc)}
-        finally:
-            progress_bar.empty()
-            progress_text.empty()
-        if 'temp_dir' in result:
-            st.session_state['temp_dirs'] = [str(result['temp_dir'])]
-        st.session_state['last_result'] = result
+            try:
+                result = run_policy_simulation(
+                    config_source,
+                    start_year=start_year_val,
+                    end_year=end_year_val,
+                    carbon_policy_enabled=bool(carbon_policy_enabled),
+                    enable_floor=bool(enable_floor),
+                    enable_ccr=bool(enable_ccr),
+                    ccr1_enabled=bool(ccr1_enabled),
+                    ccr2_enabled=bool(ccr2_enabled),
+                    allowance_banking_enabled=bool(allowance_banking_enabled),
+                    control_period_years=control_period_years,
+                    frames=frames_for_run,
+                    assumption_notes=assumption_notes,
+                    progress_cb=_update_progress,
+                )
+            except Exception as exc:  # pragma: no cover - defensive guard
+                LOGGER.exception('Policy simulation failed during execution')
+                result = {'error': str(exc)}
+            finally:
+                progress_bar.empty()
+                progress_text.empty()
+            if 'temp_dir' in result:
+                st.session_state['temp_dirs'] = [str(result['temp_dir'])]
+            st.session_state['last_result'] = result
 
     if result:
         _render_results(result)
