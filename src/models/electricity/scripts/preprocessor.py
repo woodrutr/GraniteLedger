@@ -28,6 +28,7 @@ except ImportError:  # pragma: no cover - optional dependency
 from definitions import PROJECT_ROOT
 from src.common.utilities import scale_load, scale_load_with_enduses
 from io_loader import Frames
+from .incentives import TechnologyIncentives
 
 
 def _ensure_pandas():
@@ -565,6 +566,12 @@ class Sets:
         self.capacity_build_limits = copy.deepcopy(
             getattr(settings, 'capacity_build_limits', {}) or {}
         )
+
+        incentives = getattr(settings, 'electricity_incentives', TechnologyIncentives())
+        if isinstance(incentives, TechnologyIncentives):
+            self.technology_incentives = TechnologyIncentives(list(incentives))
+        else:
+            self.technology_incentives = TechnologyIncentives()
 
         # Load Setting
         self.load_scalar = settings.scale_load
@@ -1853,6 +1860,12 @@ def preprocessor(setin):
     all_frames = FrameStore(
         frames_container, carbon_policy_enabled=carbon_policy_enabled
     )
+
+    incentives = getattr(setin, 'technology_incentives', TechnologyIncentives())
+    if not isinstance(incentives, TechnologyIncentives):
+        incentives = TechnologyIncentives()
+    for frame_name, frame_df in incentives.to_frames().items():
+        all_frames[frame_name] = frame_df
 
     # Ensure emissions data are available for all generation technologies
     emissions_df = all_frames.get('EmissionsRate')

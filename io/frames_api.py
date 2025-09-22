@@ -320,6 +320,49 @@ class Frames(Mapping[str, pd.DataFrame]):
 
         return df.reset_index(drop=True)
 
+    def technology_incentives(self) -> pd.DataFrame:
+        """Return merged technology incentive information if available."""
+
+        if pd is None:  # pragma: no cover - helper exercised indirectly
+            raise ImportError(
+                'pandas is required to access technology incentives; '
+                'install it with `pip install pandas`.'
+            )
+
+        credit = self.optional_frame('TechnologyIncentiveCredit')
+        limit = self.optional_frame('TechnologyIncentiveLimit')
+
+        base_columns = ['tech', 'year', 'incentive_type']
+        credit_df = pd.DataFrame(columns=base_columns + ['credit_per_unit'])
+        limit_df = pd.DataFrame(columns=base_columns + ['limit_value'])
+
+        if credit is not None and not credit.empty:
+            credit_df = credit.reset_index().rename(columns=str)
+            credit_df = credit_df[base_columns + ['credit_per_unit']]
+        if limit is not None and not limit.empty:
+            limit_df = limit.reset_index().rename(columns=str)
+            limit_df = limit_df[base_columns + ['limit_value']]
+
+        if credit_df.empty and limit_df.empty:
+            return pd.DataFrame(
+                columns=base_columns
+                + ['credit_per_unit', 'limit_value', 'limit_units']
+            )
+
+        merged = pd.merge(credit_df, limit_df, how='outer', on=base_columns)
+        merged['credit_per_unit'] = pd.to_numeric(
+            merged.get('credit_per_unit'), errors='coerce'
+        )
+        merged['limit_value'] = pd.to_numeric(merged.get('limit_value'), errors='coerce')
+        merged['limit_units'] = merged['incentive_type'].map(
+            {
+                'production': 'MWh',
+                'investment': 'MW',
+            }
+        )
+
+        return merged.sort_values(base_columns).reset_index(drop=True)
+
     def fuels(self) -> pd.DataFrame:
         """Return validated fuel metadata (fuel label and coverage flag)."""
 

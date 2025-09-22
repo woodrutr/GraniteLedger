@@ -27,6 +27,7 @@ from definitions import PROJECT_ROOT
 from src.integrator.utilities import create_temporal_mapping
 from src.common.utilities import make_dir
 from src.models.electricity.scripts.technology_metadata import resolve_technology_key
+from src.models.electricity.scripts.incentives import TechnologyIncentives
 
 
 ###################################################################################################
@@ -221,6 +222,10 @@ class Config_settings:
             for tech, allowed in self.electricity_expansion_overrides.items()
             if not allowed
         }
+
+        self.electricity_incentives = TechnologyIncentives.from_config(
+            config.get('electricity_incentives')
+        )
 
         raw_capacity_limits = capacity_build_limits
         if raw_capacity_limits is None:
