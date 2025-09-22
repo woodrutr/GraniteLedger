@@ -15,7 +15,7 @@ impacts to future work.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Iterable, Iterator, Mapping, MutableMapping
 
 try:  # pragma: no cover - optional dependency
@@ -81,6 +81,25 @@ def _coerce_int(value: object) -> int | None:
         return None
 
 
+def _coerce_bool_flag(value: object, *, default: bool = True) -> bool:
+    if value in (None, ''):
+        return bool(default)
+    if isinstance(value, bool):
+        return bool(value)
+    if isinstance(value, (int, float)):
+        if value in (0, 1):
+            return bool(value)
+        raise TypeError('enabled flag must be 0 or 1 if provided as a number')
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {'true', 't', 'yes', 'y', '1', 'on'}:
+            return True
+        if normalized in {'false', 'f', 'no', 'n', '0', 'off'}:
+            return False
+        raise ValueError('enabled flag must be a boolean string token')
+    raise TypeError('enabled flag must be provided as a boolean value')
+
+
 @dataclass(frozen=True)
 class IncentiveRecord:
     """Representation of a single technology incentive entry."""
@@ -125,11 +144,54 @@ class IncentiveRecord:
         return base
 
 
+@dataclass
+class TechnologyIncentiveModule:
+    """Modular application of technology incentive frames."""
+
+    name: str = 'technology_incentives'
+    enabled: bool = True
+    _inputs: Mapping[str, 'pd.DataFrame'] = field(default_factory=dict)
+
+    @property
+    def inputs(self) -> dict[str, 'pd.DataFrame']:
+        return {key: value.copy(deep=True) for key, value in self._inputs.items()}
+
+    def apply(self, state: Any) -> Any:
+        """Attach the module's frames to ``state`` when enabled."""
+
+        if not self.enabled:
+            return state
+
+        assign: Any
+        target = state
+
+        if hasattr(target, 'with_frame') and callable(getattr(target, 'with_frame')):
+            def assign(name: str, df: 'pd.DataFrame') -> None:
+                nonlocal target
+                target = target.with_frame(name, df.copy(deep=True))
+        elif hasattr(target, '__setitem__'):
+            def assign(name: str, df: 'pd.DataFrame') -> None:
+                target[name] = df.copy(deep=True)
+        else:
+            raise TypeError('state must support frame assignment via with_frame or __setitem__')
+
+        for frame_name, frame_df in self._inputs.items():
+            assign(frame_name, frame_df)
+
+        return target
+
+
 class TechnologyIncentives:
     """Container describing technology-specific incentives."""
 
-    def __init__(self, records: Iterable[IncentiveRecord] | None = None):
+    def __init__(
+        self,
+        records: Iterable[IncentiveRecord] | None = None,
+        *,
+        enabled: bool = True,
+    ):
         self._records: list[IncentiveRecord] = []
+        self.enabled = bool(enabled)
         if records is not None:
             for record in records:
                 if isinstance(record, IncentiveRecord):
@@ -157,7 +219,9 @@ class TechnologyIncentives:
             else:
                 investment.append(entry)
 
-        config: dict[str, list[dict[str, Any]]] = {}
+        config: dict[str, Any] = {}
+        if not self.enabled:
+            config['enabled'] = False
         if production:
             config['production'] = production
         if investment:
@@ -213,10 +277,18 @@ class TechnologyIncentives:
             'TechnologyIncentiveLimit': limit_df.reset_index(drop=True),
         }
 
+    def modules(self, *, enabled: bool | None = None) -> list[TechnologyIncentiveModule]:
+        frames = self.to_frames()
+        module_enabled = self.enabled if enabled is None else bool(enabled)
+        inputs = {name: df.copy(deep=True) for name, df in frames.items()}
+        return [TechnologyIncentiveModule(enabled=module_enabled, _inputs=inputs)]
+
     @classmethod
     def from_config(cls, config: Mapping[str, Any] | None) -> 'TechnologyIncentives':
         if not isinstance(config, Mapping):
             return cls()
+
+        enabled_flag = _coerce_bool_flag(config.get('enabled'), default=True)
 
         records: list[IncentiveRecord] = []
         for raw in config.get('production', []):
@@ -227,7 +299,7 @@ class TechnologyIncentives:
             record = cls._parse_config_entry(raw, _CREDIT_TYPE_INVESTMENT)
             if record is not None:
                 records.append(record)
-        return cls(records)
+        return cls(records, enabled=enabled_flag)
 
     @classmethod
     def from_table_rows(
@@ -286,5 +358,5 @@ class TechnologyIncentives:
         )
 
 
-__all__ = ['IncentiveRecord', 'TechnologyIncentives']
+__all__ = ['IncentiveRecord', 'TechnologyIncentiveModule', 'TechnologyIncentives']
 

@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import importlib
+
 import pandas as pd
 
 from src.models.electricity.scripts.incentives import TechnologyIncentives
+
+Frames = importlib.import_module('io_loader').Frames
 
 
 def _sorted(config_section):
@@ -102,3 +106,48 @@ def test_incentives_from_table_rows_filters_invalid():
     assert record.credit_type == 'production'
     assert record.year == 2025
     assert record.limit_value is None
+
+
+def test_incentive_module_apply_populates_frames():
+    config = {
+        'production': [
+            {'technology': 'Solar', 'year': 2025, 'credit_per_mwh': 10.0},
+        ]
+    }
+
+    incentives = TechnologyIncentives.from_config(config)
+    modules = incentives.modules()
+
+    assert len(modules) == 1
+    module = modules[0]
+    assert module.enabled is True
+
+    base = Frames({})
+    updated = module.apply(base)
+
+    assert set(updated) == {'technologyincentivecredit', 'technologyincentivelimit'}
+    credit = updated.frame('TechnologyIncentiveCredit')
+    assert not credit.empty
+    assert set(credit.columns) == {'tech', 'year', 'incentive_type', 'credit_per_unit'}
+
+
+def test_incentive_module_respects_enabled_flag():
+    config = {
+        'enabled': False,
+        'production': [
+            {'technology': 'Solar', 'year': 2025, 'credit_per_mwh': 12.0},
+        ],
+    }
+
+    incentives = TechnologyIncentives.from_config(config)
+    assert incentives.enabled is False
+
+    module = incentives.modules()[0]
+    assert module.enabled is False
+
+    frames = Frames({})
+    result = module.apply(frames)
+
+    assert list(result) == []
+    round_trip = incentives.to_config()
+    assert round_trip.get('enabled') is False

@@ -270,14 +270,16 @@ def _build_allowance_supply(
     """Construct :class:`AllowanceSupply` for ``year`` along with the raw record."""
 
     record = _policy_record_for_year(policy, year)
-    ccr1_qty = float(record['ccr1_qty']) if record['ccr1_enabled'] else 0.0
-    ccr2_qty = float(record['ccr2_qty']) if record['ccr2_enabled'] else 0.0
+    ccr1_enabled = bool(record.get('ccr1_enabled', True))
+    ccr2_enabled = bool(record.get('ccr2_enabled', True))
+    ccr1_qty = float(record.get('ccr1_qty', 0.0)) if ccr1_enabled else 0.0
+    ccr2_qty = float(record.get('ccr2_qty', 0.0)) if ccr2_enabled else 0.0
     supply = AllowanceSupply(
-        cap=float(record['cap']),
-        floor=float(record['floor']),
-        ccr1_trigger=float(record['ccr1_trigger']),
+        cap=float(record.get('cap', 0.0)),
+        floor=float(record.get('floor', 0.0)),
+        ccr1_trigger=float(record.get('ccr1_trigger', 0.0)),
         ccr1_qty=ccr1_qty,
-        ccr2_trigger=float(record['ccr2_trigger']),
+        ccr2_trigger=float(record.get('ccr2_trigger', 0.0)),
         ccr2_qty=ccr2_qty,
         enabled=bool(record.get('enabled', True)),
         enable_floor=enable_floor,
@@ -1099,6 +1101,47 @@ def run_end_to_end_from_frames(
                 },
             )
 
+        if not policy_enabled_global:
+            dispatch_result = dispatch_solver(year, 0.0)
+            emissions = _extract_emissions(dispatch_result)
+            summary_disabled: dict[str, object] = {
+                'year': year,
+                'p_co2': 0.0,
+                'available_allowances': float(emissions),
+                'allowances_total': float(emissions),
+                'bank_prev': 0.0,
+                'bank_unadjusted': 0.0,
+                'bank_new': 0.0,
+                'surrendered': 0.0,
+                'obligation_new': 0.0,
+                'shortage_flag': False,
+                'iterations': 0,
+                'emissions': float(emissions),
+                'ccr1_issued': 0.0,
+                'ccr2_issued': 0.0,
+                'finalize': {
+                    'finalized': False,
+                    'bank_final': 0.0,
+                    'remaining_obligation': 0.0,
+                    'surrendered_additional': 0.0,
+                },
+                '_dispatch_result': dispatch_result,
+            }
+            results[year] = summary_disabled
+            if progress_cb is not None:
+                progress_cb(
+                    "year_complete",
+                    {
+                        "year": int(year),
+                        "index": idx,
+                        "total_years": total_years,
+                        "shortage": False,
+                        "price": 0.0,
+                        "iterations": 0,
+                    },
+                )
+            continue
+
         supply, record = _build_allowance_supply(
             policy,
             year,
@@ -1115,33 +1158,38 @@ def run_end_to_end_from_frames(
         banking_enabled_year = banking_enabled_global and bool(
             record.get('bank_enabled', banking_enabled_global)
         )
+        if not policy_enabled_year:
+            banking_enabled_year = False
         if not banking_enabled_year:
             carry_pct = 0.0
 
-        bank_prev_effective = bank_prev if banking_enabled_year else 0.0
+        bank_prev_effective = bank_prev if (banking_enabled_year and policy_enabled_year) else 0.0
 
-        state = cp_track.setdefault(
-            cp_id,
-            {
-                'emissions': 0.0,
-                'surrendered': 0.0,
-                'cap': 0.0,
-                'ccr1': 0.0,
-                'ccr2': 0.0,
-                'bank_start': bank_prev_effective,
-                'outstanding': 0.0,
-                'years': [],
-            },
-        )
+        state: dict[str, float | list[int] | None] | None = None
+        outstanding_prev = 0.0
+        if policy_enabled_year:
+            state = cp_track.setdefault(
+                cp_id,
+                {
+                    'emissions': 0.0,
+                    'surrendered': 0.0,
+                    'cap': 0.0,
+                    'ccr1': 0.0,
+                    'ccr2': 0.0,
+                    'bank_start': bank_prev_effective,
+                    'outstanding': 0.0,
+                    'years': [],
+                },
+            )
 
-        if state.get('bank_start') is None:
-            state['bank_start'] = bank_prev_effective
+            if state.get('bank_start') is None:
+                state['bank_start'] = bank_prev_effective
 
-        years_list = state.setdefault('years', [])
-        if isinstance(years_list, list) and year not in years_list:
-            years_list.append(year)
+            years_list = state.setdefault('years', [])
+            if isinstance(years_list, list) and year not in years_list:
+                years_list.append(year)
 
-        outstanding_prev = float(state.get('outstanding', 0.0))
+            outstanding_prev = float(state.get('outstanding', 0.0))
 
         summary = _solve_allowance_market_year(
             dispatch_solver,
@@ -1166,14 +1214,15 @@ def run_end_to_end_from_frames(
         ccr1_issued = float(summary.get('ccr1_issued', 0.0))
         ccr2_issued = float(summary.get('ccr2_issued', 0.0))
 
-        state['emissions'] = float(state.get('emissions', 0.0)) + emissions
-        state['surrendered'] = float(state.get('surrendered', 0.0)) + surrendered
-        state['cap'] = float(state.get('cap', 0.0)) + float(record.get('cap', 0.0))
-        state['ccr1'] = float(state.get('ccr1', 0.0)) + ccr1_issued
-        state['ccr2'] = float(state.get('ccr2', 0.0)) + ccr2_issued
-        state['outstanding'] = obligation
-        state['bank_last_unadjusted'] = bank_unadjusted
-        state['bank_last_carried'] = float(summary.get('bank_new', 0.0))
+        if state is not None:
+            state['emissions'] = float(state.get('emissions', 0.0)) + emissions
+            state['surrendered'] = float(state.get('surrendered', 0.0)) + surrendered
+            state['cap'] = float(state.get('cap', 0.0)) + float(record.get('cap', 0.0))
+            state['ccr1'] = float(state.get('ccr1', 0.0)) + ccr1_issued
+            state['ccr2'] = float(state.get('ccr2', 0.0)) + ccr2_issued
+            state['outstanding'] = obligation
+            state['bank_last_unadjusted'] = bank_unadjusted
+            state['bank_last_carried'] = float(summary.get('bank_new', 0.0))
 
         finalize_summary = dict(summary.get('finalize', {}))
 
@@ -1185,7 +1234,8 @@ def run_end_to_end_from_frames(
             summary['finalize'] = finalize_summary
             results[year] = summary
             bank_prev = float(summary.get('bank_new', 0.0)) if banking_enabled_year else 0.0
-            state['outstanding'] = 0.0
+            if state is not None:
+                state['outstanding'] = 0.0
             if progress_cb is not None:
                 payload: dict[str, object] = {
                     "year": _normalize_progress_year(year),
@@ -1229,13 +1279,16 @@ def run_end_to_end_from_frames(
             summary['bank_new'] = bank_carry
             summary['obligation_new'] = remaining_obligation
 
-            state['surrendered'] = float(state.get('surrendered', 0.0)) + surrender_additional
-            state['bank_last_unadjusted'] = bank_after_trueup
-            state['bank_last_carried'] = bank_carry
-            state['outstanding'] = 0.0
+            if state is not None:
+                state['surrendered'] = float(state.get('surrendered', 0.0)) + surrender_additional
+                state['bank_last_unadjusted'] = bank_after_trueup
+                state['bank_last_carried'] = bank_carry
+                state['outstanding'] = 0.0
 
-            total_allowances = float(state.get('bank_start', 0.0)) + float(state.get('cap', 0.0))
-            total_allowances += float(state.get('ccr1', 0.0)) + float(state.get('ccr2', 0.0))
+            total_allowances = 0.0
+            if state is not None:
+                total_allowances = float(state.get('bank_start', 0.0)) + float(state.get('cap', 0.0))
+                total_allowances += float(state.get('ccr1', 0.0)) + float(state.get('ccr2', 0.0))
 
             finalize_summary = {
                 'finalized': True,
@@ -1244,12 +1297,12 @@ def run_end_to_end_from_frames(
                 'remaining_obligation': float(remaining_obligation),
                 'surrendered_additional': float(surrender_additional),
                 'shortage_flag': bool(remaining_obligation > 1e-9),
-                'cp_emissions': float(state.get('emissions', 0.0)),
-                'cp_surrendered': float(state.get('surrendered', 0.0)),
-                'cp_cap': float(state.get('cap', 0.0)),
-                'cp_ccr1': float(state.get('ccr1', 0.0)),
-                'cp_ccr2': float(state.get('ccr2', 0.0)),
-                'bank_start': float(state.get('bank_start', 0.0)),
+                'cp_emissions': float(state.get('emissions', 0.0)) if state is not None else float(emissions),
+                'cp_surrendered': float(state.get('surrendered', 0.0)) if state is not None else float(surrendered),
+                'cp_cap': float(state.get('cap', 0.0)) if state is not None else float(record.get('cap', 0.0)),
+                'cp_ccr1': float(state.get('ccr1', 0.0)) if state is not None else float(ccr1_issued),
+                'cp_ccr2': float(state.get('ccr2', 0.0)) if state is not None else float(ccr2_issued),
+                'bank_start': float(state.get('bank_start', 0.0)) if state is not None else 0.0,
                 'cp_allowances_total': float(total_allowances),
             }
 

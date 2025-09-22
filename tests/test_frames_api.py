@@ -11,6 +11,7 @@ run_fixed_point_from_frames = importlib.import_module(
     "engine.run_loop"
 ).run_fixed_point_from_frames
 Frames = importlib.import_module("io_loader").Frames
+ConfigError = importlib.import_module("policy.allowance_annual").ConfigError
 policy_frame_three_year = importlib.import_module(
     "tests.fixtures.annual_minimal"
 ).policy_frame_three_year
@@ -192,6 +193,34 @@ def test_policy_spec_round_trip() -> None:
     assert policy.banking_enabled is True
     assert spec.resolution == "annual"
     assert policy.resolution == "annual"
+
+
+def test_policy_enabled_requires_required_columns() -> None:
+    """Enabled carbon policy should fail when required columns are absent."""
+
+    policy = pd.DataFrame(
+        [
+            {
+                "year": 2025,
+                "cap_tons": 100.0,
+                "policy_enabled": True,
+            }
+        ]
+    )
+
+    frames = Frames({"policy": policy})
+
+    with pytest.raises(ConfigError, match="requires columns"):
+        frames.policy()
+
+
+def test_missing_policy_frame_raises_config_error() -> None:
+    """Carbon-enabled runs must provide a policy frame."""
+
+    frames = Frames({}, carbon_policy_enabled=True)
+
+    with pytest.raises(ConfigError, match="requires a 'policy' frame"):
+        frames.policy()
 
 
 def test_fixed_point_runs_from_frames() -> None:
