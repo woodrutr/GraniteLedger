@@ -11,6 +11,7 @@ import types
 from definitions import PROJECT_ROOT
 from src.common.config_setup import Config_settings
 from src.common.utilities import setup_logger, get_args
+from src.common.documentation import write_model_setup_documentation
 from src.integrator.gaussseidel import run_gs
 from src.integrator.unified import run_unified
 from src.integrator.runner import run_standalone, run_elec_solo, run_h2_solo, run_residential_solo
@@ -59,6 +60,8 @@ def main(settings: Config_settings | None = None):
     logger = setup_logger(settings)
     logger = logging.getLogger(__name__)
 
+    doc_paths = write_model_setup_documentation(settings)
+
     # MAIN - Log settings
     logger.info('Starting Logging')
     logger.debug('Logging level set to DEBUG')
@@ -73,6 +76,14 @@ def main(settings: Config_settings | None = None):
         config_list.append(f'{key}: {value}')
     logger.info(config_list)
     logger.debug(f'Config settings: these settings dont have checks: {settings.missing_checks}')
+    logger.info(
+        'Model setup documentation saved to: %s',
+        ', '.join(
+            f"{name}={path}"
+            for name, path in doc_paths.items()
+            if path is not None
+        ),
+    )
     settings.cw_temporal.to_csv(Path(settings.OUTPUT_ROOT / 'cw_temporal.csv'), index=False)
 
     # MAIN - Run the cases you want to run based on the mode and settings you pass
