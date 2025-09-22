@@ -1,6 +1,7 @@
 """Annual fixed-point integration between dispatch and allowance market."""
 from __future__ import annotations
 
+from collections import defaultdict
 from typing import Any, Callable, Iterable, Mapping, Sequence, cast
 
 try:  # pragma: no cover - optional dependency guard
@@ -8,6 +9,7 @@ try:  # pragma: no cover - optional dependency guard
 except ImportError:  # pragma: no cover - optional dependency
     pd = cast(object, None)
 
+from dispatch.interface import DispatchResult
 from dispatch.lp_network import solve_from_frames as solve_network_from_frames
 from dispatch.lp_single import solve as solve_single
 from engine.outputs import EngineOutputs
@@ -34,13 +36,113 @@ def _ensure_pandas() -> None:
         )
 
 
-def _coerce_years(policy: Any, years: Iterable[int] | None) -> list[int]:
+def _coerce_years(policy: Any, years: Iterable[int] | None) -> list[Any]:
     if years is None:
         series_index = getattr(policy.cap, 'index', [])
-        years_list = list(series_index) if series_index is not None else []
-    else:
-        years_list = list(years)
-    return sorted({int(y) for y in years_list})
+        return list(series_index) if series_index is not None else []
+
+    requested = list(years)
+    index_obj = getattr(policy.cap, 'index', None)
+    series_index = list(index_obj) if index_obj is not None else []
+    index_set = set(series_index)
+
+    mapper = getattr(policy, 'compliance_year_for', None)
+    selected: list[Any] = []
+
+    for entry in requested:
+        if entry in index_set:
+            selected.append(entry)
+            continue
+        target_year = None
+        if callable(mapper):
+            try:
+                target_year = mapper(entry)
+            except Exception:  # pragma: no cover - defensive guard
+                target_year = None
+        if target_year is None:
+            try:
+                target_year = int(entry)
+            except (TypeError, ValueError):
+                target_year = None
+        if target_year is None:
+            continue
+        for label in series_index:
+            if callable(mapper):
+                try:
+                    label_year = mapper(label)
+                except Exception:  # pragma: no cover - defensive guard
+                    continue
+            else:
+                try:
+                    label_year = int(label)
+                except (TypeError, ValueError):
+                    continue
+            if label_year == target_year:
+                selected.append(label)
+
+    if not selected:
+        return []
+
+    seen: set[Any] = set()
+    ordered: list[Any] = []
+    for label in selected:
+        if label not in seen:
+            seen.add(label)
+            ordered.append(label)
+    return ordered
+
+
+def _normalize_progress_year(value: object) -> object:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _compute_period_weights(policy: Any, periods: Sequence[Any]) -> dict[object, float]:
+    """Return fractional weights for ``periods`` grouped by compliance year."""
+
+    mapper = getattr(policy, "compliance_year_for", None)
+    counts: defaultdict[int, int] = defaultdict(int)
+    period_to_year: dict[Any, int] = {}
+
+    for period in periods:
+        calendar_year: int | None = None
+        if callable(mapper):
+            try:
+                mapped = mapper(period)
+            except Exception:  # pragma: no cover - defensive guard
+                mapped = None
+            if mapped is not None:
+                try:
+                    calendar_year = int(mapped)
+                except (TypeError, ValueError):
+                    calendar_year = None
+        if calendar_year is None:
+            try:
+                calendar_year = int(period)
+            except (TypeError, ValueError):
+                calendar_year = None
+        if calendar_year is None:
+            continue
+        period_to_year[period] = calendar_year
+        counts[calendar_year] += 1
+
+    weights: dict[object, float] = {}
+    for period in periods:
+        calendar_year = period_to_year.get(period)
+        if calendar_year is None:
+            weight = 1.0
+        else:
+            count = counts.get(calendar_year, 1)
+            weight = 1.0 / count if count > 0 else 1.0
+        weights[period] = weight
+        normalized = _normalize_progress_year(period)
+        weights[normalized] = weight
+        if calendar_year is not None:
+            weights[calendar_year] = weight
+
+    return weights
 
 
 def _initial_price_for_year(price_initial: float | Mapping[int, float], year: int, fallback: float) -> float:
@@ -133,11 +235,28 @@ def _policy_record_for_year(policy: Any, year: int) -> dict[str, float | bool]:
 
     record['bank_enabled'] = bool(getattr(policy, 'banking_enabled', True))
 
-    full_compliance_years = getattr(policy, 'full_compliance_years', set())
-    try:
-        record['full_compliance'] = bool(int(year) in set(full_compliance_years))
-    except TypeError:  # pragma: no cover - defensive
-        record['full_compliance'] = False
+    full_compliance_years = set(getattr(policy, 'full_compliance_years', set()))
+    if year in full_compliance_years:
+        record['full_compliance'] = True
+    else:
+        try:
+            numeric_year = int(year)
+        except (TypeError, ValueError):
+            numeric_year = None
+        if numeric_year is not None and numeric_year in full_compliance_years:
+            record['full_compliance'] = True
+        else:
+            mapper = getattr(policy, 'compliance_year_for', None)
+            if callable(mapper):
+                try:
+                    compliance_year = mapper(year)
+                except Exception:  # pragma: no cover - defensive guard
+                    compliance_year = None
+                record['full_compliance'] = bool(
+                    compliance_year is not None and compliance_year in full_compliance_years
+                )
+            else:
+                record['full_compliance'] = False
     return record
 
 
@@ -210,7 +329,7 @@ def _solve_allowance_market_year(
         if progress_cb is None:
             return
         payload: dict[str, object] = {
-            "year": int(year),
+            "year": _normalize_progress_year(year),
             "iteration": int(iteration),
             "status": status,
         }
@@ -588,19 +707,91 @@ def _dispatch_from_frames(
     frames: Frames | Mapping[str, pd.DataFrame],
     *,
     use_network: bool = False,
-) -> Callable[[int, float], object]:
+    period_weights: Mapping[Any, float] | None = None,
+) -> Callable[[Any, float], object]:
     """Build a dispatch callback that solves using the frame container."""
 
     _ensure_pandas()
 
     frames_obj = Frames.coerce(frames)
 
-    if use_network:
-        def dispatch(year: int, allowance_cost: float):
-            return solve_network_from_frames(frames_obj, year, allowance_cost)
-    else:
-        def dispatch(year: int, allowance_cost: float):
-            return solve_single(year, allowance_cost, frames=frames_obj)
+    weights: dict[object, float] = {}
+    if period_weights:
+        for period, raw_weight in period_weights.items():
+            try:
+                weight = float(raw_weight)
+            except (TypeError, ValueError):
+                continue
+            if weight <= 0.0:
+                continue
+            weights[period] = weight
+            normalized = _normalize_progress_year(period)
+            weights[normalized] = weight
+
+    def _weight_for(period: Any) -> float:
+        weight = weights.get(period)
+        if weight is not None:
+            return weight
+        normalized = _normalize_progress_year(period)
+        return float(weights.get(normalized, 1.0))
+
+    def _scaled_frames(year: Any, weight: float) -> Frames:
+        if abs(weight - 1.0) <= 1e-12:
+            return frames_obj
+        try:
+            normalized_year = int(year)
+        except (TypeError, ValueError):
+            normalized_year = year
+        demand_df = frames_obj.demand()
+        if 'year' not in demand_df.columns:
+            return frames_obj
+        mask = demand_df['year'] == normalized_year
+        if not mask.any():
+            return frames_obj
+        adjusted = demand_df.copy()
+        adjusted.loc[mask, 'demand_mwh'] = (
+            adjusted.loc[mask, 'demand_mwh'].astype(float) / weight
+        )
+        return frames_obj.with_frame('demand', adjusted)
+
+    def _scale_result(result: object, weight: float) -> object:
+        if abs(weight - 1.0) <= 1e-12:
+            return result
+        if isinstance(result, DispatchResult):
+            scale = float(weight)
+            gen_by_fuel = {key: float(value) * scale for key, value in result.gen_by_fuel.items()}
+            emissions_by_region = {
+                key: float(value) * scale for key, value in result.emissions_by_region.items()
+            }
+            flows = {key: float(value) * scale for key, value in result.flows.items()}
+            generation_by_region = {
+                key: float(value) * scale for key, value in result.generation_by_region.items()
+            }
+            generation_by_coverage = {
+                key: float(value) * scale for key, value in result.generation_by_coverage.items()
+            }
+            return DispatchResult(
+                gen_by_fuel=gen_by_fuel,
+                region_prices=dict(result.region_prices),
+                emissions_tons=float(result.emissions_tons) * scale,
+                emissions_by_region=emissions_by_region,
+                flows=flows,
+                generation_by_region=generation_by_region,
+                generation_by_coverage=generation_by_coverage,
+                imports_to_covered=float(result.imports_to_covered) * scale,
+                exports_from_covered=float(result.exports_from_covered) * scale,
+                region_coverage=dict(result.region_coverage),
+            )
+        return result
+
+    def dispatch(year: Any, allowance_cost: float):
+        weight = _weight_for(year)
+        frames_for_year = _scaled_frames(year, weight)
+        if use_network:
+            raw_result = solve_network_from_frames(frames_for_year, year, allowance_cost)
+        else:
+            raw_result = solve_single(year, allowance_cost, frames=frames_for_year)
+        return _scale_result(raw_result, weight)
 
     return dispatch
 
@@ -622,7 +813,13 @@ def run_fixed_point_from_frames(
     frames_obj = Frames.coerce(frames)
     policy_spec = frames_obj.policy()
     policy = policy_spec.to_policy()
-    dispatch_solver = _dispatch_from_frames(frames_obj, use_network=use_network)
+    years_sequence = _coerce_years(policy, years)
+    period_weights = _compute_period_weights(policy, years_sequence)
+    dispatch_solver = _dispatch_from_frames(
+        frames_obj,
+        use_network=use_network,
+        period_weights=period_weights,
+    )
 
     def dispatch_model(year: int, allowance_cost: float) -> float:
         return _extract_emissions(dispatch_solver(year, allowance_cost))
@@ -639,113 +836,179 @@ def run_fixed_point_from_frames(
 
 
 def _build_engine_outputs(
-    years: Sequence[int],
-    raw_results: Mapping[int, Mapping[str, object]],
-    dispatch_solver: Callable[[int, float], object],
+    years: Sequence[Any],
+    raw_results: Mapping[Any, Mapping[str, object]],
+    dispatch_solver: Callable[[Any, float], object],
+    policy: RGGIPolicyAnnual,
 ) -> EngineOutputs:
-    """Convert annual fixed-point results into structured engine outputs."""
+    """Convert fixed-point results into structured engine outputs."""
 
     _ensure_pandas()
 
-    annual_rows: list[dict[str, object]] = []
-    emissions_rows: list[dict[str, object]] = []
-    price_rows: list[dict[str, object]] = []
-    flow_rows: list[dict[str, object]] = []
+    aggregated: dict[int, dict[str, object]] = {}
 
-    for year in years:
-        summary_raw = raw_results.get(year)
+    for period in years:
+        summary_raw = raw_results.get(period)
         if summary_raw is None:
             continue
         summary = dict(summary_raw)
         price = float(summary.get("p_co2", 0.0))
         dispatch_result = summary.pop("_dispatch_result", None)
         if dispatch_result is None:
-            dispatch_result = dispatch_solver(year, price)
-        emissions_total = _extract_emissions(dispatch_result)
+            dispatch_result = dispatch_solver(period, price)
+        emissions_total = float(summary.get("emissions", _extract_emissions(dispatch_result)))
 
-        finalize = summary.get("finalize") or {}
-        bank_value = float(summary.get("bank_new", 0.0))
-        surrendered = float(summary.get("surrendered", 0.0))
-        obligation = float(summary.get("obligation_new", 0.0))
-        shortage_flag = bool(summary.get("shortage_flag", False))
-        finalized = bool(finalize.get("finalized", False))
-        if finalized:
-            bank_value = float(finalize.get("bank_final", bank_value))
-            surrendered += float(finalize.get("surrendered_additional", 0.0))
-            obligation = float(finalize.get("remaining_obligation", obligation))
-            shortage_flag = shortage_flag or bool(finalize.get("shortage_flag", False))
+        compliance_year = getattr(policy, "compliance_year_for", None)
+        if callable(compliance_year):
+            try:
+                calendar_year = int(compliance_year(period))
+            except Exception:  # pragma: no cover - defensive guard
+                calendar_year = int(period)
+        else:
+            try:
+                calendar_year = int(period)
+            except (TypeError, ValueError):
+                calendar_year = hash(period)
 
+        entry = aggregated.setdefault(
+            calendar_year,
+            {
+                "periods": [],
+                "price_last": 0.0,
+                "iterations_max": 0,
+                "emissions_sum": 0.0,
+                "available_allowances_sum": 0.0,
+                "bank_prev_first": None,
+                "bank_new_last": 0.0,
+                "obligation_last": 0.0,
+                "shortage_any": False,
+                "finalize_last": {},
+                "finalized": False,
+                "bank_final": 0.0,
+                "surrendered_sum": 0.0,
+                "surrendered_extra": 0.0,
+                "emissions_by_region": defaultdict(float),
+                "price_by_region": {},
+                "flows": defaultdict(float),
+            },
+        )
+
+        entry["periods"].append(period)
+        entry["price_last"] = price
         iterations_value = summary.get("iterations", 0)
         try:
-            iterations = int(iterations_value)
+            iterations_int = int(iterations_value)
         except (TypeError, ValueError):
-            iterations = 0
+            iterations_int = 0
+        entry["iterations_max"] = max(entry["iterations_max"], iterations_int)
+        entry["emissions_sum"] += emissions_total
+        entry["available_allowances_sum"] += float(summary.get("available_allowances", 0.0))
+        if entry["bank_prev_first"] is None:
+            entry["bank_prev_first"] = float(summary.get("bank_prev", 0.0))
+        entry["bank_new_last"] = float(summary.get("bank_new", 0.0))
+        entry["obligation_last"] = float(summary.get("obligation_new", 0.0))
+        entry["shortage_any"] = entry["shortage_any"] or bool(summary.get("shortage_flag", False))
+        entry["surrendered_sum"] += float(summary.get("surrendered", 0.0))
 
-        allowances_available = float(summary.get("available_allowances", 0.0))
-        allowances_total = float(
-            summary.get(
-                "allowances_total",
-                allowances_available + float(summary.get("bank_prev", 0.0)),
+        finalize_raw = dict(summary.get("finalize", {}))
+        entry["finalize_last"] = finalize_raw
+        if finalize_raw:
+            entry["finalized"] = bool(finalize_raw.get("finalized", entry["finalized"]))
+            entry["bank_final"] = float(finalize_raw.get("bank_final", entry["bank_new_last"]))
+            entry["obligation_last"] = float(
+                finalize_raw.get("remaining_obligation", entry["obligation_last"])
             )
-        )
+            entry["shortage_any"] = entry["shortage_any"] or bool(
+                finalize_raw.get("shortage_flag", False)
+            )
+            entry["surrendered_extra"] = float(
+                finalize_raw.get("surrendered_additional", entry["surrendered_extra"])
+            )
+        else:
+            entry["bank_final"] = entry.get("bank_final", entry["bank_new_last"])
 
         emissions_by_region = getattr(dispatch_result, "emissions_by_region", None)
         if isinstance(emissions_by_region, Mapping):
             for region, value in emissions_by_region.items():
-                emissions_rows.append(
-                    {"year": year, "region": str(region), "emissions_tons": float(value)}
-                )
+                key = str(region)
+                entry["emissions_by_region"][key] += float(value)
         else:
-            emissions_rows.append(
-                {"year": year, "region": "system", "emissions_tons": float(emissions_total)}
-            )
+            entry["emissions_by_region"]["system"] += emissions_total
 
         region_prices = getattr(dispatch_result, "region_prices", {})
         if isinstance(region_prices, Mapping):
+            price_map = entry["price_by_region"]
             for region, value in region_prices.items():
-                price_rows.append({"year": year, "region": str(region), "price": float(value)})
+                price_map[str(region)] = float(value)
 
         flows = getattr(dispatch_result, "flows", {})
         if isinstance(flows, Mapping):
-            for key, flow_value in flows.items():
-                if not isinstance(key, tuple) or len(key) != 2:
-                    continue
-                region_a, region_b = key
-                flow_float = float(flow_value)
-                if flow_float >= 0.0:
-                    flow_rows.append(
-                        {
-                            "year": year,
-                            "from_region": str(region_a),
-                            "to_region": str(region_b),
-                            "flow_mwh": flow_float,
-                        }
-                    )
-                else:
-                    flow_rows.append(
-                        {
-                            "year": year,
-                            "from_region": str(region_b),
-                            "to_region": str(region_a),
-                            "flow_mwh": -flow_float,
-                        }
-                    )
+            flow_map = entry["flows"]
+            for key, value in flows.items():
+                if isinstance(key, tuple) and len(key) == 2:
+                    key_norm = (str(key[0]), str(key[1]))
+                    flow_map[key_norm] += float(value)
+
+    annual_rows: list[dict[str, object]] = []
+    emissions_rows: list[dict[str, object]] = []
+    price_rows: list[dict[str, object]] = []
+    flow_rows: list[dict[str, object]] = []
+
+    for year in sorted(aggregated):
+        entry = aggregated[year]
+        minted = float(entry["available_allowances_sum"])
+        bank_prev = float(entry.get("bank_prev_first") or 0.0)
+        allowances_total = bank_prev + minted
+        surrendered_total = float(entry["surrendered_sum"]) + float(entry.get("surrendered_extra", 0.0))
+        bank_final = float(entry.get("bank_final", entry.get("bank_new_last", 0.0)))
+        obligation_final = float(entry.get("obligation_last", 0.0))
+        price_value = float(entry.get("price_last", 0.0))
+        iterations_value = int(entry.get("iterations_max", 0))
+        shortage_flag = bool(entry.get("shortage_any", False))
+        finalized = bool(entry.get("finalized", False))
 
         annual_rows.append(
             {
                 "year": year,
-                "p_co2": price,
-                "iterations": iterations,
-                "emissions_tons": float(emissions_total),
-                "available_allowances": allowances_available,
+                "p_co2": price_value,
+                "iterations": iterations_value,
+                "emissions_tons": float(entry.get("emissions_sum", 0.0)),
+                "available_allowances": minted,
                 "allowances_total": allowances_total,
-                "bank": bank_value,
-                "surrendered": surrendered,
-                "obligation": obligation,
+                "bank": bank_final,
+                "surrendered": surrendered_total,
+                "obligation": obligation_final,
                 "finalized": finalized,
                 "shortage_flag": shortage_flag,
             }
         )
+
+        for region, value in entry["emissions_by_region"].items():
+            emissions_rows.append({"year": year, "region": region, "emissions_tons": float(value)})
+
+        for region, value in entry["price_by_region"].items():
+            price_rows.append({"year": year, "region": region, "price": float(value)})
+
+        for (region_a, region_b), value in entry["flows"].items():
+            flow_value = float(value)
+            if flow_value >= 0.0:
+                flow_rows.append(
+                    {
+                        "year": year,
+                        "from_region": region_a,
+                        "to_region": region_b,
+                        "flow_mwh": flow_value,
+                    }
+                )
+            else:
+                flow_rows.append(
+                    {
+                        "year": year,
+                        "from_region": region_b,
+                        "to_region": region_a,
+                        "flow_mwh": -flow_value,
+                    }
+                )
 
     annual_df = pd.DataFrame(annual_rows)
     if not annual_df.empty:
@@ -798,8 +1061,14 @@ def run_end_to_end_from_frames(
     frames_obj = Frames.coerce(frames)
     policy_spec = frames_obj.policy()
     policy = policy_spec.to_policy()
-    dispatch_solver = _dispatch_from_frames(frames_obj, use_network=use_network)
     years_sequence = _coerce_years(policy, years)
+    period_weights = _compute_period_weights(policy, years_sequence)
+    dispatch_solver = _dispatch_from_frames(
+        frames_obj,
+        use_network=use_network,
+        period_weights=period_weights,
+    )
+    years_sequence = list(years_sequence)
     total_years = len(years_sequence)
 
     if progress_cb is not None:
@@ -811,7 +1080,7 @@ def run_end_to_end_from_frames(
             },
         )
 
-    results: dict[int, dict[str, object]] = {}
+    results: dict[Any, dict[str, object]] = {}
     policy_enabled_global = bool(getattr(policy, 'enabled', True))
     banking_enabled_global = bool(getattr(policy, 'banking_enabled', True))
     bank_prev = float(policy.bank0) if (policy_enabled_global and banking_enabled_global) else 0.0
@@ -824,7 +1093,7 @@ def run_end_to_end_from_frames(
             progress_cb(
                 "year_start",
                 {
-                    "year": int(year),
+                    "year": _normalize_progress_year(year),
                     "index": idx,
                     "total_years": total_years,
                 },
@@ -919,7 +1188,7 @@ def run_end_to_end_from_frames(
             state['outstanding'] = 0.0
             if progress_cb is not None:
                 payload: dict[str, object] = {
-                    "year": int(year),
+                    "year": _normalize_progress_year(year),
                     "index": idx,
                     "total_years": total_years,
                     "shortage": bool(summary.get('shortage_flag', False)),
@@ -1002,7 +1271,7 @@ def run_end_to_end_from_frames(
 
         if progress_cb is not None:
             payload = {
-                'year': int(year),
+                'year': _normalize_progress_year(year),
                 'index': idx,
                 'total_years': total_years,
                 'shortage': bool(summary.get('shortage_flag', False)),
@@ -1020,5 +1289,5 @@ def run_end_to_end_from_frames(
                 payload['iterations'] = 0
             progress_cb('year_complete', payload)
 
-    ordered_years = sorted(results)
-    return _build_engine_outputs(ordered_years, results, dispatch_solver)
+    ordered_years = [period for period in years_sequence if period in results]
+    return _build_engine_outputs(ordered_years, results, dispatch_solver, policy)

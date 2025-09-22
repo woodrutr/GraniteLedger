@@ -190,6 +190,8 @@ def test_policy_spec_round_trip() -> None:
     assert policy.ccr2_enabled is True
     assert policy.control_period_length is None
     assert policy.banking_enabled is True
+    assert spec.resolution == "annual"
+    assert policy.resolution == "annual"
 
 
 def test_fixed_point_runs_from_frames() -> None:

@@ -105,6 +105,7 @@ def test_load_annual_policy_builds_series_and_validates_alignment():
     assert policy.ccr1_enabled is True
     assert policy.ccr2_enabled is True
     assert policy.control_period_length is None
+    assert policy.resolution == "annual"
 
 
 def test_load_annual_policy_flags_missing_series_years():
@@ -171,3 +172,25 @@ def test_disabled_policy_allows_missing_inputs():
     assert len(policy.cap) == 0
     assert policy.ccr1_enabled is True
     assert policy.ccr2_enabled is True
+    assert policy.resolution == "annual"
+
+
+def test_load_annual_policy_supports_daily_resolution():
+    cfg = {
+        "years": [2025],
+        "cap": {2025: 50.0},
+        "floor": {2025: 2.0},
+        "ccr1_trigger": {2025: 5.0},
+        "ccr1_qty": {2025: 10.0},
+        "ccr2_trigger": {2025: 9.0},
+        "ccr2_qty": {2025: 20.0},
+        "cp_id": {2025: "CP"},
+        "bank0": 5.0,
+        "annual_surrender_frac": 0.5,
+        "carry_pct": 1.0,
+        "resolution": "daily",
+    }
+
+    policy = load_annual_policy(cfg)
+
+    assert policy.resolution == "daily"
