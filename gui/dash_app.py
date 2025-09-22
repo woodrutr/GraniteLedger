@@ -35,6 +35,27 @@ ELECTRICITY_OVERRIDES_KEY = 'electricity_expansion_overrides'
 ELECTRICITY_INCENTIVES_KEY = 'electricity_incentives'
 SW_BUILDS_PATH = Path(PROJECT_ROOT, 'input', 'electricity', 'sw_builds.csv')
 
+# Debugging must never be enabled in production deployments because Dash's
+# debugger exposes a remote code execution surface. Developers can opt in
+# locally by exporting the environment variable documented in the README.
+DASH_DEBUG_ENV_VAR = 'BLUESKY_DASH_DEBUG'
+
+
+def dash_debug_enabled() -> bool:
+    """Return whether the Dash app should run in debug mode.
+
+    Debug mode is only intended for local development and should never be
+    enabled in production deployments because it exposes the werkzeug
+    debugger and automatic reloader.
+    """
+
+    raw_value = os.getenv(DASH_DEBUG_ENV_VAR)
+
+    if raw_value is None:
+        return False
+
+    return raw_value.strip().lower() in {'1', 'true', 't', 'yes', 'y', 'on'}
+
 
 # Initialize the Dash app
 app = dash.Dash(
@@ -562,7 +583,15 @@ def run_mode(n_clicks, selected_mode):
 
 
 if __name__ == '__main__':
+    debug_mode = dash_debug_enabled()
+
+    if debug_mode:
+        print(
+            'Dash debug mode enabled via '
+            f"{DASH_DEBUG_ENV_VAR}. Do not enable this in production environments."
+        )
+
     try:
-        app.run_server(debug=True, host='localhost', port=8080)
+        app.run_server(debug=debug_mode, host='localhost', port=8080)
     finally:
         http_server_process.terminate()
