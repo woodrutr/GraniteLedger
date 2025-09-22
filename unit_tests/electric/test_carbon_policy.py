@@ -1,9 +1,14 @@
+from pathlib import Path
+
 import pytest
 pytest.importorskip('pyomo')
 import pyomo.environ as pyo
 
+from definitions import PROJECT_ROOT
 from policy.allowance_supply import AllowanceSupply
-
+from src.common import config_setup
+from src.models.electricity.scripts import preprocessor as prep
+from src.models.electricity.scripts.electricity_model import PowerModel
 from src.models.electricity.scripts.runner import record_allowance_emission_prices
 
 
@@ -396,6 +401,37 @@ def test_emission_limit_detects_shortfall():
     assert model.allowance_surrender[key_2030].value <= (
         model.allowance_purchase[key_2030].value + incoming_2030
     )
+
+
+@pytest.mark.usefixtures('minimal_carbon_policy_inputs')
+def test_carbon_price_updates_refresh_ccr_activation():
+    config_path = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
+    settings = config_setup.Config_settings(config_path, test=True)
+    settings.regions = [7, 8]
+    settings.years = [2025, 2030]
+
+    set_inputs = prep.Sets(settings)
+    frames_store, set_inputs = prep.preprocessor(set_inputs)
+    model = PowerModel(frames_store.to_frames(), set_inputs)
+
+    idx = next(iter(model.cap_group_year_index))
+    model.CarbonCCR1Trigger[idx].set_value(10.0)
+    model.CarbonCCR1Quantity[idx].set_value(1.0)
+    model.CarbonCCR2Trigger[idx].set_value(20.0)
+    model.CarbonCCR2Quantity[idx].set_value(1.0)
+    model.update_ccr_activation()
+
+    model.CarbonPrice[idx].set_value(5.0)
+    assert pyo.value(model.CarbonCCR1Active[idx]) == pytest.approx(0.0)
+    assert pyo.value(model.CarbonCCR2Active[idx]) == pytest.approx(0.0)
+
+    model.CarbonPrice[idx].set_value(12.0)
+    assert pyo.value(model.CarbonCCR1Active[idx]) == pytest.approx(1.0)
+    assert pyo.value(model.CarbonCCR2Active[idx]) == pytest.approx(0.0)
+
+    model.CarbonPrice[idx].set_value(25.0)
+    assert pyo.value(model.CarbonCCR1Active[idx]) == pytest.approx(1.0)
+    assert pyo.value(model.CarbonCCR2Active[idx]) == pytest.approx(1.0)
 
 
 def test_final_year_obligation_must_clear():

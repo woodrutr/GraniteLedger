@@ -12,6 +12,7 @@ from logging import getLogger
 from typing import Any, cast
 
 import pyomo.environ as pyo
+from pyomo.core.base.param import NOTSET, ParamData
 
 # Import python modules
 from src.integrator.utilities import HI
@@ -57,6 +58,33 @@ DEFAULT_TECH_EMISSIONS_RATE_TON_PER_GWH = {
     14: 0.0,  # Wind Onshore
     15: 0.0,  # Solar
 }
+
+
+def _install_param_value_change_callback():
+    """Augment :class:`pyomo.core.base.param.ParamData` with a value-change hook."""
+
+    if getattr(ParamData, '_bluesky_callback_wrapped', False):
+        return
+
+    original_set_value = ParamData.set_value
+
+    def _set_value_with_callback(self: ParamData, value, idx=NOTSET):  # type: ignore[override]
+        result = original_set_value(self, value, idx=idx)
+        component = self.parent_component()
+        callback = getattr(component, '_on_param_value_change', None)
+        if callback is not None:
+            index = self.index() if idx is NOTSET else idx
+            try:
+                callback(component, index, value)
+            except TypeError:
+                callback()
+        return result
+
+    ParamData.set_value = _set_value_with_callback  # type: ignore[assignment]
+    ParamData._bluesky_callback_wrapped = True  # type: ignore[attr-defined]
+
+
+_install_param_value_change_callback()
 
 ###################################################################################################
 # MODEL
@@ -495,6 +523,9 @@ class PowerModel(Model):
                 self.CarbonCCR2Active[idx] = active2
 
         self.update_ccr_activation = update_ccr_activation
+        self.CarbonPrice._on_param_value_change = (
+            lambda *_args, **_kwargs: self.update_ccr_activation()
+        )
 
         start_bank_raw = optional_frame('CarbonStartBank')
         start_bank_data = _format_cap_year_df(
