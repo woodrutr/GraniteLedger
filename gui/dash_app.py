@@ -582,7 +582,8 @@ def run_mode(n_clicks, selected_mode):
         return error_msg, 0
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
+    http_server_process = None
     debug_mode = dash_debug_enabled()
 
     if debug_mode:
@@ -592,6 +593,23 @@ if __name__ == '__main__':
         )
 
     try:
-        app.run_server(debug=debug_mode, host='localhost', port=8080)
+        with open(os.devnull, "w") as devnull:
+            http_server_process = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "http.server",
+                    "--bind",
+                    "127.0.0.1",
+                    "8000",
+                    "--directory",
+                    docs_dir,
+                ],
+                stdout=devnull,
+                stderr=devnull,
+            )
+
+        app.run_server(debug=debug_mode, host="127.0.0.1", port=8080)
     finally:
-        http_server_process.terminate()
+        if http_server_process:
+            http_server_process.terminate()
