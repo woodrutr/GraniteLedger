@@ -333,6 +333,14 @@ def _build_policy_frame(
 
     bank_flag = bool(carbon_policy_enabled and banking_enabled)
 
+    resolution_raw = market_cfg.get('resolution', 'annual')
+    if isinstance(resolution_raw, str):
+        resolution = resolution_raw.strip().lower() or 'annual'
+    else:
+        resolution = str(resolution_raw).strip().lower() or 'annual'
+    if resolution not in {'annual', 'daily'}:
+        resolution = 'annual'
+
     if carbon_policy_enabled:
         ccr1_flag = _coerce_bool_flag(market_cfg.get('ccr1_enabled'), default=True)
         ccr2_flag = _coerce_bool_flag(market_cfg.get('ccr2_enabled'), default=True)
@@ -425,6 +433,7 @@ def _build_policy_frame(
                 'ccr2_enabled': bool(ccr2_flag),
                 'control_period_years': control_period,
                 'bank_enabled': bool(bank_flag),
+                'resolution': resolution,
             }
         )
 

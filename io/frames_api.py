@@ -111,6 +111,7 @@ class PolicySpec:
     ccr1_enabled: bool = True
     ccr2_enabled: bool = True
     control_period_years: int | None = None
+    resolution: str = "annual"
 
     def to_policy(self) -> RGGIPolicyAnnual:
         """Instantiate :class:`RGGIPolicyAnnual` from the stored specification."""
@@ -132,6 +133,7 @@ class PolicySpec:
             ccr1_enabled=self.ccr1_enabled,
             ccr2_enabled=self.ccr2_enabled,
             control_period_length=self.control_period_years,
+            resolution=self.resolution,
         )
 
 
@@ -523,6 +525,22 @@ class Frames(Mapping[str, pd.DataFrame]):
 
         df = _validate_columns('policy', df, required)
 
+        resolution = 'annual'
+        if 'resolution' in df.columns:
+            resolution_series = df['resolution'].dropna()
+            unique_res = {
+                str(value).strip().lower()
+                for value in resolution_series.unique()
+                if str(value).strip()
+            }
+            if len(unique_res) > 1:
+                raise ValueError(
+                    'policy frame must provide a single resolution value shared across years'
+                )
+            if unique_res:
+                resolution = unique_res.pop()
+            df = df.drop(columns=['resolution'])
+
         df['year'] = _require_numeric('policy', 'year', df['year']).astype(int)
         if df['year'].duplicated().any():
             duplicates = sorted(df.loc[df['year'].duplicated(), 'year'].unique())
@@ -653,6 +671,7 @@ class Frames(Mapping[str, pd.DataFrame]):
             ccr1_enabled=ccr1_enabled,
             ccr2_enabled=ccr2_enabled,
             control_period_years=control_period_years,
+            resolution=resolution,
         )
 
 

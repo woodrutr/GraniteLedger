@@ -53,6 +53,7 @@ def _policy_frame(
                 "annual_surrender_frac": float(annual_surrender_frac),
                 "carry_pct": float(carry_pct),
                 "policy_enabled": bool(policy_enabled),
+                "resolution": "annual",
             }
         )
     return pd.DataFrame(records)
@@ -111,7 +112,6 @@ def three_year_outputs():
 
 def test_three_year_control_period_converges(three_year_outputs):
     """The coupled dispatch/allowance engine should converge quickly."""
-
     iterations = three_year_outputs.annual["iterations"]
     assert not iterations.empty
     assert int(iterations.max()) <= 10
@@ -151,7 +151,6 @@ def test_progress_callback_reports_each_year():
 
 def test_bank_non_negative_after_compliance(three_year_outputs):
     """Final true-up should not create a negative allowance bank."""
-
     cp_year = YEARS[-1]
     bank = three_year_outputs.annual.loc[
         three_year_outputs.annual["year"] == cp_year, "bank"
@@ -161,7 +160,6 @@ def test_bank_non_negative_after_compliance(three_year_outputs):
 
 def test_emissions_decline_with_stricter_policy():
     """Raising the floor or lowering the cap should reduce emissions."""
-
     base_frames = _three_year_frames(carry_pct=0.0, annual_surrender_frac=1.0)
     base_outputs = run_end_to_end_from_frames(
         base_frames,
@@ -217,7 +215,6 @@ def test_bank_never_negative_across_years():
         tol=1e-4,
         relaxation=0.8,
     )
-
     assert outputs.annual["bank"].min() >= -1e-9
 
 
@@ -260,13 +257,13 @@ def test_ccr_trigger_increases_allowances():
     loads = [600_000.0, 600_000.0, 600_000.0]
     frames = _three_year_frames(loads=loads)
     policy_df = _policy_frame(cap_scale=0.15)
-    policy_df['bank0'] = 0.0
-    policy_df['ccr1_qty'] = 500_000.0
+    policy_df["bank0"] = 0.0
+    policy_df["ccr1_qty"] = 500_000.0
     frames = frames.with_frame("policy", policy_df)
     policy = frames.policy().to_policy()
     outputs = run_end_to_end_from_frames(
         frames,
-        years=YEARS,
+        years=YEEARS,
         price_initial=0.0,
         tol=1e-4,
         relaxation=0.8,
@@ -280,7 +277,9 @@ def test_ccr_trigger_increases_allowances():
     allowances_issued = available - bank0
 
     assert allowances_issued > cap
-    assert annual.loc[first_year, "p_co2"] == pytest.approx(policy.ccr1_trigger.loc[first_year], rel=1e-4)
+    assert annual.loc[first_year, "p_co2"] == pytest.approx(
+        policy.ccr1_trigger.loc[first_year], rel=1e-4
+    )
 
 
 def test_compliance_true_up_reconciles_obligations():
@@ -343,6 +342,117 @@ def test_control_period_mass_balance():
     assert total_supply == pytest.approx(total_surrendered + ending_bank + remaining)
 
 
+def test_daily_resolution_matches_annual_totals():
+    base_frames = baseline_frames(year=2025, load_mwh=1_000_000.0)
+    annual_policy = pd.DataFrame(
+        [
+            {
+                "year": 2025,
+                "cap_tons": 10_000_000.0,
+                "floor_dollars": 0.0,
+                "ccr1_trigger": 0.0,
+                "ccr1_qty": 0.0,
+                "ccr2_trigger": 0.0,
+                "ccr2_qty": 0.0,
+                "cp_id": "CP1",
+                "full_compliance": True,
+                "bank0": 0.0,
+                "annual_surrender_frac": 1.0,
+                "carry_pct": 1.0,
+                "policy_enabled": True,
+                "bank_enabled": True,
+                "resolution": "annual",
+            }
+        ]
+    )
+    frames_annual = base_frames.with_frame("policy", annual_policy)
+
+    annual_outputs = run_end_to_end_from_frames(
+        frames_annual,
+        years=[2025],
+        price_initial=0.0,
+        tol=1e-4,
+        relaxation=0.8,
+    )
+
+    demand_total = float(base_frames.demand()["demand_mwh"].iloc[0])
+    demand_period = pd.DataFrame(
+        [
+            {"year": 2025001, "region": "default", "demand_mwh": demand_total / 2.0},
+            {"year": 2025002, "region": "default", "demand_mwh": demand_total / 2.0},
+        ]
+    )
+
+    frames_daily = base_frames.with_frame("demand", demand_period)
+
+    daily_records = []
+    for period in (1, 2):
+        period_key = 2025 * 1000 + period
+        daily_records.append(
+            {
+                "year": period_key,
+                "cap_tons": 5_000_000.0,
+                "floor_dollars": 0.0,
+                "ccr1_trigger": 0.0,
+                "ccr1_qty": 0.0,
+                "ccr2_trigger": 0.0,
+                "ccr2_qty": 0.0,
+                "cp_id": "CP1",
+                "full_compliance": period == 2,
+                "bank0": 0.0,
+                "annual_surrender_frac": 1.0,
+                "carry_pct": 1.0,
+                "policy_enabled": True,
+                "bank_enabled": True,
+                "resolution": "daily",
+            }
+        )
+
+    daily_policy = pd.DataFrame(daily_records)
+    frames_daily = frames_daily.with_frame("policy", daily_policy)
+
+    daily_outputs = run_end_to_end_from_frames(
+        frames_daily,
+        years=[2025001, 2025002],
+        price_initial=0.0,
+        tol=1e-4,
+        relaxation=0.8,
+    )
+
+    annual_df = annual_outputs.annual.set_index("year").sort_index()
+    daily_df = daily_outputs.annual.set_index("year").sort_index()
+
+    pd.testing.assert_index_equal(daily_df.index, annual_df.index)
+    pd.testing.assert_frame_equal(daily_df, annual_df, check_exact=False, atol=1e-6, rtol=1e-9)
+
+    def _sorted(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+        if df.empty:
+            return df
+        return df.sort_values(columns).reset_index(drop=True)
+
+    pd.testing.assert_frame_equal(
+        _sorted(daily_outputs.emissions_by_region, ["year", "region"]),
+        _sorted(annual_outputs.emissions_by_region, ["year", "region"]),
+        check_exact=False,
+        atol=1e-6,
+        rtol=1e-9,
+    )
+    pd.testing.assert_frame_equal(
+        _sorted(daily_outputs.price_by_region, ["year", "region"]),
+        _sorted(annual_outputs.price_by_region, ["year", "region"]),
+        check_exact=False,
+        atol=1e-6,
+        rtol=1e-9,
+    )
+    pd.testing.assert_frame_equal(
+        _sorted(daily_outputs.flows, ["year", "from_region", "to_region"]),
+        _sorted(annual_outputs.flows, ["year", "from_region", "to_region"]),
+        check_exact=False,
+        atol=1e-6,
+        rtol=1e-9,
+    )
+
+
 def test_zero_cap_policy_still_enforced():
     frames = _three_year_frames()
 
@@ -356,11 +466,11 @@ def test_zero_cap_policy_still_enforced():
 
     default_policy = prep._default_policy_frame(zero_cap_settings)
     zero_cap_policy = _policy_frame(cap_scale=0.0)
-    zero_cap_policy['policy_enabled'] = list(default_policy['policy_enabled'])
-    zero_cap_policy['annual_surrender_frac'] = 1.0
-    assert zero_cap_policy['policy_enabled'].all()
+    zero_cap_policy["policy_enabled"] = list(default_policy["policy_enabled"])
+    zero_cap_policy["annual_surrender_frac"] = 1.0
+    assert zero_cap_policy["policy_enabled"].all()
 
-    frames = frames.with_frame('policy', zero_cap_policy)
+    frames = frames.with_frame("policy", zero_cap_policy)
     frames_store = prep.FrameStore(
         frames, carbon_policy_enabled=prep._is_carbon_policy_enabled(zero_cap_settings)
     )
@@ -378,6 +488,6 @@ def test_zero_cap_policy_still_enforced():
         relaxation=0.8,
     )
 
-    annual = outputs.annual.set_index('year')
-    assert (annual['obligation'] > 0.0).any()
-    assert annual['p_co2'].gt(0.0).any()
+    annual = outputs.annual.set_index("year")
+    assert (annual["obligation"] > 0.0).any()
+    assert annual["p_co2"].gt(0.0).any()

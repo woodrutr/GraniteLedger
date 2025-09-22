@@ -26,6 +26,7 @@ def _baseline_config() -> dict:
             "annual_surrender_frac": 1.0,
             "carry_pct": 1.0,
             "full_compliance_years": [2026],
+            "resolution": "annual",
         },
     }
 
