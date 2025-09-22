@@ -8,7 +8,7 @@ import tomllib
 import types
 
 # Import python modules
-from graniteledger.definitions import PROJECT_ROOT
+from main.definitions import PROJECT_ROOT
 from src.common.config_setup import Config_settings
 from src.common.utilities import setup_logger, get_args
 from src.common.documentation import write_model_setup_documentation

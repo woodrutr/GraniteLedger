@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import tomllib
 
-from graniteledger.definitions import PROJECT_ROOT
+from main.definitions import PROJECT_ROOT
 
 logger = getLogger(__name__)
 

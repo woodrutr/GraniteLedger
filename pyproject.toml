@@ -1,3 +1,14 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "main"
+dynamic = ["version"]
+
+[tool.setuptools.packages.find]
+include = ["main", "main.*", "src", "src.*"]
+
 [tool.ruff]
 line-length = 100
 extend-exclude = [
@@ -37,7 +48,7 @@ log_file_level = "INFO"
 python_version = "3.11"
 warn_unused_configs = true
 ignore_missing_imports = true
-files = ["definitions.py", "tests/test_types_exist.py"]
+files = ["main/definitions.py", "tests/test_types_exist.py"]
 
 [tool.pyright]
 reportCallIssue = false

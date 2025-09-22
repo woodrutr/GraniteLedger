@@ -2,7 +2,7 @@ import pytest
 from pyomo.environ import value
 from pathlib import Path
 
-from graniteledger.definitions import PROJECT_ROOT
+from main.definitions import PROJECT_ROOT
 from src.models.hydrogen.model import actions
 
 import logging

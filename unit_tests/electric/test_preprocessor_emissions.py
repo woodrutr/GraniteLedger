@@ -7,7 +7,7 @@ import importlib
 
 import pytest
 
-from graniteledger.definitions import PROJECT_ROOT
+from main.definitions import PROJECT_ROOT
 
 pytest.importorskip("pandas")
 

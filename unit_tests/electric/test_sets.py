@@ -3,7 +3,7 @@ from pathlib import Path
 import importlib
 import pytest
 
-from graniteledger.definitions import PROJECT_ROOT
+from main.definitions import PROJECT_ROOT
 
 pd = pytest.importorskip("pandas")
 
