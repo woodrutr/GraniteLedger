@@ -15,6 +15,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     import pandas as pd
 
 from io_loader import Frames
+from policy.generation_standard import GenerationStandardPolicy
 
 from .interface import DispatchResult
 from .lp_single import HOURS_PER_YEAR
@@ -293,6 +294,9 @@ def solve(
     interfaces: Mapping[Tuple[str, str], float] | Iterable[Tuple[Tuple[str, str], float]],
     allowance_cost: float,
     region_coverage: Mapping[str, bool] | None = None,
+    *,
+    year: int | None = None,
+    generation_standard: GenerationStandardPolicy | None = None,
 ) -> DispatchResult:
     """Solve the economic dispatch problem with transmission interfaces."""
 
@@ -319,6 +323,16 @@ def solve(
     region_list = sorted(regions)
     region_index = {region: idx for idx, region in enumerate(region_list)}
 
+    if generation_standard is not None and year is None:
+        raise ValueError(
+            "year must be provided when applying generation standard constraints"
+        )
+
+    generators_by_region: Dict[str, list[int]] = {region: [] for region in region_list}
+    tech_generators: Dict[Tuple[str, str], list[int]] = {}
+    tech_capacity_totals: Dict[Tuple[str, str], float] = {}
+    region_capacity_totals: Dict[str, float] = {region: 0.0 for region in region_list}
+
     matrix_columns: List[List[float]] = []
     lower_bounds: List[float] = []
     upper_bounds: List[float] = []
@@ -336,10 +350,19 @@ def solve(
         column[region_index[generator.region]] = 1.0
         matrix_columns.append(column)
         lower_bounds.append(0.0)
-        upper_bounds.append(max(0.0, generator.capacity))
+        capacity_limit = max(0.0, float(generator.capacity))
+        upper_bounds.append(capacity_limit)
         costs.append(generator.marginal_cost(allowance_cost))
         generator_refs.append(generator)
-        generator_indices.append(len(matrix_columns) - 1)
+        column_index = len(matrix_columns) - 1
+        generator_indices.append(column_index)
+
+        generators_by_region[generator.region].append(column_index)
+        fuel_key = str(generator.fuel).strip().lower()
+        tech_key = (generator.region, fuel_key)
+        tech_generators.setdefault(tech_key, []).append(column_index)
+        tech_capacity_totals[tech_key] = tech_capacity_totals.get(tech_key, 0.0) + capacity_limit
+        region_capacity_totals[generator.region] += capacity_limit
 
         current_flag = inferred_region_coverage.get(generator.region)
         inferred_region_coverage[generator.region] = (
@@ -358,8 +381,68 @@ def solve(
         generator_refs.append(None)
         flow_indices[len(matrix_columns) - 1] = (region_a, region_b)
 
-    matrix = [[column[idx] for column in matrix_columns] for idx in range(len(region_list))]
     rhs = [float(load_by_region.get(region, 0.0)) for region in region_list]
+
+    if generation_standard is not None:
+        requirements = generation_standard.requirements_for_year(int(year))
+        for requirement in requirements:
+            region = str(requirement.region)
+            if region not in region_index:
+                continue
+
+            tech_key = (region, requirement.technology_key)
+            tech_indices = tech_generators.get(tech_key, [])
+            available_capacity = tech_capacity_totals.get(tech_key, 0.0)
+
+            if requirement.capacity_mw > 0.0:
+                required_capacity = float(requirement.capacity_mw) * HOURS_PER_YEAR
+                if available_capacity + _TOL < required_capacity:
+                    available_mw = available_capacity / HOURS_PER_YEAR
+                    raise ValueError(
+                        "Generation standard for technology "
+                        f"'{requirement.technology}' in region {region} requires "
+                        f"{requirement.capacity_mw} MW but only {available_mw:.3f} MW is available"
+                    )
+
+            share = float(requirement.generation_share)
+            if share <= 0.0:
+                continue
+
+            region_indices = generators_by_region.get(region, [])
+            if not region_indices:
+                raise ValueError(
+                    "Generation standard requires generation in region "
+                    f"{region}, but no generators are available"
+                )
+            if not tech_indices:
+                raise ValueError(
+                    "Generation standard for technology "
+                    f"'{requirement.technology}' in region {region} cannot be enforced "
+                    "because no matching generators are available"
+                )
+
+            row_index = len(rhs)
+            rhs.append(0.0)
+            for column in matrix_columns:
+                column.append(0.0)
+
+            tech_index_set = set(tech_indices)
+            for idx in tech_indices:
+                matrix_columns[idx][row_index] = 1.0 - share
+            for idx in region_indices:
+                if idx in tech_index_set:
+                    continue
+                matrix_columns[idx][row_index] = -share
+
+            slack_column = [0.0] * len(rhs)
+            slack_column[row_index] = -1.0
+            matrix_columns.append(slack_column)
+            lower_bounds.append(0.0)
+            upper_bounds.append(region_capacity_totals.get(region, 0.0))
+            costs.append(0.0)
+            generator_refs.append(None)
+
+    matrix = [[column[idx] for column in matrix_columns] for idx in range(len(rhs))]
 
     solution, objective = _solve_dispatch_problem(matrix, rhs, lower_bounds, upper_bounds, costs)
 
@@ -445,6 +528,8 @@ def solve_from_frames(
     frames: Frames | Mapping[str, pd.DataFrame],
     year: int,
     allowance_cost: float,
+    *,
+    generation_standard: GenerationStandardPolicy | None = None,
 ) -> DispatchResult:
     """Solve the dispatch problem using frame-based inputs."""
 
@@ -504,6 +589,8 @@ def solve_from_frames(
         interfaces,
         allowance_cost,
         region_coverage=coverage_by_region,
+        year=year,
+        generation_standard=generation_standard,
     )
 
 

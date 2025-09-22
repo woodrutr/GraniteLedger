@@ -7,6 +7,7 @@ from dispatch.interface import DispatchResult
 from dispatch.lp_network import solve_from_frames
 from dispatch.lp_single import HOURS_PER_YEAR
 from io_loader import Frames
+from policy.generation_standard import GenerationStandardPolicy, TechnologyStandard
 
 
 def test_congestion_leads_to_price_separation() -> None:
@@ -246,3 +247,107 @@ def test_leakage_percentage_helper() -> None:
 
     expected = 100.0 * (35.0 - 20.0) / (80.0 - 60.0)
     assert scenario.leakage_percent(baseline) == pytest.approx(expected)
+
+
+def test_generation_standard_enforces_share() -> None:
+    demand = pd.DataFrame(
+        [{"year": 2030, "region": "alpha", "demand_mwh": 100.0 * HOURS_PER_YEAR}]
+    )
+    units = pd.DataFrame(
+        [
+            {
+                "unit_id": "alpha_wind",
+                "region": "alpha",
+                "fuel": "wind",
+                "cap_mw": 120.0,
+                "availability": 1.0,
+                "hr_mmbtu_per_mwh": 0.0,
+                "vom_per_mwh": 40.0,
+                "fuel_price_per_mmbtu": 0.0,
+                "ef_ton_per_mwh": 0.0,
+            },
+            {
+                "unit_id": "alpha_gas",
+                "region": "alpha",
+                "fuel": "gas",
+                "cap_mw": 160.0,
+                "availability": 1.0,
+                "hr_mmbtu_per_mwh": 0.0,
+                "vom_per_mwh": 10.0,
+                "fuel_price_per_mmbtu": 0.0,
+                "ef_ton_per_mwh": 0.4,
+            },
+        ]
+    )
+    fuels = pd.DataFrame([
+        {"fuel": "wind", "covered": True},
+        {"fuel": "gas", "covered": True},
+    ])
+
+    frames = Frames({"demand": demand, "units": units, "fuels": fuels})
+
+    share_df = pd.DataFrame({"alpha": [0.25]}, index=pd.Index([2030], name="year"))
+    standard = TechnologyStandard(
+        technology="wind", generation_table=share_df, enabled_regions={"alpha"}
+    )
+    policy = GenerationStandardPolicy([standard])
+
+    result = solve_from_frames(
+        frames, 2030, allowance_cost=0.0, generation_standard=policy
+    )
+
+    total_generation = result.generation_by_region["alpha"]
+    wind_generation = result.gen_by_fuel["wind"]
+    gas_generation = result.gen_by_fuel["gas"]
+
+    assert wind_generation == pytest.approx(0.25 * total_generation, rel=1e-4)
+    assert gas_generation == pytest.approx(0.75 * total_generation, rel=1e-4)
+
+
+def test_generation_standard_capacity_violation() -> None:
+    demand = pd.DataFrame(
+        [{"year": 2030, "region": "alpha", "demand_mwh": 80.0 * HOURS_PER_YEAR}]
+    )
+    units = pd.DataFrame(
+        [
+            {
+                "unit_id": "alpha_wind",
+                "region": "alpha",
+                "fuel": "wind",
+                "cap_mw": 100.0,
+                "availability": 1.0,
+                "hr_mmbtu_per_mwh": 0.0,
+                "vom_per_mwh": 35.0,
+                "fuel_price_per_mmbtu": 0.0,
+                "ef_ton_per_mwh": 0.0,
+            },
+            {
+                "unit_id": "alpha_gas",
+                "region": "alpha",
+                "fuel": "gas",
+                "cap_mw": 150.0,
+                "availability": 1.0,
+                "hr_mmbtu_per_mwh": 0.0,
+                "vom_per_mwh": 12.0,
+                "fuel_price_per_mmbtu": 0.0,
+                "ef_ton_per_mwh": 0.5,
+            },
+        ]
+    )
+    fuels = pd.DataFrame([
+        {"fuel": "wind", "covered": True},
+        {"fuel": "gas", "covered": True},
+    ])
+
+    frames = Frames({"demand": demand, "units": units, "fuels": fuels})
+
+    capacity_df = pd.DataFrame({"alpha": [200.0]}, index=pd.Index([2030], name="year"))
+    standard = TechnologyStandard(
+        technology="wind", capacity_table=capacity_df, enabled_regions={"alpha"}
+    )
+    policy = GenerationStandardPolicy([standard])
+
+    with pytest.raises(ValueError, match="wind"):
+        solve_from_frames(
+            frames, 2030, allowance_cost=0.0, generation_standard=policy
+        )
