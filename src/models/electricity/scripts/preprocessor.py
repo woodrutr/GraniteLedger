@@ -215,31 +215,12 @@ def _default_coverage_frame(setin) -> pd.DataFrame:
 
 
 def _is_carbon_policy_enabled(setin) -> bool:
-    """Return ``True`` when the allowance policy should be active."""
+    """Return ``True`` when the carbon policy should be treated as enabled."""
 
-    flag = getattr(setin, 'carbon_policy_enabled', None)
-    if flag is not None:
-        if isinstance(flag, str):
-            normalized = flag.strip().lower()
-            if not normalized:
-                return False
-            if normalized in {'true', '1', 'yes', 'y', 'on'}:
-                return True
-            if normalized in {'false', '0', 'no', 'n', 'off'}:
-                return False
-            try:
-                return float(normalized) != 0.0
-            except ValueError:
-                return True
-        return bool(flag)
-
-    cap_value = getattr(setin, 'carbon_cap', None)
-    if cap_value is None:
-        return False
-    try:
-        return float(cap_value) > 0.0
-    except (TypeError, ValueError):
-        return bool(cap_value)
+    explicit_flag = getattr(setin, 'carbon_policy_enabled', None)
+    if explicit_flag is not None:
+        return bool(explicit_flag)
+    return getattr(setin, 'carbon_cap', None) is not None
 
 
 def _default_policy_frame(setin) -> pd.DataFrame:
