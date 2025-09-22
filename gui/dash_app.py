@@ -22,7 +22,7 @@ import tomlkit
 import sys
 
 # Import python modules
-from definitions import PROJECT_ROOT
+from graniteledger.definitions import PROJECT_ROOT
 from main import app_main
 from src.models.electricity.scripts.technology_metadata import (
     get_technology_label,

@@ -20,7 +20,7 @@ import os
 # import requests  # IF needed, this import should be done after grequests, per grequests documentation due to monkeypatching.
 
 # Import python modules
-from definitions import PROJECT_ROOT
+from graniteledger.definitions import PROJECT_ROOT
 from config_setup import Config_settings
 
 # Establish logger

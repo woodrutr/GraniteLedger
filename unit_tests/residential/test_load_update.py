@@ -11,7 +11,7 @@ We will:
 """
 
 import pytest
-from definitions import PROJECT_ROOT
+from graniteledger.definitions import PROJECT_ROOT
 from pathlib import Path
 from src.common import config_setup
 from src.integrator import utilities

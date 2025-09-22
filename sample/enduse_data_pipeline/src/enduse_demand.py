@@ -8,7 +8,7 @@ from pathlib import Path
 import os
 
 # Import python modules
-from definitions import PROJECT_ROOT
+from graniteledger.definitions import PROJECT_ROOT
 from config_setup import Config_settings
 from src.enduse_db import stock_list
 

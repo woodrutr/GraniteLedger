@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any, Callable, TypeVar, cast
 
 import tomllib
 
-from definitions import PROJECT_ROOT
+from graniteledger.definitions import PROJECT_ROOT
 
 if importlib.util.find_spec('streamlit') is not None:  # pragma: no cover - optional dependency
     import streamlit as st  # type: ignore[import-not-found]

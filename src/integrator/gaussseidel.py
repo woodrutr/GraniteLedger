@@ -13,7 +13,7 @@ import pandas as pd
 from collections import namedtuple
 
 # Import python modules
-from definitions import PROJECT_ROOT
+from graniteledger.definitions import PROJECT_ROOT
 from src.integrator.progress_plot import plot_it
 from src.integrator.utilities import (
     EI,

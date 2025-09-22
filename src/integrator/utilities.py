@@ -43,7 +43,7 @@ else:  # pragma: no cover - exercised only when pyomo is absent
         )
 
 # Import python modules
-from definitions import PROJECT_ROOT
+from graniteledger.definitions import PROJECT_ROOT
 
 if typing.TYPE_CHECKING:
     from src.models.electricity.scripts.electricity_model import PowerModel

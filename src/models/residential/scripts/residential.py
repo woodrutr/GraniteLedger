@@ -17,7 +17,7 @@ from logging import getLogger
 import numpy as np
 
 # Import python modules
-from definitions import PROJECT_ROOT
+from graniteledger.definitions import PROJECT_ROOT
 from src.common.config_setup import Config_settings
 from src.common.utilities import scale_load, scale_load_with_enduses
 

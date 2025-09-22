@@ -23,7 +23,7 @@ import copy
 SHORT_TON_TO_METRIC_TON = 0.90718474
 
 # Import python modules
-from definitions import PROJECT_ROOT
+from graniteledger.definitions import PROJECT_ROOT
 from src.integrator.utilities import create_temporal_mapping
 from src.common.utilities import make_dir
 from src.models.electricity.scripts.technology_metadata import resolve_technology_key
