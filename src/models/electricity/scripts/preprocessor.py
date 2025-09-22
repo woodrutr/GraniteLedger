@@ -1938,21 +1938,50 @@ def preprocessor(setin):
     emissions_df['EmissionsRate'] = emissions_df['EmissionsRate'].astype(float)
     missing_techs = set(setin.T_gen) - set(emissions_df['tech'])
     if missing_techs:
-        emissions_df = pd.concat(
-            [
-                emissions_df,
-                pd.DataFrame(
-                    {
-                        'tech': list(missing_techs),
-                        'EmissionsRate': [
-                            DEFAULT_TECH_EMISSIONS_RATE_TON_PER_GWH.get(tech, 0.0)
-                            for tech in missing_techs
-                        ],
-                    }
-                ),
-            ],
-            ignore_index=True,
+        unknown_techs = [
+            tech
+            for tech in missing_techs
+            if tech not in DEFAULT_TECH_EMISSIONS_RATE_TON_PER_GWH
+        ]
+        if unknown_techs:
+            missing_str = ', '.join(str(tech) for tech in sorted(unknown_techs, key=str))
+            raise ValueError(
+                'EmissionsRate input is missing emissions rate data for technologies: '
+                f'{missing_str}'
+            )
+
+        defaults_to_add = sorted(
+            (
+                tech
+                for tech in missing_techs
+                if tech in DEFAULT_TECH_EMISSIONS_RATE_TON_PER_GWH
+            ),
+            key=str,
         )
+        if defaults_to_add:
+            defaults_df = pd.DataFrame(
+                {
+                    'tech': defaults_to_add,
+                    'EmissionsRate': [
+                        DEFAULT_TECH_EMISSIONS_RATE_TON_PER_GWH[tech]
+                        for tech in defaults_to_add
+                    ],
+                }
+            )
+            try:
+                defaults_df = defaults_df.astype(
+                    emissions_df[['tech', 'EmissionsRate']].dtypes.to_dict()
+                )
+            except Exception:  # pragma: no cover - defensive dtype alignment
+                pass
+
+            emissions_df = pd.concat(
+                [
+                    emissions_df,
+                    defaults_df,
+                ],
+                ignore_index=True,
+            )
     emissions_df = emissions_df[emissions_df['tech'].isin(setin.T_gen)]
     all_frames['EmissionsRate'] = emissions_df
 

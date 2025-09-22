@@ -7,13 +7,21 @@ from definitions import PROJECT_ROOT
 
 pd = pytest.importorskip("pandas")
 
+PYOMO_AVAILABLE = importlib.util.find_spec("pyomo") is not None
+PYOMO_REQUIRED_REASON = "requires Pyomo to build the electricity model"
+
 config_setup = importlib.import_module("src.common.config_setup")
-utilities = importlib.import_module("src.models.electricity.scripts.utilities")
-runner = importlib.import_module("src.models.electricity.scripts.runner")
+if PYOMO_AVAILABLE:
+    utilities = importlib.import_module("src.models.electricity.scripts.utilities")
+    runner = importlib.import_module("src.models.electricity.scripts.runner")
+else:  # pragma: no cover - handled in skip conditions
+    utilities = None
+    runner = None
 prep = importlib.import_module("src.models.electricity.scripts.preprocessor")
 
 logger = getLogger(__name__)
 
+@pytest.mark.skipif(not PYOMO_AVAILABLE, reason=PYOMO_REQUIRED_REASON)
 def test_years_set():
     """test to ensure the years set is injested properly"""
     years = [2030, 2031, 2042]
@@ -209,6 +217,7 @@ def test_uncapped_regions_excluded_from_carbon_group(monkeypatch):
     assert set(setin.cap_group_membership.index.get_level_values('region')) == {7}
 
 
+@pytest.mark.skipif(not PYOMO_AVAILABLE, reason=PYOMO_REQUIRED_REASON)
 def test_multi_cap_groups_preserve_labels(monkeypatch):
     config_path = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
     settings = config_setup.Config_settings(config_path, test=True)
@@ -286,6 +295,7 @@ def test_multi_cap_groups_preserve_labels(monkeypatch):
 
 
 @pytest.mark.usefixtures('minimal_carbon_policy_inputs')
+@pytest.mark.skipif(not PYOMO_AVAILABLE, reason=PYOMO_REQUIRED_REASON)
 def test_disabled_expansion_tech_removed_from_capacity_builds():
     """Technologies disabled in the config should not appear in build sets."""
 
