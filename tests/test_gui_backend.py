@@ -6,7 +6,7 @@ import pytest
 import pandas as pd
 
 from tests.fixtures.dispatch_single_minimal import baseline_frames
-from gui.app import run_policy_simulation
+from graniteledger.gui.app import run_policy_simulation
 
 streamlit = pytest.importorskip("streamlit")
 
@@ -112,7 +112,7 @@ def test_backend_policy_toggle_affects_price():
 
 
 def test_backend_disabled_toggle_propagates_flags(monkeypatch):
-    real_runner = importlib.import_module("engine.run_loop").run_end_to_end_from_frames
+    real_runner = importlib.import_module("graniteledger.engine.run_loop").run_end_to_end_from_frames
     captured: dict[str, object] = {}
 
     def capturing_runner(frames, **kwargs):
@@ -124,7 +124,9 @@ def test_backend_disabled_toggle_propagates_flags(monkeypatch):
         captured["banking"] = policy.banking_enabled
         return real_runner(frames, **kwargs)
 
-    monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: capturing_runner)
+    monkeypatch.setattr(
+        "graniteledger.gui.app._ensure_engine_runner", lambda: capturing_runner
+    )
 
     config = _baseline_config()
     frames = _frames_for_years([2025])
@@ -185,7 +187,7 @@ def test_backend_returns_error_for_invalid_frames():
 def test_backend_reports_missing_pandas(monkeypatch):
     config = _baseline_config()
 
-    monkeypatch.setattr("gui.app._PANDAS_MODULE", None)
+    monkeypatch.setattr("graniteledger.gui.app._PANDAS_MODULE", None)
 
     result = run_policy_simulation(config, start_year=2025, end_year=2025)
 
@@ -204,7 +206,7 @@ def test_backend_builds_default_frames(tmp_path):
 
 
 def test_build_policy_frame_control_override():
-    from gui.app import _build_policy_frame
+    from graniteledger.gui.app import _build_policy_frame
 
     config = _baseline_config()
     years = [2025, 2026, 2027]
@@ -222,7 +224,7 @@ def test_build_policy_frame_control_override():
 
 
 def test_build_policy_frame_disabled_defaults():
-    from gui.app import _build_policy_frame
+    from graniteledger.gui.app import _build_policy_frame
 
     config = _baseline_config()
     years = [2025]
@@ -235,7 +237,7 @@ def test_build_policy_frame_disabled_defaults():
 
 
 def test_load_config_data_accepts_various_sources(tmp_path):
-    from gui.app import _load_config_data
+    from graniteledger.gui.app import _load_config_data
 
     mapping = {"a": 1}
     assert _load_config_data(mapping) == mapping
@@ -255,7 +257,7 @@ def test_load_config_data_accepts_various_sources(tmp_path):
 
 
 def test_year_and_selection_helpers_cover_branches():
-    from gui.app import _years_from_config, _select_years
+    from graniteledger.gui.app import _years_from_config, _select_years
 
     config = {"years": [{"year": 2025}, 2026]}
     years = _years_from_config(config)

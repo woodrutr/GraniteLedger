@@ -1,5 +1,5 @@
-from src.common.Model import Model
-from src.common.config_setup import Config_settings
+from graniteledger.src.common.Model import Model
+from graniteledger.src.common.config_setup import Config_settings
 
 import random
 from pathlib import Path
@@ -7,7 +7,7 @@ from collections import defaultdict
 from typing import List, Literal
 from itertools import product
 import pyomo.environ as pyo
-from src.common.config_setup import Config_settings
+from graniteledger.src.common.config_setup import Config_settings
 
 class HighRes(Model):
     def __init__(

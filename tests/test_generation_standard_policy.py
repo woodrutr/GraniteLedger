@@ -1,6 +1,6 @@
 import pytest
 
-from policy.generation_standard import GenerationStandardPolicy, TechnologyStandard
+from graniteledger.policy.generation_standard import GenerationStandardPolicy, TechnologyStandard
 
 
 def test_technology_standard_from_csvs_parses_requirements(tmp_path) -> None:

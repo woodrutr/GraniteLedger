@@ -9,8 +9,8 @@ import pytest
 
 pytest.importorskip("pandas")
 
-from dispatch.interface import DispatchResult
-from dispatch.lp_single import _dispatch_merit_order, solve
+from graniteledger.dispatch.interface import DispatchResult
+from graniteledger.dispatch.lp_single import _dispatch_merit_order, solve
 
 _fixtures = importlib.import_module("tests.fixtures.dispatch_single_minimal")
 baseline_frames = _fixtures.baseline_frames

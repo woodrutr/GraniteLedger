@@ -5,11 +5,11 @@ pytest.importorskip('pyomo')
 import pyomo.environ as pyo
 
 from graniteledger.definitions import PROJECT_ROOT
-from policy.allowance_supply import AllowanceSupply
-from src.common import config_setup
-from src.models.electricity.scripts import preprocessor as prep
-from src.models.electricity.scripts.electricity_model import PowerModel
-from src.models.electricity.scripts.runner import record_allowance_emission_prices
+from graniteledger.policy.allowance_supply import AllowanceSupply
+from graniteledger.src.common import config_setup
+from graniteledger.src.models.electricity.scripts import preprocessor as prep
+from graniteledger.src.models.electricity.scripts.electricity_model import PowerModel
+from graniteledger.src.models.electricity.scripts.runner import record_allowance_emission_prices
 
 
 def build_allowance_model(
@@ -405,7 +405,7 @@ def test_emission_limit_detects_shortfall():
 
 @pytest.mark.usefixtures('minimal_carbon_policy_inputs')
 def test_carbon_price_updates_refresh_ccr_activation():
-    config_path = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
+    config_path = Path(PROJECT_ROOT, 'graniteledger', 'src', 'common', 'run_config.toml')
     settings = config_setup.Config_settings(config_path, test=True)
     settings.regions = [7, 8]
     settings.years = [2025, 2030]

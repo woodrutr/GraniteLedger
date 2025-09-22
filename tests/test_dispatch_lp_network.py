@@ -3,11 +3,11 @@ import math
 import pytest
 import pandas as pd
 
-from dispatch.interface import DispatchResult
-from dispatch.lp_network import solve_from_frames
-from dispatch.lp_single import HOURS_PER_YEAR
-from io_loader import Frames
-from policy.generation_standard import GenerationStandardPolicy, TechnologyStandard
+from graniteledger.dispatch.interface import DispatchResult
+from graniteledger.dispatch.lp_network import solve_from_frames
+from graniteledger.dispatch.lp_single import HOURS_PER_YEAR
+from graniteledger.io_loader import Frames
+from graniteledger.policy.generation_standard import GenerationStandardPolicy, TechnologyStandard
 
 
 def test_congestion_leads_to_price_separation() -> None:

@@ -3,7 +3,7 @@ convergence by tracking objective values over time for each module instance cons
 an instance of Build.
 """
 
-from src.common.config_setup import Config_settings
+from graniteledger.src.common.config_setup import Config_settings
 
 class Tolerance():
     """Tolerance object handles checking convergence of any execution of an integrated model

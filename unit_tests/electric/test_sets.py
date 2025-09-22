@@ -27,7 +27,7 @@ def test_years_set():
     years = [2030, 2031, 2042]
     regions = [7, 8]
 
-    config_path = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
+    config_path = Path(PROJECT_ROOT, 'graniteledger', 'src', 'common', 'run_config.toml')
     settings = config_setup.Config_settings(config_path, test=True)
     settings.regions = regions
     settings.years = years
@@ -51,7 +51,7 @@ def test_hours_set():
         """sum total load using hours and dayweights"""
         years = [2025]
         regions = [7]
-        config_path = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
+        config_path = Path(PROJECT_ROOT, 'graniteledger', 'src', 'common', 'run_config.toml')
         settings = config_setup.Config_settings(config_path, test=True)
         settings.regions = regions
         settings.years = years
@@ -108,7 +108,7 @@ def test_default_allowance_override_applies_to_remaining_groups():
 
 @pytest.mark.usefixtures('minimal_carbon_policy_inputs')
 def test_carbon_cap_group_tables():
-    config_path = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
+    config_path = Path(PROJECT_ROOT, 'graniteledger', 'src', 'common', 'run_config.toml')
     settings = config_setup.Config_settings(config_path, test=True)
     settings.regions = [7, 8]
     settings.years = [2025, 2030]
@@ -151,7 +151,7 @@ def test_carbon_cap_group_tables():
 
 @pytest.mark.usefixtures('minimal_carbon_policy_inputs')
 def test_carbon_cap_group_region_override():
-    config_path = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
+    config_path = Path(PROJECT_ROOT, 'graniteledger', 'src', 'common', 'run_config.toml')
     settings = config_setup.Config_settings(config_path, test=True)
     settings.regions = [7, 8]
     settings.years = [2025, 2030]
@@ -171,7 +171,7 @@ def test_carbon_cap_group_region_override():
 
 
 def test_uncapped_regions_excluded_from_carbon_group(monkeypatch):
-    config_path = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
+    config_path = Path(PROJECT_ROOT, 'graniteledger', 'src', 'common', 'run_config.toml')
     settings = config_setup.Config_settings(config_path, test=True)
     settings.regions = [7, 8]
     settings.years = [2025, 2030]
@@ -219,7 +219,7 @@ def test_uncapped_regions_excluded_from_carbon_group(monkeypatch):
 
 @pytest.mark.skipif(not PYOMO_AVAILABLE, reason=PYOMO_REQUIRED_REASON)
 def test_multi_cap_groups_preserve_labels(monkeypatch):
-    config_path = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
+    config_path = Path(PROJECT_ROOT, 'graniteledger', 'src', 'common', 'run_config.toml')
     settings = config_setup.Config_settings(config_path, test=True)
     settings.regions = [7, 8]
     settings.years = [2025, 2030]
@@ -299,7 +299,7 @@ def test_multi_cap_groups_preserve_labels(monkeypatch):
 def test_disabled_expansion_tech_removed_from_capacity_builds():
     """Technologies disabled in the config should not appear in build sets."""
 
-    config_path = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
+    config_path = Path(PROJECT_ROOT, 'graniteledger', 'src', 'common', 'run_config.toml')
     settings = config_setup.Config_settings(config_path, test=True)
     settings.regions = [7]
     settings.years = [2025]

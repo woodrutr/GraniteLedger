@@ -4,7 +4,7 @@ from pyomo.environ import value
 from pathlib import Path
 
 from graniteledger.definitions import PROJECT_ROOT
-from src.models.hydrogen.model import actions
+from graniteledger.src.models.hydrogen.model import actions
 
 logger = getLogger(__name__)
 

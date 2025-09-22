@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import pytest
 
-from engine import run_loop
-from io_loader import Frames
+from graniteledger.engine import run_loop
+from graniteledger.io_loader import Frames
 
 pd = pytest.importorskip("pandas")
 

@@ -1,5 +1,5 @@
-from src.common.Model import Model
-from src.common.config_setup import Config_settings
+from graniteledger.src.common.Model import Model
+from graniteledger.src.common.config_setup import Config_settings
 
 import pyomo.environ as pyo
 import random

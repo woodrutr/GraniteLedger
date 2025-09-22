@@ -5,16 +5,16 @@ import pytest
 from pyomo.environ import value
 
 from graniteledger.definitions import PROJECT_ROOT
-from src.common import config_setup
-from src.integrator.utilities import (
+from graniteledger.src.common import config_setup
+from graniteledger.src.integrator.utilities import (
     HI,
     get_elec_price,
     regional_annual_prices,
     poll_h2_demand,
     update_h2_prices,
 )
-from src.models.electricity.scripts import preprocessor as prep
-from src.models.electricity.scripts.runner import build_elec_model, run_elec_model
+from graniteledger.src.models.electricity.scripts import preprocessor as prep
+from graniteledger.src.models.electricity.scripts.runner import build_elec_model, run_elec_model
 
 
 def test_poll_elec_prices():
@@ -22,7 +22,7 @@ def test_poll_elec_prices():
     years = [2030, 2031]
     regions = [7, 8]
 
-    config_path = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
+    config_path = Path(PROJECT_ROOT, 'graniteledger', 'src', 'common', 'run_config.toml')
     settings = config_setup.Config_settings(config_path, test=True)
     settings.regions = regions
     settings.years = years
@@ -50,7 +50,7 @@ def test_update_h2_price():
     """
     years = [2030, 2031]
     regions = [2]
-    config_path = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
+    config_path = Path(PROJECT_ROOT, 'graniteledger', 'src', 'common', 'run_config.toml')
     settings = config_setup.Config_settings(config_path, test=True)
     settings.regions = regions
     settings.years = years
@@ -76,7 +76,7 @@ def test_poll_h2_demand():
     years = [2030, 2031]
     regions = [2]
 
-    config_path = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
+    config_path = Path(PROJECT_ROOT, 'graniteledger', 'src', 'common', 'run_config.toml')
     settings = config_setup.Config_settings(config_path, test=True)
     settings.regions = regions
     settings.years = years
@@ -91,7 +91,7 @@ def test_poll_h2_demand():
 def test_capacity_retirement_persists_with_missing_future_index():
     """Ensure early retirements continue to reduce capacity even when later indices are absent."""
 
-    config_path = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
+    config_path = Path(PROJECT_ROOT, 'graniteledger', 'src', 'common', 'run_config.toml')
     settings = config_setup.Config_settings(config_path, test=True)
     settings.regions = [2]
     settings.years = [2030, 2035]

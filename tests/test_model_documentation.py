@@ -7,12 +7,12 @@ from types import SimpleNamespace
 from pathlib import Path
 
 from graniteledger.definitions import PROJECT_ROOT
-from src.common.config_setup import Config_settings
-from src.common.documentation import create_model_setup_summary, write_model_setup_documentation
+from graniteledger.src.common.config_setup import Config_settings
+from graniteledger.src.common.documentation import create_model_setup_summary, write_model_setup_documentation
 
 
 def test_model_setup_documentation_includes_runtime_overrides(tmp_path):
-    config_source = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
+    config_source = Path(PROJECT_ROOT, 'graniteledger', 'src', 'common', 'run_config.toml')
     config_copy = tmp_path / 'run_config.toml'
     config_copy.write_bytes(config_source.read_bytes())
 

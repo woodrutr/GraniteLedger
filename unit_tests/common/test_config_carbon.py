@@ -74,7 +74,7 @@ allow_borrowing = false
 def test_legacy_carbon_keys_create_default_group(tmp_path):
     """Legacy carbon policy keys should build a default group representation."""
 
-    source_config = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
+    source_config = Path(PROJECT_ROOT, 'graniteledger', 'src', 'common', 'run_config.toml')
     lines = source_config.read_text().splitlines()
     filtered_lines = []
     skip_cap_group = False

@@ -17,7 +17,7 @@ def test_config_setup():
     """test to ensure changes to configurations are consistent"""
 
     # list of keys in run_config
-    config_path = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
+    config_path = Path(PROJECT_ROOT, 'graniteledger', 'src', 'common', 'run_config.toml')
     with open(config_path, 'rb') as f:
         data = tomllib.load(f)
     config_list = []
@@ -25,7 +25,7 @@ def test_config_setup():
         config_list.append(key)
 
     # list of keys in run_config_template
-    template_path = Path(PROJECT_ROOT, 'src/common', 'run_config_template.toml')
+    template_path = Path(PROJECT_ROOT, 'graniteledger', 'src', 'common', 'run_config_template.toml')
     with open(template_path, 'rb') as f:
         data = tomllib.load(f)
     template_list = []

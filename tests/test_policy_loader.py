@@ -5,10 +5,10 @@ import pytest
 
 pd = pytest.importorskip("pandas")
 
-policy_loader = importlib.import_module("config.policy_loader")
+policy_loader = importlib.import_module("graniteledger.config.policy_loader")
 load_annual_policy = policy_loader.load_annual_policy
 series_from_year_map = policy_loader.series_from_year_map
-ConfigError = importlib.import_module("policy.allowance_annual").ConfigError
+ConfigError = importlib.import_module("graniteledger.policy.allowance_annual").ConfigError
 
 
 def test_series_from_year_map_basic():

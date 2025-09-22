@@ -5,7 +5,7 @@ import pytest
 
 pytest.importorskip("pandas")
 
-from policy.allowance_annual import (
+from graniteledger.policy.allowance_annual import (
     AllowanceMarketState,
     _PRICE_SOLVER_HIGH,
     _PRICE_SOLVER_MAX_ITER,
@@ -14,8 +14,8 @@ from policy.allowance_annual import (
     clear_year,
     finalize_period_if_needed,
 )
-from policy.allowance_supply import AllowanceSupply
-from engine.run_loop import _solve_allowance_market_year, run_annual_fixed_point
+from graniteledger.policy.allowance_supply import AllowanceSupply
+from graniteledger.engine.run_loop import _solve_allowance_market_year, run_annual_fixed_point
 
 fixtures = importlib.import_module("tests.fixtures.annual_minimal")
 LinearDispatch = fixtures.LinearDispatch

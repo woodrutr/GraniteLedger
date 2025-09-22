@@ -9,13 +9,13 @@ import pytest
 pd = pytest.importorskip("pandas")
 
 run_end_to_end_from_frames = importlib.import_module(
-    "engine.run_loop"
+    "graniteledger.engine.run_loop"
 ).run_end_to_end_from_frames
 baseline_frames = importlib.import_module(
     "tests.fixtures.dispatch_single_minimal"
 ).baseline_frames
 prep = importlib.import_module(
-    "src.models.electricity.scripts.preprocessor"
+    "graniteledger.src.models.electricity.scripts.preprocessor"
 )
 
 YEARS = [2025, 2026, 2027]

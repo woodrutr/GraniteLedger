@@ -10,7 +10,7 @@ import os
 # Import python modules
 from graniteledger.definitions import PROJECT_ROOT
 from config_setup import Config_settings
-from src.enduse_db import stock_list
+from graniteledger.src.enduse_db import stock_list
 
 # Establish logger
 logger = getLogger(__name__)

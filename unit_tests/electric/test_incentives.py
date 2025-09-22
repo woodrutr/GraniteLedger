@@ -6,9 +6,9 @@ import importlib
 
 import pandas as pd
 
-from src.models.electricity.scripts.incentives import TechnologyIncentives
+from graniteledger.src.models.electricity.scripts.incentives import TechnologyIncentives
 
-Frames = importlib.import_module('io_loader').Frames
+Frames = importlib.import_module('graniteledger.io_loader').Frames
 
 
 def _sorted(config_section):

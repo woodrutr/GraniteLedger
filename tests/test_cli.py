@@ -37,7 +37,7 @@ def test_cli_smoke(tmp_path: Path) -> None:
     cmd = [
         sys.executable,
         '-m',
-        'cli.run',
+        'graniteledger.cli.run',
         '--config',
         str(config_path),
         '--years',

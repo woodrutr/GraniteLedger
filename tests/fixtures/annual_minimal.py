@@ -8,7 +8,7 @@ import pytest
 
 pd = pytest.importorskip("pandas")
 
-from policy.allowance_annual import RGGIPolicyAnnual
+from graniteledger.policy.allowance_annual import RGGIPolicyAnnual
 
 
 @dataclass
@@ -79,7 +79,7 @@ def policy_for_shortage() -> RGGIPolicyAnnual:
 
 
 def policy_frame_three_year() -> pd.DataFrame:
-    """Return a DataFrame compatible with :class:`io.frames_api.Frames`."""
+    """Return a DataFrame compatible with :class:`graniteledger.io.frames_api.Frames`."""
 
     years = [2025, 2026, 2027]
     records = []

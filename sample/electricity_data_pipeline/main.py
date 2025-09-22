@@ -13,7 +13,7 @@ import shutil
 # Import python modules
 from graniteledger.definitions import PROJECT_ROOT
 from settings.config_setup import Config_settings
-import src.runner as elec_methods
+import graniteledger.src.runner as elec_methods
 
 
 def get_args(execution_options: list | None = None):

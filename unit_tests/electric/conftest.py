@@ -10,7 +10,7 @@ def minimal_carbon_policy_inputs(monkeypatch):
     """Provide in-memory defaults for carbon policy inputs used in tests."""
 
     pd = pytest.importorskip('pandas')
-    from src.models.electricity.scripts import preprocessor as prep
+    from graniteledger.src.models.electricity.scripts import preprocessor as prep
 
     original_read_csv = prep.pd.read_csv
 

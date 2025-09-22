@@ -1,19 +1,32 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "graniteledger"
+version = "0.1.0"
+description = "GraniteLedger modeling and GUI package"
+requires-python = ">=3.9"
+
+[tool.setuptools.packages.find]
+include = ["graniteledger"]
+
 [tool.ruff]
 line-length = 100
 extend-exclude = [
     "app.py",
-    "dispatch",
+    "graniteledger/dispatch",
     "docs",
-    "engine",
+    "graniteledger/engine",
     "envs",
     "github_formatter.py",
     "input",
-    "main.py",
+    "graniteledger/main.py",
     "output",
-    "policy",
+    "graniteledger/policy",
     "run_streamlit_app.bat",
     "sample",
-    "src",
+    "graniteledger/src",
     "tests/fixtures",
     "unit_tests",
 ]

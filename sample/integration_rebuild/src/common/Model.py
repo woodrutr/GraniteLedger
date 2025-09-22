@@ -13,7 +13,7 @@ from collections import defaultdict
 import sys as sys
 import pyomo.environ as pyo
 import warnings
-#from src.improvedcrosswalk import Interchange as IC
+#from graniteledger.src.improvedcrosswalk import Interchange as IC
 
 class Model(pyo.ConcreteModel):
     """This is the base model class for the toy interchange models.

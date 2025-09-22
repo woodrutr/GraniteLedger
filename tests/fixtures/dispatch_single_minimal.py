@@ -6,7 +6,7 @@ import pytest
 
 pd = pytest.importorskip("pandas")
 
-from io_loader import Frames
+from graniteledger.io_loader import Frames
 
 HOURS_PER_YEAR = 8760.0
 

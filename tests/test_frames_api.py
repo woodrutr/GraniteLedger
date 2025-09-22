@@ -1,4 +1,4 @@
-"""Tests for the :mod:`io.frames_api` helpers."""
+"""Tests for the :mod:`graniteledger.io.frames_api` helpers."""
 
 from __future__ import annotations
 
@@ -8,10 +8,10 @@ import pytest
 pd = pytest.importorskip("pandas")
 
 run_fixed_point_from_frames = importlib.import_module(
-    "engine.run_loop"
+    "graniteledger.engine.run_loop"
 ).run_fixed_point_from_frames
-Frames = importlib.import_module("io_loader").Frames
-ConfigError = importlib.import_module("policy.allowance_annual").ConfigError
+Frames = importlib.import_module("graniteledger.io_loader").Frames
+ConfigError = importlib.import_module("graniteledger.policy.allowance_annual").ConfigError
 policy_frame_three_year = importlib.import_module(
     "tests.fixtures.annual_minimal"
 ).policy_frame_three_year

@@ -13,16 +13,16 @@ We will:
 import pytest
 from graniteledger.definitions import PROJECT_ROOT
 from pathlib import Path
-from src.common import config_setup
-from src.integrator import utilities
-from src.integrator.utilities import simple_solve
-from src.integrator.utilities import EI
-from src.models.electricity.scripts.runner import run_elec_model
+from graniteledger.src.common import config_setup
+from graniteledger.src.integrator import utilities
+from graniteledger.src.integrator.utilities import simple_solve
+from graniteledger.src.integrator.utilities import EI
+from graniteledger.src.models.electricity.scripts.runner import run_elec_model
 
 
 import pyomo.environ as pyo
 
-from src.models.residential.scripts.residential import residentialModule
+from graniteledger.src.models.residential.scripts.residential import residentialModule
 
 
 def test_load_updating():
@@ -32,7 +32,7 @@ def test_load_updating():
     years = [2030, 2031]
     regions = [2]
     # get settings
-    config_path = Path(PROJECT_ROOT, 'src/common', 'run_config.toml')
+    config_path = Path(PROJECT_ROOT, 'graniteledger', 'src', 'common', 'run_config.toml')
     settings = config_setup.Config_settings(config_path, test=True)
     settings.regions = regions
     settings.years = years

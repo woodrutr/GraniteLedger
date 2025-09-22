@@ -13,7 +13,7 @@ import shutil
 # Import python modules
 from graniteledger.definitions import PROJECT_ROOT
 from config_setup import Config_settings
-from src.runner import residential_runner
+from graniteledger.src.runner import residential_runner
 
 
 def get_args():

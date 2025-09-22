@@ -9,8 +9,8 @@ import pytest
 
 pd = pytest.importorskip('pandas')
 
-DispatchResult = importlib.import_module('dispatch.interface').DispatchResult
-_stub = importlib.import_module('dispatch.stub')
+DispatchResult = importlib.import_module('graniteledger.dispatch.interface').DispatchResult
+_stub = importlib.import_module('graniteledger.dispatch.stub')
 EMISSIONS_INTERCEPT = _stub.EMISSIONS_INTERCEPT
 EMISSIONS_SLOPE = _stub.EMISSIONS_SLOPE
 solve = _stub.solve

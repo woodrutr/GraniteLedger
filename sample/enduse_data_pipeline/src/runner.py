@@ -13,8 +13,8 @@ import os
 # Import python modules
 from graniteledger.definitions import PROJECT_ROOT
 from config_setup import Config_settings
-from src.enduse_db import main as enduse_db
-from src.enduse_demand import main as enduse_demand
+from graniteledger.src.enduse_db import main as enduse_db
+from graniteledger.src.enduse_demand import main as enduse_demand
 
 # Establish logger
 logger = getLogger(__name__)

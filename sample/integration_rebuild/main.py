@@ -1,9 +1,9 @@
 from pathlib import Path
-from src.common.config_setup import Config_settings
-from src.common.build import Build
-#import src.models as Models
+from graniteledger.src.common.config_setup import Config_settings
+from graniteledger.src.common.build import Build
+#import graniteledger.src.models as Models
 #import pyomo.environ as pyo
-from src.common.Model import Model as model
+from graniteledger.src.common.Model import Model as model
 
 
 def main():
