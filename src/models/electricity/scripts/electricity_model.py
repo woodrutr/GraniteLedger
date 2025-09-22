@@ -1493,21 +1493,27 @@ class PowerModel(Model):
                 Capacity Equality
 
             """
-            return self.capacity_total[(r, season, tech, step, y)] == self.SupplyCurve[
-                (r, season, tech, step, y)
-            ] + (
-                sum(self.capacity_builds[(r, tech, year, step)] for year in self.year if year <= y)
-                if self.sw_expansion and (tech, step) in self.Build_index
-                else 0
-            ) - (
+            new_builds = (
                 sum(
-                    self.capacity_retirements[(tech, year, r, step)]
+                    self.capacity_builds[(r, tech, year, step)]
                     for year in self.year
                     if year <= y
                 )
-                if self.sw_expansion and (tech, y, r, step) in self.capacity_retirements_index
+                if self.sw_expansion and (tech, step) in self.Build_index
                 else 0
             )
+            retirements = (
+                sum(
+                    self.capacity_retirements[(ret_tech, ret_year, ret_r, ret_step)]
+                    for ret_tech, ret_year, ret_r, ret_step in self.capacity_retirements_index
+                    if ret_tech == tech and ret_r == r and ret_step == step and ret_year <= y
+                )
+                if self.sw_expansion
+                else 0
+            )
+            return self.capacity_total[(r, season, tech, step, y)] == self.SupplyCurve[
+                (r, season, tech, step, y)
+            ] + new_builds - retirements
 
         # if capacity expansion is on
         if self.sw_expansion:
