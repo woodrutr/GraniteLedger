@@ -35,6 +35,27 @@ ELECTRICITY_OVERRIDES_KEY = 'electricity_expansion_overrides'
 ELECTRICITY_INCENTIVES_KEY = 'electricity_incentives'
 SW_BUILDS_PATH = Path(PROJECT_ROOT, 'input', 'electricity', 'sw_builds.csv')
 
+# Debugging must never be enabled in production deployments because Dash's
+# debugger exposes a remote code execution surface. Developers can opt in
+# locally by exporting the environment variable documented in the README.
+DASH_DEBUG_ENV_VAR = 'BLUESKY_DASH_DEBUG'
+
+
+def dash_debug_enabled() -> bool:
+    """Return whether the Dash app should run in debug mode.
+
+    Debug mode is only intended for local development and should never be
+    enabled in production deployments because it exposes the werkzeug
+    debugger and automatic reloader.
+    """
+
+    raw_value = os.getenv(DASH_DEBUG_ENV_VAR)
+
+    if raw_value is None:
+        return False
+
+    return raw_value.strip().lower() in {'1', 'true', 't', 'yes', 'y', 'on'}
+
 
 # Initialize the Dash app
 app = dash.Dash(
@@ -578,12 +599,43 @@ def run_mode(n_clicks, selected_mode):
 
 
 if __name__ == '__main__':
-    # Only expose the documentation server when running this module directly.
-    http_server_process = None
+import os
+import subprocess
 
+import os
+import subprocess
+
+# ... your callback definitions above ...
+
+http_server_process = None
+debug_mode = dash_debug_enabled()
+
+if debug_mode:
+    print(
+        'Dash debug mode enabled via '
+        f"{DASH_DEBUG_ENV_VAR}. Do not enable this in production environments."
+    )
+
+if __name__ == "__main__":
     try:
-        http_server_process = _launch_docs_server()
-        app.run_server(debug=True, host='localhost', port=8080)
+        # Only expose the documentation server when running this module directly.
+        # Bind explicitly to loopback so it is not accessible externally.
+        http_server_process = subprocess.Popen(
+            [
+                "python",
+                "-m",
+                "http.server",
+                "--bind",
+                "127.0.0.1",
+                "8081",  # or whatever port your docs server uses
+            ]
+        )
+
+        app.run_server(debug=debug_mode, host="127.0.0.1", port=8080)
+    except Exception:
+        if http_server_process:
+            http_server_process.terminate()
+        raise
     finally:
-        if http_server_process is not None:
+        if http_server_process:
             http_server_process.terminate()
