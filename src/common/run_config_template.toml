@@ -65,6 +65,21 @@ sw_learning = 0
 "Wind Onshore" = true
 "Solar" = true
 
+[electricity_incentives]
+# Example production incentive entry (uncomment to use):
+# [[electricity_incentives.production]]
+# technology = "Solar"
+# year = 2025
+# credit_per_mwh = 20.0
+# limit_mwh = 100000.0
+#
+# Example investment incentive entry (uncomment to use):
+# [[electricity_incentives.investment]]
+# technology = "Wind Onshore"
+# year = 2025
+# credit_per_mw = 75000.0
+# limit_mw = 500.0
+
 
 ###################################################################################################
 # Residential Inputs

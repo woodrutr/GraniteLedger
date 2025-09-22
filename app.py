@@ -9,7 +9,8 @@ Created on Wed Sept 19 2024 by Adam Heisey
 # Import packages
 import csv
 import dash
-from dash import dcc, html, Input, Output, State
+from dash import dash_table, dcc, html, Input, Output, State
+from dash.exceptions import PreventUpdate
 import dash_bootstrap_components as dbc
 import base64
 import io
@@ -29,9 +30,11 @@ from src.models.electricity.scripts.technology_metadata import (
     get_technology_label,
     resolve_technology_key,
 )
+from src.models.electricity.scripts.incentives import TechnologyIncentives
 
 
 ELECTRICITY_OVERRIDES_KEY = 'electricity_expansion_overrides'
+ELECTRICITY_INCENTIVES_KEY = 'electricity_incentives'
 SW_BUILDS_PATH = Path(PROJECT_ROOT, 'input', 'electricity', 'sw_builds.csv')
 
 
@@ -133,7 +136,7 @@ def auto_load_toml(selected_mode):
     general_inputs = []
 
     for key, value in config_content.items():
-        if key == ELECTRICITY_OVERRIDES_KEY:
+        if key in {ELECTRICITY_OVERRIDES_KEY, ELECTRICITY_INCENTIVES_KEY}:
             continue
         general_inputs.append(
             html.Div(
@@ -150,7 +153,8 @@ def auto_load_toml(selected_mode):
         )
 
     electricity_tab = build_electricity_override_tab(
-        config_content.get(ELECTRICITY_OVERRIDES_KEY, {})
+        config_content.get(ELECTRICITY_OVERRIDES_KEY, {}),
+        config_content.get(ELECTRICITY_INCENTIVES_KEY, {}),
     )
 
     tabs = dcc.Tabs(
@@ -172,9 +176,17 @@ def auto_load_toml(selected_mode):
     State({'type': 'config-input', 'index': dash.ALL}, 'id'),
     State({'type': 'expansion-toggle', 'index': dash.ALL}, 'value'),
     State({'type': 'expansion-toggle', 'index': dash.ALL}, 'id'),
+    State('incentives-table', 'data'),
     prevent_initial_call=True,
 )
-def save_toml(n_clicks, input_values, input_ids, toggle_values, toggle_ids):
+def save_toml(
+    n_clicks,
+    input_values,
+    input_ids,
+    toggle_values,
+    toggle_ids,
+    incentive_rows,
+):
     """saves the configuration settings in the app to the config file.
 
     Parameters
@@ -218,6 +230,15 @@ def save_toml(n_clicks, input_values, input_ids, toggle_values, toggle_ids):
         elif ELECTRICITY_OVERRIDES_KEY in config_doc:
             del config_doc[ELECTRICITY_OVERRIDES_KEY]
 
+        incentives_obj = TechnologyIncentives.from_table_rows(incentive_rows)
+        incentives_config = incentives_obj.to_config()
+        if incentives_config:
+            incentives_table = incentives_config_to_toml(incentives_config)
+            if len(incentives_table) > 0:
+                config_doc[ELECTRICITY_INCENTIVES_KEY] = incentives_table
+        elif ELECTRICITY_INCENTIVES_KEY in config_doc:
+            del config_doc[ELECTRICITY_INCENTIVES_KEY]
+
         # Write the updated content back, preserving comments
         with open(config_file_path, 'w') as f:
             f.write(tomlkit.dumps(config_doc))
@@ -226,14 +247,14 @@ def save_toml(n_clicks, input_values, input_ids, toggle_values, toggle_ids):
     return ''
 
 
-def build_electricity_override_tab(overrides_config):
-    """Create the electricity tab content with technology toggles."""
+def build_electricity_override_tab(overrides_config, incentives_config):
+    """Create the electricity tab content with technology toggles and incentives."""
 
     tech_overrides = normalize_override_config(overrides_config)
     available_techs = load_available_technologies()
 
     if not available_techs:
-        return [html.Div('No electricity technologies found.')] 
+        return [html.Div('No electricity technologies found.')]
 
     switches = []
     for tech_id in available_techs:
@@ -255,10 +276,17 @@ def build_electricity_override_tab(overrides_config):
             )
         )
 
+    incentives_obj = TechnologyIncentives.from_config(incentives_config)
+    incentive_rows = format_incentive_rows(
+        incentives_obj.to_table_rows(), available_techs
+    )
+
+    incentives_section = build_incentives_editor(available_techs, incentive_rows)
+
     description = html.Div(
         [
             html.P(
-                'Toggle capacity expansion eligibility for each electricity technology. ',
+                'Toggle capacity expansion eligibility for each electricity technology.',
                 className='mb-1',
             ),
             html.P(
@@ -268,7 +296,181 @@ def build_electricity_override_tab(overrides_config):
         ]
     )
 
-    return [description] + switches
+    return [description] + switches + [html.Hr(), incentives_section]
+
+
+def build_incentives_editor(available_techs, incentive_rows):
+    """Return a Dash component tree for editing technology incentives."""
+
+    tech_options = [
+        {'label': get_technology_label(tech_id), 'value': get_technology_label(tech_id)}
+        for tech_id in available_techs
+    ]
+    if not tech_options:
+        tech_options = [{'label': 'Select technology', 'value': ''}]
+
+    table = dash_table.DataTable(
+        id='incentives-table',
+        columns=[
+            {'name': 'Type', 'id': 'type', 'presentation': 'dropdown'},
+            {'name': 'Technology', 'id': 'technology', 'presentation': 'dropdown'},
+            {'name': 'Year', 'id': 'year', 'type': 'numeric'},
+            {'name': 'Credit ($/unit)', 'id': 'credit_value', 'type': 'numeric'},
+            {'name': 'Limit', 'id': 'limit_value', 'type': 'numeric'},
+            {'name': 'Limit Units', 'id': 'limit_units', 'presentation': 'dropdown', 'editable': False},
+        ],
+        data=incentive_rows,
+        editable=True,
+        row_deletable=True,
+        style_table={'overflowX': 'auto'},
+        dropdown={
+            'type': {
+                'options': [
+                    {'label': 'Production (credit $/MWh)', 'value': 'Production'},
+                    {'label': 'Investment (credit $/MW)', 'value': 'Investment'},
+                ]
+            },
+            'technology': {'options': tech_options},
+            'limit_units': {
+                'options': [
+                    {'label': 'MWh', 'value': 'MWh'},
+                    {'label': 'MW', 'value': 'MW'},
+                ]
+            },
+        },
+        css=[{'selector': '.dash-spreadsheet-menu', 'rule': 'display: none'}],
+    )
+
+    return html.Div(
+        [
+            html.H5('Technology Incentives'),
+            html.P(
+                'Specify optional production ($/MWh) or investment ($/MW) incentives by '
+                'technology and year. Limits cap the eligible quantity of generation '
+                'or capacity that can receive the credit.',
+                className='text-muted',
+            ),
+            table,
+            dbc.Button(
+                'Add Incentive',
+                id='add-incentive',
+                color='secondary',
+                className='mt-2',
+            ),
+        ],
+        className='mt-3',
+    )
+
+
+def format_incentive_rows(raw_rows, available_techs):
+    """Normalise incentive rows for display in the DataTable."""
+
+    valid_labels = {get_technology_label(tech_id) for tech_id in available_techs}
+    formatted = []
+    for row in raw_rows or []:
+        if not isinstance(row, Mapping):
+            continue
+        entry = {
+            'type': row.get('type', 'Production'),
+            'technology': row.get('technology', ''),
+            'year': row.get('year'),
+            'credit_value': row.get('credit_value'),
+            'limit_value': row.get('limit_value'),
+            'limit_units': row.get('limit_units', 'MWh'),
+        }
+        if entry['technology'] not in valid_labels:
+            entry['technology'] = ''
+        if entry['limit_value'] is None:
+            entry['limit_value'] = ''
+        formatted.append(entry)
+
+    if not formatted:
+        formatted = [default_incentive_row(available_techs)]
+
+    return formatted
+
+
+def default_incentive_row(available_techs):
+    """Return a default incentive row for initial table population."""
+
+    technology_label = get_technology_label(available_techs[0]) if available_techs else ''
+    return {
+        'type': 'Production',
+        'technology': technology_label,
+        'year': None,
+        'credit_value': None,
+        'limit_value': None,
+        'limit_units': 'MWh',
+    }
+
+
+def incentives_config_to_toml(incentives_config):
+    """Convert an incentives configuration mapping into a TOML table."""
+
+    table = tomlkit.table()
+    for key in ('production', 'investment'):
+        entries = incentives_config.get(key, []) if isinstance(incentives_config, Mapping) else []
+        if not entries:
+            continue
+        aot = tomlkit.aot()
+        for record in entries:
+            if not isinstance(record, Mapping):
+                continue
+            entry = tomlkit.table()
+            for field, value in record.items():
+                if value is None:
+                    continue
+                entry.add(field, value)
+            aot.append(entry)
+        if len(aot) > 0:
+            table.add(key, aot)
+    return table
+
+
+@app.callback(
+    Output('incentives-table', 'data'),
+    Input('add-incentive', 'n_clicks'),
+    Input('incentives-table', 'data_timestamp'),
+    State('incentives-table', 'data'),
+    prevent_initial_call=True,
+)
+def update_incentives_table(add_clicks, _timestamp, rows):
+    """Handle add-row events and keep limit units aligned with credit type."""
+
+    ctx = getattr(dash, 'callback_context', None)
+    if ctx is None:
+        ctx = getattr(dash, 'ctx', None)
+    if ctx is None or not getattr(ctx, 'triggered', None):
+        raise PreventUpdate
+
+    trigger = ctx.triggered[0]['prop_id']
+    rows = list(rows or [])
+
+    if trigger.startswith('add-incentive'):
+        available = load_available_technologies()
+        rows.append(default_incentive_row(available))
+        return rows
+
+    if trigger.startswith('incentives-table'):
+        if not rows:
+            raise PreventUpdate
+        changed = False
+        updated_rows = []
+        for row in rows:
+            expected_unit = 'MWh'
+            if str(row.get('type', '')).strip().lower().startswith('inv'):
+                expected_unit = 'MW'
+            if row.get('limit_units') != expected_unit:
+                new_row = dict(row)
+                new_row['limit_units'] = expected_unit
+                updated_rows.append(new_row)
+                changed = True
+            else:
+                updated_rows.append(row)
+        if changed:
+            return updated_rows
+
+    raise PreventUpdate
 
 
 def normalize_override_config(overrides_config):
