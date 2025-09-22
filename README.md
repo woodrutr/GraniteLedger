@@ -214,9 +214,9 @@ The repository will be cloned to your specified location.
 
 &nbsp;
 # Usage
-The BlueSky Prototype can be executed either as a Dash app that provides a graphical user interface (GUI), or run from the command line. All scripts should be run from the top-level directory of the project via the app or ```main.py``` file, as explained below. 
+The BlueSky Prototype can be executed either through the Streamlit app that provides a graphical user interface (GUI), or run from the command line. All scripts should be run from the top-level directory of the project via the app or ```main.py``` file, as explained below. 
 
-Note that the Prototype can be run with different configuration options to indicate the modules, regionality, temporal resolution, solver options, and other module-specific settings. These options are encoded in [```run_config.toml```](src/common/run_config.toml). When running the model from the command line, ```run_config.toml``` must be modified directly and contains detailed descriptions of the configuration settings. When running the model from the GUI, the same configuration options can be set via the interface without accessing the file directly. For GUI users, the configuration options are described in detail [here](#dash-app-features).
+Note that the Prototype can be run with different configuration options to indicate the modules, regionality, temporal resolution, solver options, and other module-specific settings. These options are encoded in [```run_config.toml```](src/common/run_config.toml). When running the model from the command line, ```run_config.toml``` must be modified directly and contains detailed descriptions of the configuration settings. When running the model from the GUI, the same configuration options can be set via the interface without accessing the file directly. For GUI users, the configuration options are described in detail [here](#streamlit-app-features).
 
 One of the key features of the BlueSky Prototype is the ability to run modules individually or select between two solve options for the integrated runs. The table below describes the different modes when running the model. More details on these methods can be found in the [Integrator README](src/integrator/README.md).
 
@@ -228,8 +228,8 @@ One of the key features of the BlueSky Prototype is the ability to run modules i
 
 
 ### Ways to Run the Model
-* [Run Model with Dash App GUI](#dash-app-graphical-user-interface-gui-steps)
-* [Dash App Features Description](#dash-app-features)
+* [Run Model with Streamlit App GUI](#streamlit-app-graphical-user-interface-gui-steps)
+* [Streamlit App Features Description](#streamlit-app-features)
 * [Run Model in the Command Prompt](#command-prompt-steps)
 
 
@@ -237,7 +237,7 @@ One of the key features of the BlueSky Prototype is the ability to run modules i
 
 <img src="images/readmevideotrim.mp4" alt="Instruction Video" width="500"/>
 -->
-### Dash App Graphical User Interface (GUI) Steps
+### Streamlit App Graphical User Interface (GUI) Steps
 
 1. **Open Anaconda Prompt**
 
@@ -252,15 +252,21 @@ One of the key features of the BlueSky Prototype is the ability to run modules i
    cd path\to\your\BlueSky
    ```
 
-3. **Run the Dash App**
+3. **Run the Streamlit App**
 
    To launch the BlueSky Prototype app, use the following command:
 
    ```bash
-   .\run_dash_app
+   streamlit run app.py
    ```
 
-   This will start the Dash application.
+   On Windows you can use the helper script:
+
+   ```bash
+   .\run_streamlit_app
+   ```
+
+   This will start the Streamlit application.
 
 
 4. **Access the Web Interface**
@@ -270,7 +276,7 @@ One of the key features of the BlueSky Prototype is the ability to run modules i
 
 You're all set! The BlueSky Prototype model should now be running, and you can interact with it through the browser interface.
 
-<img src="docs/images/install-usage/dash_screen.PNG" alt="Dash app main screen" width="700"/>
+<img src="docs/images/install-usage/dash_screen.PNG" alt="Streamlit app main screen" width="700"/>
 
 
 #### Usage Instructions with *Screenshots*
@@ -296,50 +302,54 @@ You're all set! The BlueSky Prototype model should now be running, and you can i
 <img src="docs/images/install-usage/cd-dir.PNG" alt="Image to navigate to directory" width="700"/>
 
 
-3. **Run the Dash App**
+3. **Run the Streamlit App**
 
    To launch the BlueSky Prototype app, use the following command:
 
    ```bash
-   .\run_dash_app
+   streamlit run app.py
    ```
 
-   This will start the Dash application.
+   On Windows you can use the helper script:
 
-<img src="docs/images/install-usage/run_dash.PNG" alt="cmd Image with run dash bat" width="700"/>
+   ```bash
+   .\run_streamlit_app
+   ```
+
+   This will start the Streamlit application.
+
+<img src="docs/images/install-usage/run_dash.PNG" alt="Command prompt running the Streamlit app" width="700"/>
 
 4. **Access the Web Interface**
 
    - Once the app is running, a web browser should automatically open.
    - If the GUI doesn’t show up immediately, refresh the browser page.
 
-<img src="docs/images/install-usage/dash_screen.PNG" alt="Image of dash app look and feel" width="700"/>
+<img src="docs/images/install-usage/dash_screen.PNG" alt="Streamlit app look and feel" width="700"/>
 
 You're all set! The BlueSky Prototype model should now be running, and you can interact with it through the browser interface.
 
 </details>
 
-### Dash App features
+### Streamlit App features
 
-<img src="docs/images/install-usage/dash_usage.PNG" alt="features of dash app" width="700"/>
+<img src="docs/images/install-usage/dash_usage.PNG" alt="Streamlit app features" width="700"/>
 
 <img src="docs/images/install-usage/config_save.PNG" alt="config settings and save button" width="700"/>
 
-#### Dash Features description
+#### Streamlit Features description
 
-1. The **Edit Configuration Settings** section allows the user the ability to overide default settings, which are found in `run_config_template.toml`. Make sure to select **Save** to save any changes to the default settings. 
+1. The **sidebar configuration** area lets you reuse the default configuration or upload a custom `run_config.toml`, preview the years available for simulation, and toggle carbon policy options such as reserve price floors, CCR tranches, and banking rules.
 
-2. **Save** button allows users to save model configuration inputs for select model runs. This action overwrites the `run_config.toml` file, which is used as the run file for model runs.
+2. **Assumption override tabs** expose editable demand, unit, fuel, and transmission tables. You can adjust values directly inside Streamlit or upload CSV files to replace the defaults before executing a run.
 
-3. **Configuration message** This message notifies the user that they have successfully saved and updated the `run_config.toml` file used for model runs. 
+3. A **run summary and confirmation** panel presents the selected inputs and requires explicit confirmation before launching the simulation, helping prevent accidental long-running jobs.
 
-4. **Mode Selection and Run** This is where the user selects which model mode they would like to try for a given run. After making the selection, they must *click* the **Run** button. A blue loading feature will let the user know that model is running. A blue bar will appear when the model is finished.
+4. After completion, the **results panel** displays run metadata, notes, and download buttons for each generated CSV so you can retrieve outputs without leaving the browser.
 
-5. **Output message** This red message confirms that the model successfully ran the selected mode and wrote results to a deterministic folder in the **output** directory (for example, `standalone_a1b2c3d4`). If a folder with the same name already exists, a numeric suffix is appended to avoid overwriting existing results.
+5. Streamlit session state preserves temporary directories and recent run results during your session, making it easy to revisit outputs or clear them before starting a new scenario.
 
-6. **Code Documentation Button** When selected, this button opens the `html` code documentation generated by **Sphinx** in a new browser tab. 
-
-To return to default settings, refresh the web browsers and *click* the **save** button to return to the template default settings.
+To revert to the default assumptions, refresh the browser or reload the default configuration file.
 
 ### Command Prompt Steps
 See the tab below for instructions on how to run the model using the command prompt.
