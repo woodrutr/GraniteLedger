@@ -12,13 +12,10 @@ import dash
 from dash import dash_table, dcc, html, Input, Output, State
 from dash.exceptions import PreventUpdate
 import dash_bootstrap_components as dbc
-import base64
-import io
 import ast
 from collections.abc import Mapping
 import subprocess
 from pathlib import Path
-from datetime import datetime
 import os
 import tomli
 import tomlkit
@@ -244,7 +241,7 @@ def save_toml(
         with open(config_file_path, 'w') as f:
             f.write(tomlkit.dumps(config_doc))
 
-        return f"Configuration settings saved successfully as 'run_config.toml'."
+        return "Configuration settings saved successfully as 'run_config.toml'."
     return ''
 
 
@@ -559,7 +556,7 @@ def run_mode(n_clicks, selected_mode):
             f"{selected_mode} mode has finished running. See results in output/{selected_mode}.",
             100,
         )
-    except Exception as e:
+    except Exception:
         error_msg = f'Error, not able to run {selected_mode}. Please check the log script/terminal, exit out of browser, and restart.'
         return error_msg, 0
 
