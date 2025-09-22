@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import importlib
 from collections.abc import Mapping
+from types import SimpleNamespace
 
 import pytest
 
 pd = pytest.importorskip("pandas")
+
+from src.models.electricity.scripts import preprocessor as prep
 
 run_end_to_end_from_frames = importlib.import_module(
     "engine.run_loop"
@@ -338,6 +341,46 @@ def test_control_period_mass_balance():
     remaining = float(annual.iloc[-1]["obligation"])
 
     assert total_supply == pytest.approx(total_surrendered + ending_bank + remaining)
+
+
+def test_zero_cap_policy_still_enforced():
+    frames = _three_year_frames()
+
+    zero_cap_settings = SimpleNamespace(
+        years=YEARS,
+        start_year=YEARS[0],
+        carbon_cap=0.0,
+        carbon_policy_enabled=True,
+        carbon_allowance_start_bank=0.0,
+    )
+
+    default_policy = prep._default_policy_frame(zero_cap_settings)
+    zero_cap_policy = _policy_frame(cap_scale=0.0)
+    zero_cap_policy['policy_enabled'] = list(default_policy['policy_enabled'])
+    zero_cap_policy['annual_surrender_frac'] = 1.0
+    assert zero_cap_policy['policy_enabled'].all()
+
+    frames = frames.with_frame('policy', zero_cap_policy)
+    frames_store = prep.FrameStore(
+        frames, carbon_policy_enabled=prep._is_carbon_policy_enabled(zero_cap_settings)
+    )
+    frames = frames_store.to_frames()
+    assert frames.carbon_policy_enabled
+
+    policy_spec = frames.policy()
+    assert policy_spec.enabled
+
+    outputs = run_end_to_end_from_frames(
+        frames,
+        years=YEARS,
+        price_initial=0.0,
+        tol=1e-4,
+        relaxation=0.8,
+    )
+
+    annual = outputs.annual.set_index('year')
+    assert (annual['obligation'] > 0.0).any()
+    assert annual['p_co2'].gt(0.0).any()
 
 
 def test_daily_resolution_matches_annual_totals():

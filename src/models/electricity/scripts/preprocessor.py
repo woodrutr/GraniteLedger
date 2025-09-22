@@ -214,6 +214,34 @@ def _default_coverage_frame(setin) -> pd.DataFrame:
     )
 
 
+def _is_carbon_policy_enabled(setin) -> bool:
+    """Return ``True`` when the allowance policy should be active."""
+
+    flag = getattr(setin, 'carbon_policy_enabled', None)
+    if flag is not None:
+        if isinstance(flag, str):
+            normalized = flag.strip().lower()
+            if not normalized:
+                return False
+            if normalized in {'true', '1', 'yes', 'y', 'on'}:
+                return True
+            if normalized in {'false', '0', 'no', 'n', 'off'}:
+                return False
+            try:
+                return float(normalized) != 0.0
+            except ValueError:
+                return True
+        return bool(flag)
+
+    cap_value = getattr(setin, 'carbon_cap', None)
+    if cap_value is None:
+        return False
+    try:
+        return float(cap_value) > 0.0
+    except (TypeError, ValueError):
+        return bool(cap_value)
+
+
 def _default_policy_frame(setin) -> pd.DataFrame:
     """Construct a default allowance policy table that disables the policy."""
 
@@ -243,7 +271,7 @@ def _default_policy_frame(setin) -> pd.DataFrame:
     if not years:
         return pd.DataFrame(columns=columns)
 
-    enabled = bool(getattr(setin, 'carbon_cap', False))
+    enabled = _is_carbon_policy_enabled(setin)
     bank0 = float(getattr(setin, 'carbon_allowance_start_bank', 0.0))
 
     data = {
@@ -1909,7 +1937,7 @@ def preprocessor(setin):
     else:
         frames_container = Frames()
 
-    carbon_policy_enabled = bool(getattr(setin, 'carbon_cap', False))
+    carbon_policy_enabled = _is_carbon_policy_enabled(setin)
     all_frames = FrameStore(
         frames_container, carbon_policy_enabled=carbon_policy_enabled
     )
