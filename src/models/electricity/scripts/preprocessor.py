@@ -1930,8 +1930,8 @@ def preprocessor(setin):
     incentives = getattr(setin, 'technology_incentives', TechnologyIncentives())
     if not isinstance(incentives, TechnologyIncentives):
         incentives = TechnologyIncentives()
-    for frame_name, frame_df in incentives.to_frames().items():
-        all_frames[frame_name] = frame_df
+    for module in incentives.modules():
+        all_frames = module.apply(all_frames)
 
     # Ensure emissions data are available for all generation technologies
     emissions_df = all_frames.get('EmissionsRate')

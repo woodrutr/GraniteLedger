@@ -9,7 +9,7 @@ from typing import Dict, Iterable, Tuple
 
 import pandas as pd
 
-from policy.allowance_annual import RGGIPolicyAnnual
+from policy.allowance_annual import ConfigError, RGGIPolicyAnnual
 
 _DEMAND_KEY = "demand"
 _UNITS_KEY = "units"
@@ -463,7 +463,12 @@ class Frames(Mapping[str, pd.DataFrame]):
     def policy(self) -> PolicySpec:
         """Return the allowance policy specification."""
 
-        df = self[_POLICY_KEY].copy(deep=True)
+        try:
+            df = self[_POLICY_KEY].copy(deep=True)
+        except KeyError as exc:
+            if self._carbon_policy_enabled:
+                raise ConfigError("enabled carbon policy requires a 'policy' frame") from exc
+            raise
         required = [
             'year',
             'cap_tons',
@@ -497,7 +502,9 @@ class Frames(Mapping[str, pd.DataFrame]):
 
         if policy_enabled and missing_columns:
             missing_list = ', '.join(sorted(missing_columns))
-            raise ValueError(f'policy frame is missing required columns: {missing_list}')
+            raise ConfigError(
+                f'enabled carbon policy requires columns: {missing_list}'
+            )
 
         if missing_columns:
             for column in missing_columns:
