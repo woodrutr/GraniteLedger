@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from definitions import PROJECT_ROOT
+from graniteledger.definitions import PROJECT_ROOT
 
 
 def test_project_root_is_path() -> None:

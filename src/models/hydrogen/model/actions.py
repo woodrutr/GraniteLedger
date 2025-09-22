@@ -10,7 +10,7 @@ import os
 import pandas as pd
 import pyomo.environ as pyo
 
-from definitions import PROJECT_ROOT
+from graniteledger.definitions import PROJECT_ROOT
 from src.models.hydrogen.model.h2_model import solve, H2Model
 from src.models.hydrogen.network.grid_data import GridData
 from src.models.hydrogen.network.grid import Grid

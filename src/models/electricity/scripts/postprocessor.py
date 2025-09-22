@@ -20,7 +20,7 @@ from pathlib import Path
 from logging import getLogger
 
 # Import python modules
-from definitions import PROJECT_ROOT
+from graniteledger.definitions import PROJECT_ROOT
 from src.models.electricity.scripts.utilities import create_obj_df
 
 PRICED_CONSTRAINTS = {'demand_balance', 'total_emissions_cap', 'allowance_emissions_limit'}

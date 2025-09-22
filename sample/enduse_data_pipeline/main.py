@@ -11,7 +11,7 @@ import glob
 import shutil
 
 # Import python modules
-from definitions import PROJECT_ROOT
+from graniteledger.definitions import PROJECT_ROOT
 from config_setup import Config_settings
 from src.runner import residential_runner
 

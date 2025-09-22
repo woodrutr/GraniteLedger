@@ -17,7 +17,7 @@ from pyomo.util.infeasible import (
 from logging import getLogger
 
 # Import python modules
-from definitions import PROJECT_ROOT
+from graniteledger.definitions import PROJECT_ROOT
 import src.models.electricity.scripts.preprocessor as prep
 import src.models.electricity.scripts.postprocessor as post
 from src.models.electricity.scripts.utilities import check_results

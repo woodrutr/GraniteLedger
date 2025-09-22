@@ -22,7 +22,7 @@ import tomlkit
 import sys
 
 # Import python modules
-from definitions import PROJECT_ROOT
+from graniteledger.definitions import PROJECT_ROOT
 from main import app_main
 from src.models.electricity.scripts.technology_metadata import (
     get_technology_label,
@@ -597,13 +597,9 @@ def run_mode(n_clicks, selected_mode):
         error_msg = f'Error, not able to run {selected_mode}. Please check the log script/terminal, exit out of browser, and restart.'
         return error_msg, 0
 
-
-if __name__ == '__main__':
 import os
 import subprocess
-
-import os
-import subprocess
+import sys
 
 # ... your callback definitions above ...
 
@@ -620,16 +616,21 @@ if __name__ == "__main__":
     try:
         # Only expose the documentation server when running this module directly.
         # Bind explicitly to loopback so it is not accessible externally.
-        http_server_process = subprocess.Popen(
-            [
-                "python",
-                "-m",
-                "http.server",
-                "--bind",
-                "127.0.0.1",
-                "8081",  # or whatever port your docs server uses
-            ]
-        )
+        with open(os.devnull, "w") as devnull:
+            http_server_process = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "http.server",
+                    "--bind",
+                    "127.0.0.1",
+                    "8000",   # docs server port
+                    "--directory",
+                    docs_dir,
+                ],
+                stdout=devnull,
+                stderr=devnull,
+            )
 
         app.run_server(debug=debug_mode, host="127.0.0.1", port=8080)
     except Exception:

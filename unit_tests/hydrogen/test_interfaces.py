@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from definitions import PROJECT_ROOT
+from graniteledger.definitions import PROJECT_ROOT
 from src.integrator.utilities import HI, poll_hydrogen_price
 from src.models.hydrogen.model import actions
 

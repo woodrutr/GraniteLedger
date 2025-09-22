@@ -4,7 +4,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from definitions import PROJECT_ROOT
+from graniteledger.definitions import PROJECT_ROOT
 
 
 def _tiny_config() -> str:
