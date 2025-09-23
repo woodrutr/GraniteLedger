@@ -47,6 +47,6 @@ unit_tests/test_logs/electricity/prices/elec_price.csv
 *.h5
 *.zip
 
-# Legacy dependency manifests replaced by root requirements.txt
+# Legacy dependency manifests superseded by pyproject.toml
 environment.yml
 requirements-dev.txt

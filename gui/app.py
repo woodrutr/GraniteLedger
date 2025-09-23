@@ -69,7 +69,7 @@ else:
 
 PANDAS_REQUIRED_MESSAGE = (
     'pandas is required to run the policy simulator UI. '
-    'Install it with `pip install -r requirements.txt` before launching Streamlit.'
+    'Install it with `pip install .` before launching Streamlit.'
 )
 
 STREAMLIT_REQUIRED_MESSAGE = (
