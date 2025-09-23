@@ -1,3 +1,5 @@
+# GraniteLedger dependency manifest used by CI and Streamlit
+
 # Core runtime dependencies
 numpy
 pandas>=2.0.0,<3.0
