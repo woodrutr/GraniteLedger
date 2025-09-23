@@ -3,7 +3,15 @@ from __future__ import annotations
 import importlib
 import textwrap
 import re
-import tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python < 3.11 fallback
+    try:
+        import tomli as tomllib  # type: ignore[import-not-found]
+    except ModuleNotFoundError as exc:  # pragma: no cover - dependency missing
+        raise ModuleNotFoundError(
+            'Python 3.11+ or the tomli package is required to read TOML configuration files.'
+        ) from exc
 import pytest
 
 pytest.importorskip("pandas")
