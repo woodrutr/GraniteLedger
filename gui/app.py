@@ -18,7 +18,10 @@ from typing import TYPE_CHECKING, Any, Callable, TypeVar, cast
 
 import tomllib
 
-from main.definitions import PROJECT_ROOT
+try:
+    from main.definitions import PROJECT_ROOT
+except ModuleNotFoundError:  # pragma: no cover - fallback for packaged app execution
+    PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 if importlib.util.find_spec('streamlit') is not None:  # pragma: no cover - optional dependency
     import streamlit as st  # type: ignore[import-not-found]
