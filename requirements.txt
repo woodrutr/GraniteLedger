@@ -1,2 +1,22 @@
-# Install GraniteLedger with its development dependencies using the project metadata in pyproject.toml
-.[dev]
+# GraniteLedger dependency manifest used by CI and Streamlit
+
+# Core runtime dependencies
+numpy
+pandas>=2.0.0,<3.0
+pyomo
+scipy
+streamlit
+toml
+tomli; python_version < "3.11"
+typer>=0.12
+
+# Additional modeling libraries
+matplotlib
+networkx
+sympy
+
+# Development and testing tools
+mypy>=1.9
+pytest>=8.0
+pytest-cov>=4.1
+ruff>=0.4
