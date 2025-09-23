@@ -60,9 +60,9 @@ def _coerce_bool(series: pd.Series, frame: str, column: str) -> pd.Series:
     true_tokens = {"true", "t", "yes", "y", "on", "1"}
     false_tokens = {"false", "f", "no", "n", "off", "0"}
 
-    def convert(value: object) -> bool:
+    def convert(value: object):
         if pd.isna(value):
-            raise ValueError
+            return pd.NA
         if isinstance(value, bool):
             return bool(value)
         if isinstance(value, Integral):
@@ -88,6 +88,8 @@ def _coerce_bool(series: pd.Series, frame: str, column: str) -> pd.Series:
             f"{frame} frame column '{column}' must contain boolean-like values"
         ) from exc
 
+    if getattr(coerced, "isna", None) is not None and coerced.isna().any():
+        return coerced.astype("boolean")
     return coerced.astype(bool)
 
 
