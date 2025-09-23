@@ -8,7 +8,15 @@ the model. It takes these settings from the run_config.toml file. It has univers
 # Import packages
 import pandas as pd
 import numpy as np
-import tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python < 3.11 fallback
+    try:
+        import tomli as tomllib  # type: ignore[import-not-found]
+    except ModuleNotFoundError as exc:  # pragma: no cover - dependency missing
+        raise ModuleNotFoundError(
+            'Python 3.11+ or the tomli package is required to read TOML configuration files.'
+        ) from exc
 from pathlib import Path
 from collections import OrderedDict
 from collections.abc import Mapping
