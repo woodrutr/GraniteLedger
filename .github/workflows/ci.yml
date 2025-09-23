@@ -35,6 +35,33 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Verify dependency manifest
+        run: |
+          python - <<'PY'
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          repo_files = subprocess.check_output(['git', 'ls-files'], text=True).splitlines()
+          candidates: list[Path] = []
+          for name in repo_files:
+              path = Path(name)
+              lower_name = path.name.lower()
+              if lower_name.startswith('requirements') and lower_name.endswith('.txt'):
+                  candidates.append(path)
+              elif lower_name in {'environment.yml', 'environment.yaml'}:
+                  candidates.append(path)
+
+          allowed = {Path('requirements.txt')}
+          extras = [str(path) for path in candidates if path not in allowed]
+
+          if extras:
+              print('Unexpected dependency manifests detected:')
+              for path in extras:
+                  print(f'- {path}')
+              sys.exit(1)
+          PY
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
