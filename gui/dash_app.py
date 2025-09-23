@@ -597,10 +597,6 @@ def run_mode(n_clicks, selected_mode):
         error_msg = f'Error, not able to run {selected_mode}. Please check the log script/terminal, exit out of browser, and restart.'
         return error_msg, 0
 
-import os
-import subprocess
-import sys
-
 # ... your callback definitions above ...
 
 http_server_process = None
