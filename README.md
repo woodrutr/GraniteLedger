@@ -145,6 +145,13 @@ The repository will be cloned to your specified location.
 
 3. **Run the Environment Creation Script**
 
+   > **Conda channel warning**
+   >
+   > Recent versions of Conda print a warning about implicitly adding the
+   > `defaults` channel. If you see this message when creating or updating
+   > the environment, run `conda config --add channels defaults` once to set
+   > the channel explicitly.
+
    Note: if you have already run this script, you must instead update the environment. Go to step 4 for more information.
 
    For **Windows**, run the batch file to set up the Conda environment:
