@@ -60,7 +60,8 @@ else:
 
 
 PANDAS_REQUIRED_MESSAGE = (
-    'pandas is required to run the policy simulator. Install pandas to continue.'
+    'pandas is required to run the policy simulator UI. '
+    'Install it with `pip install -r requirements.txt` before launching Streamlit.'
 )
 
 STREAMLIT_REQUIRED_MESSAGE = (
@@ -1297,6 +1298,14 @@ def _render_results(result: dict[str, Any]) -> None:  # pragma: no cover - UI re
 
 def main() -> None:  # pragma: no cover - Streamlit entry point
     _ensure_streamlit()
+    global _PANDAS_MODULE, pd
+    try:
+        import pandas as pandas_module  # type: ignore[import-not-found]
+    except ModuleNotFoundError as exc:  # pragma: no cover - dependency missing at runtime
+        raise ModuleNotFoundError(PANDAS_REQUIRED_MESSAGE) from exc
+    else:
+        _PANDAS_MODULE = pandas_module
+        pd = cast(Any, pandas_module)
     st.set_page_config(page_title='BlueSky Policy Simulator', layout='wide')
     st.title('BlueSky Policy Simulator')
     st.write('Upload a run configuration and execute the annual allowance market engine.')
