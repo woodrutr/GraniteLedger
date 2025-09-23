@@ -25,7 +25,7 @@ except ImportError:  # pragma: no cover - optional dependency
     pd = cast(object, None)
 
 # Import python modules
-from graniteledger.definitions import PROJECT_ROOT
+from main.definitions import PROJECT_ROOT
 from src.common.utilities import scale_load, scale_load_with_enduses
 from io_loader import Frames
 from .incentives import TechnologyIncentives

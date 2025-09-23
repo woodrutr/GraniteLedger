@@ -9,7 +9,7 @@ import types
 import shutil
 
 # Import python modules
-from graniteledger.definitions import PROJECT_ROOT
+from main.definitions import PROJECT_ROOT
 
 
 # Configuration Class for Data Settings

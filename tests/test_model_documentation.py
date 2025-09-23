@@ -6,7 +6,7 @@ import json
 from types import SimpleNamespace
 from pathlib import Path
 
-from graniteledger.definitions import PROJECT_ROOT
+from main.definitions import PROJECT_ROOT
 from src.common.config_setup import Config_settings
 from src.common.documentation import create_model_setup_summary, write_model_setup_documentation
 

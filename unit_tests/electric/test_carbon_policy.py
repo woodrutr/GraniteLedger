@@ -4,7 +4,7 @@ import pytest
 pytest.importorskip('pyomo')
 import pyomo.environ as pyo
 
-from graniteledger.definitions import PROJECT_ROOT
+from main.definitions import PROJECT_ROOT
 from policy.allowance_supply import AllowanceSupply
 from src.common import config_setup
 from src.models.electricity.scripts import preprocessor as prep

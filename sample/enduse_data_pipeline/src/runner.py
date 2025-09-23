@@ -11,7 +11,7 @@ import shutil
 import os
 
 # Import python modules
-from graniteledger.definitions import PROJECT_ROOT
+from main.definitions import PROJECT_ROOT
 from config_setup import Config_settings
 from src.enduse_db import main as enduse_db
 from src.enduse_demand import main as enduse_demand

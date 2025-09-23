@@ -11,7 +11,7 @@ import glob
 import shutil
 
 # Import python modules
-from graniteledger.definitions import PROJECT_ROOT
+from main.definitions import PROJECT_ROOT
 from settings.config_setup import Config_settings
 import src.runner as elec_methods
 

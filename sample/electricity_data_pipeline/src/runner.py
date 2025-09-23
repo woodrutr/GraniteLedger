@@ -13,7 +13,7 @@ import zipfile
 import h5py
 
 # Import python modules
-from graniteledger.definitions import PROJECT_ROOT
+from main.definitions import PROJECT_ROOT
 
 # Establish logger
 logger = getLogger(__name__)

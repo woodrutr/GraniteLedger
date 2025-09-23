@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from pyomo.environ import value
 
-from graniteledger.definitions import PROJECT_ROOT
+from main.definitions import PROJECT_ROOT
 from src.common import config_setup
 from src.integrator.utilities import (
     HI,

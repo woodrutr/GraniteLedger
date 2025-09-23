@@ -22,7 +22,7 @@ import tomlkit
 import sys
 
 # Import python modules
-from graniteledger.definitions import PROJECT_ROOT
+from main.definitions import PROJECT_ROOT
 from main import app_main
 from src.models.electricity.scripts.technology_metadata import (
     get_technology_label,
@@ -596,10 +596,6 @@ def run_mode(n_clicks, selected_mode):
     except Exception:
         error_msg = f'Error, not able to run {selected_mode}. Please check the log script/terminal, exit out of browser, and restart.'
         return error_msg, 0
-
-import os
-import subprocess
-import sys
 
 # ... your callback definitions above ...
 
