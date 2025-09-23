@@ -1,0 +1,2 @@
+# Install GraniteLedger with its development dependencies using the project metadata in pyproject.toml
+.[dev]
