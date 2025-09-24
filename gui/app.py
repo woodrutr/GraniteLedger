@@ -7,12 +7,15 @@ and report clear error messages.
 
 from __future__ import annotations
 
+import copy
 import io
 import importlib.util
 import logging
 import shutil
 import tempfile
 from collections.abc import Iterable, Mapping
+from contextlib import contextmanager
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, TypeVar, cast
 
@@ -114,6 +117,102 @@ _DEFAULT_LOAD_MWH = 1_000_000.0
 _LARGE_ALLOWANCE_SUPPLY = 1e12
 
 _T = TypeVar('_T')
+
+
+SIDEBAR_SECTIONS: list[tuple[str, bool]] = [
+    ('General config', False),
+    ('Carbon policy', False),
+    ('Electricity dispatch', False),
+    ('Incentives / credits', False),
+    ('Outputs', False),
+]
+
+SIDEBAR_STYLE = """
+<style>
+.sidebar-module {
+    border: 1px solid var(--secondary-background-color);
+    border-radius: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    margin-bottom: 0.75rem;
+}
+.sidebar-module.disabled {
+    opacity: 0.5;
+}
+</style>
+"""
+
+
+@dataclass
+class GeneralConfigResult:
+    """Container for user-selected general configuration settings."""
+
+    config_label: str
+    config_source: Any
+    run_config: dict[str, Any]
+    candidate_years: list[int]
+    start_year: int
+    end_year: int
+    selected_years: list[int]
+    regions: list[int | str]
+
+
+@dataclass
+class CarbonModuleSettings:
+    """Record of carbon policy sidebar selections."""
+
+    enabled: bool
+    enable_floor: bool
+    enable_ccr: bool
+    ccr1_enabled: bool
+    ccr2_enabled: bool
+    banking_enabled: bool
+    control_period_years: int | None
+    errors: list[str] = field(default_factory=list)
+
+
+@dataclass
+class DispatchModuleSettings:
+    """Record of electricity dispatch sidebar selections."""
+
+    enabled: bool
+    mode: str
+    capacity_expansion: bool
+    reserve_margins: bool
+    errors: list[str] = field(default_factory=list)
+
+
+@dataclass
+class IncentivesModuleSettings:
+    """Record of incentive and credit selections."""
+
+    enabled: bool
+    ptc_enabled: bool
+    ira_bonus: bool
+    production_multiplier: float
+    errors: list[str] = field(default_factory=list)
+
+
+@dataclass
+class OutputsModuleSettings:
+    """Record of output management selections."""
+
+    enabled: bool
+    directory: str
+    show_csv_downloads: bool
+    errors: list[str] = field(default_factory=list)
+
+
+@contextmanager
+def _sidebar_panel(container: Any, enabled: bool):
+    """Render a styled sidebar panel with optional greyed-out state."""
+
+    class_name = 'sidebar-module disabled' if not enabled else 'sidebar-module'
+    container.markdown(f"<div class=\"{class_name}\">", unsafe_allow_html=True)
+    try:
+        with container:
+            yield container
+    finally:
+        container.markdown('</div>', unsafe_allow_html=True)
 
 
 def _load_config_data(config_source: Any | None = None) -> dict[str, Any]:
@@ -224,6 +323,554 @@ def _select_years(
         raise ValueError('No simulation years specified')
 
     return sorted({int(year) for year in years})
+
+
+def _regions_from_config(config: Mapping[str, Any]) -> list[int | str]:
+    """Extract region identifiers from the configuration mapping."""
+
+    raw_regions = config.get('regions')
+    regions: list[int | str] = []
+
+    def _normalise(entry: Any) -> int | str:
+        if isinstance(entry, bool):
+            return int(entry)
+        if isinstance(entry, (int, float)):
+            return int(entry)
+        text = str(entry).strip()
+        if not text:
+            return 'default'
+        try:
+            return int(text)
+        except (TypeError, ValueError):
+            return text
+
+    if isinstance(raw_regions, Mapping):
+        iterable: Iterable[Any] = raw_regions.values()
+    else:
+        iterable = raw_regions  # type: ignore[assignment]
+
+    if isinstance(iterable, Iterable) and not isinstance(iterable, (str, bytes, Mapping)):
+        for entry in iterable:
+            normalised = _normalise(entry)
+            if normalised not in regions:
+                regions.append(normalised)
+    elif iterable not in (None, ''):
+        regions.append(_normalise(iterable))
+
+    if not regions:
+        regions = [1]
+
+    return regions
+
+
+def _render_general_config_section(
+    container: Any,
+    *,
+    default_source: Any,
+    default_label: str,
+    default_config: Mapping[str, Any],
+) -> GeneralConfigResult:
+    """Render general configuration controls and return the selected settings."""
+
+    config_label = default_label
+    try:
+        base_config = copy.deepcopy(dict(default_config))
+    except Exception:
+        base_config = dict(default_config)
+
+    uploaded = container.file_uploader(
+        'Run configuration (TOML)',
+        type='toml',
+        key='general_config_upload',
+    )
+    if uploaded is not None:
+        config_label = uploaded.name or 'uploaded_config.toml'
+        try:
+            base_config = _load_config_data(uploaded.getvalue())
+        except Exception as exc:
+            container.error(f'Failed to read configuration: {exc}')
+            base_config = copy.deepcopy(dict(default_config))
+            config_label = default_label
+    else:
+        config_label = default_label
+
+    container.caption(f'Using configuration: {config_label}')
+
+    candidate_years = _years_from_config(base_config)
+    if candidate_years:
+        year_min = min(candidate_years)
+        year_max = max(candidate_years)
+    else:
+        try:
+            year_min = int(base_config.get('start_year', 2025))
+        except (TypeError, ValueError):
+            year_min = 2025
+        try:
+            year_max = int(base_config.get('end_year', year_min))
+        except (TypeError, ValueError):
+            year_max = year_min
+    if year_min > year_max:
+        year_min, year_max = year_max, year_min
+
+    def _coerce_year(value: Any, fallback: int) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return int(fallback)
+
+    start_default = _coerce_year(base_config.get('start_year', year_min), year_min)
+    end_default = _coerce_year(base_config.get('end_year', year_max), year_max)
+    start_default = max(year_min, min(year_max, start_default))
+    end_default = max(year_min, min(year_max, end_default))
+    if start_default > end_default:
+        start_default, end_default = end_default, start_default
+
+    if year_min == year_max:
+        start_year = int(
+            container.number_input(
+                'Simulation year',
+                value=int(year_min),
+                step=1,
+                format='%d',
+                key='general_year_single',
+            )
+        )
+        end_year = start_year
+    else:
+        start_year_val, end_year_val = container.slider(
+            'Simulation years',
+            min_value=int(year_min),
+            max_value=int(year_max),
+            value=(int(start_default), int(end_default)),
+            key='general_year_range',
+        )
+        start_year = int(start_year_val)
+        end_year = int(end_year_val)
+
+    region_options = _regions_from_config(base_config)
+    region_labels = [str(region) for region in region_options]
+    selected_regions_raw = container.multiselect(
+        'Regions',
+        options=region_labels,
+        default=region_labels,
+        key='general_regions',
+    )
+    selected_regions: list[int | str] = []
+    for entry in selected_regions_raw:
+        text = str(entry).strip()
+        if not text:
+            continue
+        try:
+            selected_regions.append(int(text))
+        except (TypeError, ValueError):
+            selected_regions.append(text)
+    if not selected_regions:
+        selected_regions = region_options
+
+    run_config = copy.deepcopy(base_config)
+    run_config['start_year'] = start_year
+    run_config['end_year'] = end_year
+    run_config['regions'] = selected_regions
+    run_config.setdefault('modules', {})
+
+    try:
+        selected_years = _select_years(candidate_years, start_year, end_year)
+    except Exception:
+        step = 1 if end_year >= start_year else -1
+        selected_years = list(range(start_year, end_year + step, step))
+    if not selected_years:
+        selected_years = [start_year]
+
+    return GeneralConfigResult(
+        config_label=config_label,
+        config_source=run_config,
+        run_config=run_config,
+        candidate_years=candidate_years,
+        start_year=start_year,
+        end_year=end_year,
+        selected_years=selected_years,
+        regions=selected_regions,
+    )
+
+
+def _render_carbon_policy_section(
+    container: Any,
+    run_config: dict[str, Any],
+) -> CarbonModuleSettings:
+    """Render the carbon policy module controls."""
+
+    modules = run_config.setdefault('modules', {})
+    defaults = modules.get('carbon_policy', {})
+    enabled_default = bool(defaults.get('enabled', True))
+    enable_floor_default = bool(defaults.get('enable_floor', True))
+    enable_ccr_default = bool(defaults.get('enable_ccr', True))
+    ccr1_default = bool(defaults.get('ccr1_enabled', True))
+    ccr2_default = bool(defaults.get('ccr2_enabled', True))
+    banking_default = bool(defaults.get('allowance_banking_enabled', True))
+    control_default_raw = defaults.get('control_period_years')
+    try:
+        control_default = int(control_default_raw)
+    except (TypeError, ValueError):
+        control_default = 3
+    control_override_default = control_default_raw is not None
+
+    enabled = container.toggle('Enable carbon cap', value=enabled_default, key='carbon_enable')
+
+    with _sidebar_panel(container, enabled) as panel:
+        enable_floor = panel.checkbox(
+            'Enable minimum reserve price',
+            value=enable_floor_default,
+            disabled=not enabled,
+            key='carbon_floor',
+        )
+        enable_ccr = panel.checkbox(
+            'Enable CCR',
+            value=enable_ccr_default,
+            disabled=not enabled,
+            key='carbon_ccr',
+        )
+        ccr1_enabled = panel.checkbox(
+            'Enable CCR tranche 1',
+            value=ccr1_default,
+            disabled=not (enabled and enable_ccr),
+            key='carbon_ccr1',
+        )
+        ccr2_enabled = panel.checkbox(
+            'Enable CCR tranche 2',
+            value=ccr2_default,
+            disabled=not (enabled and enable_ccr),
+            key='carbon_ccr2',
+        )
+        banking_enabled = panel.checkbox(
+            'Enable allowance banking',
+            value=banking_default,
+            disabled=not enabled,
+            key='carbon_banking',
+        )
+        control_override = panel.checkbox(
+            'Specify control period length',
+            value=control_override_default,
+            disabled=not enabled,
+            key='carbon_control_toggle',
+        )
+        control_period_value = panel.number_input(
+            'Control period length (years)',
+            min_value=1,
+            value=int(control_default if control_default > 0 else 3),
+            step=1,
+            format='%d',
+            key='carbon_control_years',
+            disabled=not (enabled and control_override),
+        )
+
+    control_period_years = int(control_period_value) if enabled and control_override else None
+    if not enabled:
+        enable_floor = False
+        enable_ccr = False
+        ccr1_enabled = False
+        ccr2_enabled = False
+        banking_enabled = False
+        control_period_years = None
+
+    modules['carbon_policy'] = {
+        'enabled': bool(enabled),
+        'enable_floor': bool(enable_floor),
+        'enable_ccr': bool(enable_ccr),
+        'ccr1_enabled': bool(ccr1_enabled),
+        'ccr2_enabled': bool(ccr2_enabled),
+        'allowance_banking_enabled': bool(banking_enabled),
+        'control_period_years': control_period_years,
+    }
+
+    errors: list[str] = []
+    if enabled and not isinstance(run_config.get('allowance_market'), Mapping):
+        message = 'Allowance market settings are missing from the configuration.'
+        container.error(message)
+        errors.append(message)
+
+    return CarbonModuleSettings(
+        enabled=bool(enabled),
+        enable_floor=bool(enable_floor),
+        enable_ccr=bool(enable_ccr),
+        ccr1_enabled=bool(ccr1_enabled),
+        ccr2_enabled=bool(ccr2_enabled),
+        banking_enabled=bool(banking_enabled),
+        control_period_years=control_period_years,
+        errors=errors,
+    )
+
+
+def _render_dispatch_section(
+    container: Any,
+    run_config: dict[str, Any],
+    frames: FramesType | None,
+) -> DispatchModuleSettings:
+    """Render the electricity dispatch controls."""
+
+    modules = run_config.setdefault('modules', {})
+    defaults = modules.get('electricity_dispatch', {})
+    enabled_default = bool(defaults.get('enabled', False))
+    mode_default = str(defaults.get('mode', 'single')).lower()
+    if mode_default not in {'single', 'network'}:
+        mode_default = 'single'
+    capacity_default = bool(defaults.get('capacity_expansion', True))
+    reserve_default = bool(defaults.get('reserve_margins', True))
+
+    enabled = container.toggle(
+        'Enable electricity dispatch',
+        value=enabled_default,
+        key='dispatch_enable',
+    )
+
+    mode_value = mode_default
+    capacity_expansion = capacity_default
+    reserve_margins = reserve_default
+    errors: list[str] = []
+
+    mode_options = {'single': 'Single region', 'network': 'Networked'}
+
+    with _sidebar_panel(container, enabled) as panel:
+        mode_label = mode_options.get(mode_default, mode_options['single'])
+        mode_selection = panel.selectbox(
+            'Dispatch topology',
+            options=list(mode_options.values()),
+            index=list(mode_options.values()).index(mode_label),
+            disabled=not enabled,
+            key='dispatch_mode',
+        )
+        mode_value = 'network' if mode_selection == mode_options['network'] else 'single'
+        capacity_expansion = panel.checkbox(
+            'Enable capacity expansion',
+            value=capacity_default,
+            disabled=not enabled,
+            key='dispatch_capacity',
+        )
+        reserve_margins = panel.checkbox(
+            'Enforce reserve margins',
+            value=reserve_default,
+            disabled=not enabled,
+            key='dispatch_reserve',
+        )
+
+        if enabled:
+            if frames is None:
+                message = 'Dispatch requires demand and unit data, but no frames are available.'
+                panel.error(message)
+                errors.append(message)
+            else:
+                try:
+                    demand_df = frames.demand()
+                    units_df = frames.units()
+                except Exception as exc:
+                    message = f'Dispatch data unavailable: {exc}'
+                    panel.error(message)
+                    errors.append(message)
+                else:
+                    if demand_df.empty or units_df.empty:
+                        message = 'Dispatch requires non-empty demand and unit tables.'
+                        panel.error(message)
+                        errors.append(message)
+        else:
+            mode_value = mode_default
+            capacity_expansion = False
+            reserve_margins = False
+
+    if not enabled:
+        mode_value = mode_value or 'single'
+
+    modules['electricity_dispatch'] = {
+        'enabled': bool(enabled),
+        'mode': mode_value or 'single',
+        'capacity_expansion': bool(capacity_expansion),
+        'reserve_margins': bool(reserve_margins),
+    }
+
+    return DispatchModuleSettings(
+        enabled=bool(enabled),
+        mode=mode_value or 'single',
+        capacity_expansion=bool(capacity_expansion),
+        reserve_margins=bool(reserve_margins),
+        errors=errors,
+    )
+
+
+def _render_incentives_section(
+    container: Any,
+    run_config: dict[str, Any],
+    frames: FramesType | None,
+) -> IncentivesModuleSettings:
+    """Render incentive and credit controls."""
+
+    modules = run_config.setdefault('modules', {})
+    defaults = modules.get('incentives', {})
+    enabled_default = bool(defaults.get('enabled', False))
+    ptc_default = bool(defaults.get('ptc', True))
+    ira_default = bool(defaults.get('ira_bonus', False))
+    multiplier_default_raw = defaults.get('production_multiplier', 1.0)
+    try:
+        multiplier_default = float(multiplier_default_raw)
+    except (TypeError, ValueError):
+        multiplier_default = 1.0
+    multiplier_default = float(max(0.1, min(3.0, multiplier_default)))
+
+    enabled = container.toggle(
+        'Enable incentives and credits',
+        value=enabled_default,
+        key='incentives_enable',
+    )
+
+    ptc_enabled = ptc_default
+    ira_bonus = ira_default
+    multiplier_value = multiplier_default
+    errors: list[str] = []
+
+    with _sidebar_panel(container, enabled) as panel:
+        ptc_enabled = panel.checkbox(
+            'Apply production tax credits (PTC)',
+            value=ptc_default,
+            disabled=not enabled,
+            key='incentives_ptc',
+        )
+        ira_bonus = panel.checkbox(
+            'Include IRA bonus credits',
+            value=ira_default,
+            disabled=not enabled,
+            key='incentives_ira',
+        )
+        multiplier_value = float(
+            panel.slider(
+                'Production multiplier',
+                min_value=0.1,
+                max_value=3.0,
+                value=float(multiplier_default),
+                step=0.05,
+                disabled=not enabled,
+                key='incentives_multiplier',
+            )
+        )
+
+        if enabled:
+            if frames is None:
+                message = 'Incentives require generating unit data.'
+                panel.error(message)
+                errors.append(message)
+            else:
+                try:
+                    units_df = frames.units()
+                except Exception as exc:
+                    message = f'Unable to access unit data: {exc}'
+                    panel.error(message)
+                    errors.append(message)
+                else:
+                    if units_df.empty:
+                        message = 'Incentives require at least one generating unit.'
+                        panel.error(message)
+                        errors.append(message)
+        else:
+            ptc_enabled = False
+            ira_bonus = False
+            multiplier_value = 1.0
+
+    if not enabled:
+        ptc_enabled = False
+        ira_bonus = False
+        multiplier_value = 1.0
+
+    modules['incentives'] = {
+        'enabled': bool(enabled),
+        'ptc': bool(ptc_enabled),
+        'ira_bonus': bool(ira_bonus),
+        'production_multiplier': float(multiplier_value),
+    }
+
+    return IncentivesModuleSettings(
+        enabled=bool(enabled),
+        ptc_enabled=bool(ptc_enabled),
+        ira_bonus=bool(ira_bonus),
+        production_multiplier=float(multiplier_value),
+        errors=errors,
+    )
+
+
+def _render_outputs_section(
+    container: Any,
+    run_config: dict[str, Any],
+    last_result: Mapping[str, Any] | None,
+) -> OutputsModuleSettings:
+    """Render output directory and download controls."""
+
+    modules = run_config.setdefault('modules', {})
+    defaults = modules.get('outputs', {})
+    enabled_default = bool(defaults.get('enabled', True))
+    directory_default = str(defaults.get('directory') or run_config.get('output_name') or 'outputs')
+    show_csv_default = bool(defaults.get('show_csv_downloads', True))
+
+    enabled = container.toggle(
+        'Enable output management',
+        value=enabled_default,
+        key='outputs_enable',
+    )
+
+    directory_value = directory_default
+    show_csv_downloads = show_csv_default
+    errors: list[str] = []
+
+    with _sidebar_panel(container, enabled) as panel:
+        directory_value = panel.text_input(
+            'Output directory name',
+            value=directory_default,
+            disabled=not enabled,
+            key='outputs_directory',
+        ).strip()
+        show_csv_downloads = panel.checkbox(
+            'Show CSV downloads from last run',
+            value=show_csv_default,
+            disabled=not enabled,
+            key='outputs_csv',
+        )
+
+        if enabled and not directory_value:
+            message = 'Specify an output directory when the outputs module is enabled.'
+            panel.error(message)
+            errors.append(message)
+
+        csv_files: Mapping[str, Any] | None = None
+        if enabled and show_csv_downloads:
+            if isinstance(last_result, Mapping):
+                csv_files = last_result.get('csv_files')  # type: ignore[assignment]
+            if csv_files:
+                panel.caption('Download CSV outputs from the most recent run.')
+                for filename, content in sorted(csv_files.items()):
+                    panel.download_button(
+                        label=f'Download {filename}',
+                        data=content,
+                        file_name=filename,
+                        mime='text/csv',
+                        key=f'outputs_download_{filename}',
+                    )
+            else:
+                panel.info('No CSV outputs are available yet.')
+        elif enabled:
+            panel.caption('CSV downloads will be available after the next run.')
+
+    if not directory_value:
+        directory_value = directory_default or 'outputs'
+    if not enabled:
+        show_csv_downloads = False
+
+    run_config['output_name'] = directory_value
+    modules['outputs'] = {
+        'enabled': bool(enabled),
+        'directory': directory_value,
+        'show_csv_downloads': bool(show_csv_downloads),
+    }
+
+    return OutputsModuleSettings(
+        enabled=bool(enabled),
+        directory=directory_value,
+        show_csv_downloads=bool(show_csv_downloads),
+        errors=errors,
+    )
 
 
 def _coerce_year_value_map(
@@ -1095,6 +1742,8 @@ def run_policy_simulation(
     ccr2_enabled: bool = True,
     allowance_banking_enabled: bool = True,
     control_period_years: int | None = None,
+    dispatch_use_network: bool = False,
+    module_config: Mapping[str, Any] | None = None,
     frames: FramesType | Mapping[str, pd.DataFrame] | None = None,
     assumption_notes: Iterable[str] | None = None,
     progress_cb: Callable[[str, Mapping[str, object]], None] | None = None,
@@ -1109,6 +1758,45 @@ def run_policy_simulation(
         config = _load_config_data(config_source)
     except Exception as exc:  # pragma: no cover - defensive path
         return {'error': f'Unable to load configuration: {exc}'}
+
+    modules_section = config.setdefault('modules', {})
+    merged_modules: dict[str, dict[str, Any]] = {}
+    if isinstance(modules_section, Mapping):
+        for name, settings in modules_section.items():
+            if isinstance(settings, Mapping):
+                merged_modules[str(name)] = dict(settings)
+
+    if isinstance(module_config, Mapping):
+        for name, settings in module_config.items():
+            if isinstance(settings, Mapping):
+                merged_modules[str(name)] = dict(settings)
+            else:
+                merged_modules[str(name)] = {'value': settings}
+
+    carbon_record = merged_modules.setdefault('carbon_policy', {})
+    carbon_record.update(
+        {
+            'enabled': bool(carbon_policy_enabled),
+            'enable_floor': bool(enable_floor),
+            'enable_ccr': bool(enable_ccr),
+            'ccr1_enabled': bool(ccr1_enabled) if enable_ccr else False,
+            'ccr2_enabled': bool(ccr2_enabled) if enable_ccr else False,
+            'allowance_banking_enabled': bool(allowance_banking_enabled),
+            'control_period_years': control_period_years,
+        }
+    )
+    if not enable_ccr:
+        carbon_record['ccr1_enabled'] = False
+        carbon_record['ccr2_enabled'] = False
+
+    dispatch_record = merged_modules.setdefault('electricity_dispatch', {})
+    dispatch_enabled = bool(dispatch_record.get('enabled')) or bool(dispatch_use_network)
+    dispatch_record['enabled'] = dispatch_enabled
+    dispatch_record['use_network'] = bool(dispatch_use_network)
+    current_mode = str(dispatch_record.get('mode', 'network' if dispatch_use_network else 'single')).lower()
+    dispatch_record['mode'] = 'network' if dispatch_use_network else (
+        'network' if current_mode == 'network' else 'single'
+    )
 
     try:
         base_years = _years_from_config(config)
@@ -1127,6 +1815,17 @@ def run_policy_simulation(
         enable_floor = False
         enable_ccr = False
         allowance_banking_enabled = False
+
+    carbon_record['enabled'] = bool(carbon_policy_enabled)
+    carbon_record['enable_floor'] = bool(enable_floor)
+    carbon_record['enable_ccr'] = bool(enable_ccr)
+    carbon_record['ccr1_enabled'] = bool(ccr1_enabled) if enable_ccr else False
+    carbon_record['ccr2_enabled'] = bool(ccr2_enabled) if enable_ccr else False
+    carbon_record['allowance_banking_enabled'] = bool(allowance_banking_enabled)
+    carbon_record['control_period_years'] = control_period_years
+    if not enable_ccr:
+        carbon_record['ccr1_enabled'] = False
+        carbon_record['ccr2_enabled'] = False
 
     try:
         frames_obj = (
@@ -1160,11 +1859,14 @@ def run_policy_simulation(
             price_initial=0.0,
             enable_floor=bool(enable_floor),
             enable_ccr=bool(enable_ccr),
+            use_network=bool(dispatch_use_network),
             progress_cb=progress_cb,
         )
         temp_dir, csv_files = _write_outputs_to_temp(outputs)
 
         overrides = [str(note) for note in assumption_notes] if assumption_notes else []
+
+        config['modules'] = copy.deepcopy(merged_modules)
 
         result = {
             'annual': outputs.annual.copy(),
@@ -1175,6 +1877,8 @@ def run_policy_simulation(
             'temp_dir': temp_dir,
             'years': years,
             'documentation': {'assumption_overrides': overrides},
+            'module_config': copy.deepcopy(merged_modules),
+            'run_config': copy.deepcopy(config),
         }
         return result
     except Exception as exc:  # pragma: no cover - defensive path
@@ -1232,6 +1936,30 @@ def _build_run_summary(settings: Mapping[str, Any], *, config_label: str) -> lis
     )
 
     control_period = settings.get('control_period_years') if carbon_enabled else None
+
+    modules = settings.get('module_config')
+    if isinstance(modules, Mapping):
+        carbon_cfg = modules.get('carbon_policy')
+        if isinstance(carbon_cfg, Mapping):
+            carbon_enabled = bool(carbon_cfg.get('enabled', carbon_enabled))
+            enable_floor = bool(carbon_cfg.get('enable_floor', enable_floor)) if carbon_enabled else False
+            enable_ccr = bool(carbon_cfg.get('enable_ccr', enable_ccr)) if carbon_enabled else False
+            ccr1_enabled = bool(carbon_cfg.get('ccr1_enabled', ccr1_enabled)) if enable_ccr else False
+            ccr2_enabled = bool(carbon_cfg.get('ccr2_enabled', ccr2_enabled)) if enable_ccr else False
+            banking_enabled = (
+                bool(carbon_cfg.get('allowance_banking_enabled', banking_enabled))
+                if carbon_enabled
+                else False
+            )
+            control_period = carbon_cfg.get('control_period_years') if carbon_enabled else control_period
+
+        dispatch_cfg = modules.get('electricity_dispatch')
+        incentives_cfg = modules.get('incentives')
+        outputs_cfg = modules.get('outputs')
+    else:
+        dispatch_cfg = None
+        incentives_cfg = None
+        outputs_cfg = None
     if not carbon_enabled:
         control_display = 'Not applicable'
     elif control_period is None:
@@ -1239,7 +1967,7 @@ def _build_run_summary(settings: Mapping[str, Any], *, config_label: str) -> lis
     else:
         control_display = str(control_period)
 
-    return [
+    summary: list[tuple[str, str]] = [
         ('Configuration', config_label),
         ('Simulation years', year_display),
         ('Carbon cap enabled', _bool_label(carbon_enabled)),
@@ -1250,6 +1978,59 @@ def _build_run_summary(settings: Mapping[str, Any], *, config_label: str) -> lis
         ('Allowance banking enabled', _bool_label(banking_enabled)),
         ('Control period length', control_display),
     ]
+
+    dispatch_enabled = False
+    dispatch_network = bool(settings.get('dispatch_use_network', False))
+    dispatch_mode_label = 'Single region'
+    capacity_expansion = False
+    reserve_margins = False
+    if isinstance(dispatch_cfg, Mapping):
+        dispatch_enabled = bool(dispatch_cfg.get('enabled', dispatch_enabled))
+        dispatch_network = bool(dispatch_cfg.get('use_network', dispatch_network))
+        dispatch_mode = str(dispatch_cfg.get('mode', 'network' if dispatch_network else 'single')).lower()
+        dispatch_mode_label = 'Networked' if dispatch_network or dispatch_mode == 'network' else 'Single region'
+        capacity_expansion = bool(dispatch_cfg.get('capacity_expansion', capacity_expansion))
+        reserve_margins = bool(dispatch_cfg.get('reserve_margins', reserve_margins))
+
+    summary.append(('Electricity dispatch module', _bool_label(dispatch_enabled)))
+    if dispatch_enabled or dispatch_network:
+        summary.append(('Dispatch mode', dispatch_mode_label))
+        summary.append(('Capacity expansion', _bool_label(capacity_expansion)))
+        summary.append(('Reserve margins', _bool_label(reserve_margins)))
+
+    incentives_enabled = False
+    ptc_enabled = False
+    ira_bonus = False
+    production_multiplier = 1.0
+    if isinstance(incentives_cfg, Mapping):
+        incentives_enabled = bool(incentives_cfg.get('enabled', incentives_enabled))
+        ptc_enabled = bool(incentives_cfg.get('ptc', ptc_enabled))
+        ira_bonus = bool(incentives_cfg.get('ira_bonus', ira_bonus))
+        try:
+            production_multiplier = float(incentives_cfg.get('production_multiplier', production_multiplier))
+        except (TypeError, ValueError):
+            production_multiplier = 1.0
+
+    summary.append(('Incentives module', _bool_label(incentives_enabled)))
+    if incentives_enabled:
+        summary.append(('PTC / production credits', _bool_label(ptc_enabled)))
+        summary.append(('IRA bonus credits', _bool_label(ira_bonus)))
+        summary.append(('Production multiplier', f'{production_multiplier:.2f}x'))
+
+    outputs_enabled = True
+    output_directory = settings.get('output_name', 'outputs')
+    show_sidebar_downloads = False
+    if isinstance(outputs_cfg, Mapping):
+        outputs_enabled = bool(outputs_cfg.get('enabled', outputs_enabled))
+        output_directory = outputs_cfg.get('directory', output_directory)
+        show_sidebar_downloads = bool(outputs_cfg.get('show_csv_downloads', show_sidebar_downloads))
+
+    summary.append(('Outputs module', _bool_label(outputs_enabled)))
+    summary.append(('Output directory', str(output_directory)))
+    if outputs_enabled:
+        summary.append(('Sidebar CSV downloads', _bool_label(show_sidebar_downloads)))
+
+    return summary
 
 
 def _render_results(result: dict[str, Any]) -> None:  # pragma: no cover - UI rendering
@@ -1321,128 +2102,101 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
     st.session_state.setdefault('last_result', None)
     st.session_state.setdefault('temp_dirs', [])
 
-    with st.sidebar:
-        st.header('Configuration')
-        uploaded = st.file_uploader('Run configuration (TOML)', type='toml')
-        if uploaded is not None:
-            config_source = uploaded.getvalue()
-            config_label = uploaded.name
-        else:
-            config_source = DEFAULT_CONFIG_PATH
-            config_label = DEFAULT_CONFIG_PATH.name
-        st.caption(f'Using configuration: {config_label}')
-
-        try:
-            config_preview = _load_config_data(config_source)
-            candidate_years = _years_from_config(config_preview)
-        except Exception as exc:  # pragma: no cover - defensive path
-            candidate_years = []
-            st.error(f'Failed to read configuration: {exc}')
-
-        if candidate_years:
-            year_min = min(candidate_years)
-            year_max = max(candidate_years)
-        else:
-            year_min, year_max = 2025, 2030
-
-        if year_min == year_max:
-            start_year = st.number_input('Simulation year', value=int(year_min), step=1, format='%d')
-            end_year = int(start_year)
-        else:
-            start_year, end_year = st.slider(
-                'Simulation years',
-                min_value=int(year_min),
-                max_value=int(year_max),
-                value=(int(year_min), int(year_max)),
-            )
-
-        start_year_val = int(start_year)
-        end_year_val = int(end_year)
-
-        carbon_policy_enabled = True
-        enable_floor = False
-        enable_ccr = False
-        ccr1_enabled = False
-        ccr2_enabled = False
-        allowance_banking_enabled = False
-        control_period_years: int | None = None
-        control_override = False
-
-        with st.expander('Carbon policy', expanded=True):
-            carbon_policy_enabled = st.toggle('Enable carbon cap', value=True)
-            if carbon_policy_enabled:
-                enable_floor = st.checkbox('Enable minimum reserve price', value=True)
-                enable_ccr = st.checkbox('Enable CCR', value=True)
-                ccr1_enabled = st.checkbox(
-                    'Enable CCR tranche 1',
-                    value=True,
-                    disabled=not enable_ccr,
-                )
-                ccr2_enabled = st.checkbox(
-                    'Enable CCR tranche 2',
-                    value=True,
-                    disabled=not enable_ccr,
-                )
-                allowance_banking_enabled = st.checkbox('Enable allowance banking', value=True)
-                control_override = st.checkbox('Specify control period length', value=False)
-                if control_override:
-                    control_period_years = int(
-                        st.number_input(
-                            'Control period length (years)',
-                            min_value=1,
-                            value=3,
-                            step=1,
-                            format='%d',
-                        )
-                    )
-            else:
-                carbon_policy_enabled = False
-        if not carbon_policy_enabled:
-            enable_floor = False
-            enable_ccr = False
-            ccr1_enabled = False
-            ccr2_enabled = False
-            allowance_banking_enabled = False
-            control_period_years = None
-        elif not enable_ccr:
-            ccr1_enabled = False
-            ccr2_enabled = False
-
-        run_params: dict[str, Any] = {
-            'config_source': config_source,
-            'start_year': int(start_year),
-            'end_year': int(end_year),
-            'carbon_policy_enabled': bool(carbon_policy_enabled),
-            'enable_floor': bool(enable_floor),
-            'enable_ccr': bool(enable_ccr),
-            'ccr1_enabled': bool(ccr1_enabled),
-            'ccr2_enabled': bool(ccr2_enabled),
-            'allowance_banking_enabled': bool(allowance_banking_enabled),
-            'control_period_years': control_period_years,
-        }
-        run_clicked = st.button('Run Model', type='primary')
-
+    module_errors: list[str] = []
     assumption_notes: list[str] = []
     assumption_errors: list[str] = []
+
+    try:
+        default_config_data = _load_config_data(DEFAULT_CONFIG_PATH)
+    except Exception as exc:  # pragma: no cover - defensive UI path
+        default_config_data = {}
+        st.warning(f'Unable to load default configuration: {exc}')
+
+    run_config: dict[str, Any] = copy.deepcopy(default_config_data) if default_config_data else {}
+    config_label = DEFAULT_CONFIG_PATH.name
     selected_years: list[int] = []
+    frames_for_run: FramesType | None = None
+    start_year_val = int(run_config.get('start_year', 2025)) if run_config else 2025
+    end_year_val = int(run_config.get('end_year', start_year_val)) if run_config else start_year_val
+
+    with st.sidebar:
+        st.markdown(SIDEBAR_STYLE, unsafe_allow_html=True)
+
+        general_label, general_expanded = SIDEBAR_SECTIONS[0]
+        general_expander = st.expander(general_label, expanded=general_expanded)
+        general_result = _render_general_config_section(
+            general_expander,
+            default_source=DEFAULT_CONFIG_PATH,
+            default_label=DEFAULT_CONFIG_PATH.name,
+            default_config=default_config_data,
+        )
+        run_config = general_result.run_config
+        config_label = general_result.config_label
+        candidate_years = general_result.candidate_years
+        start_year_val = general_result.start_year
+        end_year_val = general_result.end_year
+        selected_years = general_result.selected_years
+
+        carbon_label, carbon_expanded = SIDEBAR_SECTIONS[1]
+        carbon_expander = st.expander(carbon_label, expanded=carbon_expanded)
+        carbon_settings = _render_carbon_policy_section(carbon_expander, run_config)
+        module_errors.extend(carbon_settings.errors)
+
+        try:
+            frames_for_run = _build_default_frames(
+                selected_years or [start_year_val],
+                carbon_policy_enabled=carbon_settings.enabled,
+                banking_enabled=carbon_settings.banking_enabled,
+            )
+        except Exception as exc:  # pragma: no cover - defensive UI path
+            frames_for_run = None
+            st.warning(f'Unable to prepare default assumption tables: {exc}')
+
+        dispatch_label, dispatch_expanded = SIDEBAR_SECTIONS[2]
+        dispatch_expander = st.expander(dispatch_label, expanded=dispatch_expanded)
+        dispatch_settings = _render_dispatch_section(dispatch_expander, run_config, frames_for_run)
+        module_errors.extend(dispatch_settings.errors)
+
+        incentives_label, incentives_expanded = SIDEBAR_SECTIONS[3]
+        incentives_expander = st.expander(incentives_label, expanded=incentives_expanded)
+        incentives_settings = _render_incentives_section(incentives_expander, run_config, frames_for_run)
+        module_errors.extend(incentives_settings.errors)
+
+        outputs_label, outputs_expanded = SIDEBAR_SECTIONS[4]
+        outputs_expander = st.expander(outputs_label, expanded=outputs_expanded)
+        last_result_mapping = st.session_state.get('last_result')
+        if not isinstance(last_result_mapping, Mapping):
+            last_result_mapping = None
+        outputs_settings = _render_outputs_section(
+            outputs_expander,
+            run_config,
+            last_result_mapping,
+        )
+        module_errors.extend(outputs_settings.errors)
+
+        run_clicked = st.button('Run Model', type='primary', use_container_width=True)
+
     try:
         selected_years = _select_years(candidate_years, start_year_val, end_year_val)
     except Exception:
-        selected_years = []
+        selected_years = selected_years or []
     if not selected_years:
         step = 1 if end_year_val >= start_year_val else -1
         selected_years = list(range(start_year_val, end_year_val + step, step))
 
-    frames_for_run: FramesType | None = None
-    try:
-        frames_for_run = _build_default_frames(
-            selected_years or [start_year_val],
-            carbon_policy_enabled=bool(carbon_policy_enabled),
-            banking_enabled=bool(allowance_banking_enabled),
-        )
-    except Exception as exc:  # pragma: no cover - defensive UI path
-        frames_for_run = None
-        st.warning(f'Unable to prepare default assumption tables: {exc}')
+    if frames_for_run is None:
+        try:
+            frames_for_run = _build_default_frames(
+                selected_years or [start_year_val],
+                carbon_policy_enabled=bool(carbon_settings.enabled),
+                banking_enabled=bool(carbon_settings.banking_enabled),
+            )
+        except Exception as exc:  # pragma: no cover - defensive UI path
+            frames_for_run = None
+            st.warning(f'Unable to prepare default assumption tables: {exc}')
+
+    if module_errors:
+        st.warning('Resolve the module configuration issues highlighted in the sidebar before running the simulation.')
 
     if frames_for_run is not None:
         st.subheader('Assumption overrides')
@@ -1477,12 +2231,28 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
     pending_run = st.session_state.get('pending_run')
 
     if run_clicked:
-        if assumption_errors:
-            st.error('Resolve the assumption data issues above before running the simulation.')
+        if assumption_errors or module_errors:
+            st.error('Resolve the configuration issues above before running the simulation.')
         else:
+            run_inputs_payload = {
+                'config_source': copy.deepcopy(run_config),
+                'start_year': int(start_year_val),
+                'end_year': int(end_year_val),
+                'carbon_policy_enabled': bool(carbon_settings.enabled),
+                'enable_floor': bool(carbon_settings.enable_floor),
+                'enable_ccr': bool(carbon_settings.enable_ccr),
+                'ccr1_enabled': bool(carbon_settings.ccr1_enabled),
+                'ccr2_enabled': bool(carbon_settings.ccr2_enabled),
+                'allowance_banking_enabled': bool(carbon_settings.banking_enabled),
+                'control_period_years': carbon_settings.control_period_years,
+                'dispatch_use_network': bool(
+                    dispatch_settings.enabled and dispatch_settings.mode == 'network'
+                ),
+                'module_config': copy.deepcopy(run_config.get('modules', {})),
+            }
             st.session_state['pending_run'] = {
-                'params': run_params,
-                'summary': _build_run_summary(run_params, config_label=config_label),
+                'params': run_inputs_payload,
+                'summary': _build_run_summary(run_inputs_payload, config_label=config_label),
             }
             pending_run = st.session_state['pending_run']
 
@@ -1514,19 +2284,17 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
             st.session_state.pop('pending_run', None)
             pending_run = None
 
+    dispatch_use_network = bool(
+        dispatch_settings.enabled and dispatch_settings.mode == 'network'
+    )
+
     if run_inputs is not None:
-        config_source = run_inputs.get('config_source', config_source)
-        start_year = run_inputs.get('start_year', start_year)
-        end_year = run_inputs.get('end_year', end_year)
-        carbon_policy_enabled = run_inputs.get('carbon_policy_enabled', carbon_policy_enabled)
-        enable_floor = run_inputs.get('enable_floor', enable_floor)
-        enable_ccr = run_inputs.get('enable_ccr', enable_ccr)
-        ccr1_enabled = run_inputs.get('ccr1_enabled', ccr1_enabled)
-        ccr2_enabled = run_inputs.get('ccr2_enabled', ccr2_enabled)
-        allowance_banking_enabled = run_inputs.get(
-            'allowance_banking_enabled', allowance_banking_enabled
+        run_config = copy.deepcopy(run_inputs.get('config_source', run_config))
+        start_year_val = int(run_inputs.get('start_year', start_year_val))
+        end_year_val = int(run_inputs.get('end_year', end_year_val))
+        dispatch_use_network = bool(
+            run_inputs.get('dispatch_use_network', dispatch_use_network)
         )
-        control_period_years = run_inputs.get('control_period_years', control_period_years)
 
     result = st.session_state.get('last_result')
 
@@ -1616,18 +2384,37 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
                         progress_text.text(f'Completed year {year_display} of {total}')
                     return
 
+            inputs_for_run = run_inputs or {}
             try:
                 result = run_policy_simulation(
-                    config_source,
-                    start_year=start_year_val,
-                    end_year=end_year_val,
-                    carbon_policy_enabled=bool(carbon_policy_enabled),
-                    enable_floor=bool(enable_floor),
-                    enable_ccr=bool(enable_ccr),
-                    ccr1_enabled=bool(ccr1_enabled),
-                    ccr2_enabled=bool(ccr2_enabled),
-                    allowance_banking_enabled=bool(allowance_banking_enabled),
-                    control_period_years=control_period_years,
+                    inputs_for_run.get('config_source', run_config),
+                    start_year=inputs_for_run.get('start_year', start_year_val),
+                    end_year=inputs_for_run.get('end_year', end_year_val),
+                    carbon_policy_enabled=bool(
+                        inputs_for_run.get('carbon_policy_enabled', carbon_settings.enabled)
+                    ),
+                    enable_floor=bool(
+                        inputs_for_run.get('enable_floor', carbon_settings.enable_floor)
+                    ),
+                    enable_ccr=bool(inputs_for_run.get('enable_ccr', carbon_settings.enable_ccr)),
+                    ccr1_enabled=bool(
+                        inputs_for_run.get('ccr1_enabled', carbon_settings.ccr1_enabled)
+                    ),
+                    ccr2_enabled=bool(
+                        inputs_for_run.get('ccr2_enabled', carbon_settings.ccr2_enabled)
+                    ),
+                    allowance_banking_enabled=bool(
+                        inputs_for_run.get('allowance_banking_enabled', carbon_settings.banking_enabled)
+                    ),
+                    control_period_years=inputs_for_run.get(
+                        'control_period_years', carbon_settings.control_period_years
+                    ),
+                    dispatch_use_network=bool(
+                        inputs_for_run.get('dispatch_use_network', dispatch_use_network)
+                    ),
+                    module_config=inputs_for_run.get(
+                        'module_config', run_config.get('modules', {})
+                    ),
                     frames=frames_for_run,
                     assumption_notes=assumption_notes,
                     progress_cb=_update_progress,
