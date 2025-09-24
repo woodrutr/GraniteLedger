@@ -89,6 +89,7 @@ LOGGER = logging.getLogger(__name__)
 DEFAULT_CONFIG_PATH = Path(PROJECT_ROOT, 'src', 'common', 'run_config.toml')
 _DEFAULT_LOAD_MWH = 1_000_000.0
 _LARGE_ALLOWANCE_SUPPLY = 1e12
+_ALL_REGION_IDENTIFIERS = tuple(range(1, 26))
 
 _T = TypeVar('_T')
 
@@ -446,7 +447,7 @@ def _render_general_config_section(
         
 
     region_options = _regions_from_config(base_config)
-    default_region_values = list(range(1, 26))
+    default_region_values = list(_ALL_REGION_IDENTIFIERS)
     available_region_values: list[int | str] = []
     seen_region_labels: set[str] = set()
 
@@ -478,11 +479,19 @@ def _render_general_config_section(
         key='general_regions',
     )
 
+    all_selected = 'All' in selected_regions_raw
+    if all_selected and selected_regions_raw != ['All']:
+        if st is not None:  # pragma: no branch - streamlit only when available
+            st.session_state['general_regions'] = ['All']
+        selected_regions_raw = ['All']
+
     label_to_value: dict[str, int | str] = {
         str(value): value for value in available_region_values
     }
     selected_regions: list[int | str]
-    if 'All' in selected_regions_raw or not selected_regions_raw:
+    if all_selected:
+        selected_regions = list(_ALL_REGION_IDENTIFIERS)
+    elif not selected_regions_raw:
         selected_regions = list(available_region_values)
     else:
         selected_regions = []
