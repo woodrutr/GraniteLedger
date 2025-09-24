@@ -117,6 +117,23 @@ def test_policy_disabled_with_minimal_inputs():
     assert annual.loc[years[0], "obligation"] == pytest.approx(0.0)
 
 
+def test_policy_disabled_applies_carbon_price_schedule():
+    years = [2035]
+    policy_df = pd.DataFrame({"year": years, "policy_enabled": False})
+    frames = _frames_with_policy(years, policy_df)
+
+    price_value = 42.5
+    outputs = run_end_to_end_from_frames(
+        frames, years=years, carbon_price_schedule={years[0]: price_value}
+    )
+
+    annual = outputs.annual.set_index("year")
+    assert annual.loc[years[0], "p_co2"] == pytest.approx(price_value)
+
+    dispatch = solve_single(years[0], price_value, frames=frames)
+    assert annual.loc[years[0], "emissions_tons"] == pytest.approx(dispatch.emissions_tons)
+
+
 def test_ccr_toggles_control_allowance_issuance():
     years = [2050]
     base_policy = _policy_frame(

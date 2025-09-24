@@ -1,6 +1,7 @@
 import importlib
 import io
 import shutil
+from collections.abc import Mapping
 
 import pytest
 
@@ -193,6 +194,49 @@ def test_backend_dispatch_and_carbon_modules(monkeypatch):
     dispatch_cfg = result["module_config"]["electricity_dispatch"]
     assert dispatch_cfg["enabled"] is True
     assert dispatch_cfg["use_network"] is True
+
+    _cleanup_temp_dir(result)
+
+
+def test_backend_carbon_price_disables_cap(monkeypatch):
+    real_runner = importlib.import_module("engine.run_loop").run_end_to_end_from_frames
+    captured: dict[str, object] = {}
+
+    def capturing_runner(frames, **kwargs):
+        policy = frames.policy().to_policy()
+        captured["carbon_enabled"] = policy.enabled
+        captured["price_schedule"] = kwargs.get("carbon_price_schedule")
+        return real_runner(frames, **kwargs)
+
+    monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: capturing_runner)
+
+    config = _baseline_config()
+    frames = _frames_for_years([2026])
+
+    module_config = {"carbon_price": {"enabled": True, "price_per_ton": 37.0}}
+
+    result = run_policy_simulation(
+        config,
+        start_year=2026,
+        end_year=2026,
+        frames=frames,
+        carbon_policy_enabled=False,
+        carbon_price_enabled=True,
+        carbon_price_value=37.0,
+        module_config=module_config,
+    )
+
+    assert "error" not in result
+    assert captured.get("carbon_enabled") is False
+    schedule = captured.get("price_schedule")
+    assert isinstance(schedule, Mapping)
+    assert schedule.get(2026) == pytest.approx(37.0)
+
+    carbon_cfg = result["module_config"].get("carbon_policy", {})
+    assert carbon_cfg.get("enabled") is False
+    price_cfg = result["module_config"].get("carbon_price", {})
+    assert price_cfg.get("enabled") is True
+    assert price_cfg.get("price_per_ton") == pytest.approx(37.0)
 
     _cleanup_temp_dir(result)
 
