@@ -303,5 +303,9 @@ def test_year_and_selection_helpers_cover_branches():
     selected = _select_years(fallback_years, start_year=2023, end_year=2024)
     assert selected == [2023, 2024]
 
+    sparse_years = [2025, 2030]
+    expanded = _select_years(sparse_years, start_year=2025, end_year=2030)
+    assert expanded == [2025, 2026, 2027, 2028, 2029, 2030]
+
     with pytest.raises(ValueError):
         _select_years(years, start_year=2026, end_year=2024)

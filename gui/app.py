@@ -286,8 +286,13 @@ def _select_years(
 
     if start is not None and end is not None:
         selected = [year for year in years if start <= year <= end]
-        if not selected:
-            selected = list(range(start, end + 1))
+        complete_range = range(start, end + 1)
+        if selected:
+            selected_set = set(selected)
+            selected_set.update(complete_range)
+            selected = sorted(selected_set)
+        else:
+            selected = list(complete_range)
         years = selected
     elif start is not None:
         selected = [year for year in years if year >= start]
