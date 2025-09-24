@@ -2238,6 +2238,7 @@ def run_policy_simulation(
             "allowance_banking_enabled": bool(allowance_banking_enabled),
             "control_period_years": control_period_years,
         }
+    )
 return summary
 
 def _extract_result_frame(
