@@ -406,7 +406,7 @@ def _regions_from_config(config: Mapping[str, Any]) -> list[int | str]:
         default_label: str,
         default_config: Mapping[str, Any],
     ) -> GeneralConfigResult:
-    def render_general_config(container, default_config, default_label="default_config.toml"):
+def render_general_config(container, default_config, default_label="default_config.toml"):
         """Render general configuration controls and return the selected settings."""
 
     # --- Load Base Config ---
@@ -445,7 +445,7 @@ def _regions_from_config(config: Mapping[str, Any]) -> list[int | str]:
     if year_min > year_max:
         year_min, year_max = year_max, year_min
 
-    def _coerce_year(value, fallback):
+def _coerce_year(value, fallback):
         try:
             return int(value)
         except (TypeError, ValueError):
