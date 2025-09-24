@@ -39,6 +39,12 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - fallback for packaged app execution
     PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
+from gui.region_metadata import (
+    canonical_region_value,
+    region_alias_map,
+    region_display_label,
+)
+
 if importlib.util.find_spec("streamlit") is not None:  # pragma: no cover - optional dependency
     import streamlit as st  # type: ignore[import-not-found]
 else:  # pragma: no cover - optional dependency
@@ -285,17 +291,11 @@ def _regions_from_config(config: Mapping[str, Any]) -> list[int | str]:
     regions: list[int | str] = []
 
     def _normalise(entry: Any) -> int | str:
-        if isinstance(entry, bool):
-            return int(entry)
-        if isinstance(entry, (int, float)):
-            return int(entry)
-        text = str(entry).strip()
-        if not text:
-            return "default"
-        try:
-            return int(text)
-        except (TypeError, ValueError):
-            return text
+        resolved = canonical_region_value(entry)
+        if isinstance(resolved, str):
+            text = resolved.strip()
+            return text or "default"
+        return resolved
 
     if isinstance(raw_regions, Mapping):
         iterable: Iterable[Any] = raw_regions.values()
@@ -451,24 +451,63 @@ def _render_general_config_section(
 
     region_options = _regions_from_config(base_config)
     default_region_values = list(range(1, 26))
+    alias_to_value = region_alias_map()
     available_region_values: list[int | str] = []
-    seen: set[str] = set()
-    for rv in (*default_region_values, *region_options):
-        label = str(rv).strip()
-        if label and label not in seen:
-            seen.add(label)
-            available_region_values.append(int(rv) if isinstance(rv, (bool, int, float)) else rv)
+    value_to_label: dict[int | str, str] = {}
+    label_to_value: dict[str, int | str] = {}
+    seen_values: set[int | str] = set()
 
-    region_labels = ["All"] + [str(v) for v in available_region_values]
+    def _register_region_value(value: int | str) -> None:
+        if value in seen_values:
+            return
+        seen_values.add(value)
+        label = region_display_label(value)
+        available_region_values.append(value)
+        value_to_label[value] = label
+        label_to_value[label] = value
+        alias_to_value.setdefault(label.lower(), value)
+        alias_to_value.setdefault(str(value).strip().lower(), value)
+        if isinstance(value, (bool, int)):
+            alias_to_value.setdefault(f"region {int(value)}".lower(), value)
+
+    for candidate in (*default_region_values, *region_options):
+        resolved = canonical_region_value(candidate)
+        if isinstance(resolved, str):
+            text = resolved.strip()
+            if text:
+                _register_region_value(text)
+        else:
+            _register_region_value(int(resolved))
+
+    region_labels = ["All"] + [value_to_label[v] for v in available_region_values]
     default_selection = ["All"]
+
+    def _canonical_region_label_entry(entry: Any) -> str:
+        text = str(entry).strip()
+        if not text:
+            return text
+        if text == "All":
+            return "All"
+        if text in label_to_value:
+            return text
+        lookup_key = text.lower()
+        value = alias_to_value.get(lookup_key)
+        if value is None:
+            try:
+                value = int(text)
+            except ValueError:
+                return text
+        return value_to_label.get(value, region_display_label(value))
 
     if st is not None:
         st.session_state.setdefault(_GENERAL_REGIONS_NORMALIZED_KEY, list(default_selection))
         prev_raw = st.session_state.get(_GENERAL_REGIONS_NORMALIZED_KEY, [])
         if isinstance(prev_raw, (list, tuple)):
-            previous_clean_selection = tuple(str(e) for e in prev_raw)
+            previous_clean_selection = tuple(
+                _canonical_region_label_entry(e) for e in prev_raw
+            )
         elif isinstance(prev_raw, str):
-            previous_clean_selection = (prev_raw,)
+            previous_clean_selection = (_canonical_region_label_entry(prev_raw),)
         else:
             previous_clean_selection = ()
     else:
@@ -482,15 +521,23 @@ def _render_general_config_section(
             key="general_regions",
         )
     )
-    normalized_selection = _normalize_region_labels(selected_regions_raw, previous_clean_selection)
-    if normalized_selection != selected_regions_raw and st is not None:
-        st.session_state["general_regions"] = normalized_selection
-    selected_regions_raw = normalized_selection
+    normalized_selection = _normalize_region_labels(
+        selected_regions_raw, previous_clean_selection
+    )
+    canonical_selection: list[str] = []
+    seen_labels: set[str] = set()
+    for entry in normalized_selection:
+        label = _canonical_region_label_entry(entry)
+        if label and label not in seen_labels:
+            canonical_selection.append(label)
+            seen_labels.add(label)
+    if canonical_selection != selected_regions_raw and st is not None:
+        st.session_state["general_regions"] = canonical_selection
+    selected_regions_raw = canonical_selection
     if st is not None:
         st.session_state[_GENERAL_REGIONS_NORMALIZED_KEY] = list(selected_regions_raw)
 
     all_selected = "All" in selected_regions_raw
-    label_to_value = {str(v): v for v in available_region_values}
     if all_selected or not selected_regions_raw:
         selected_regions = list(available_region_values)
     else:
@@ -500,10 +547,13 @@ def _render_general_config_section(
                 continue
             value = label_to_value.get(entry)
             if value is None:
-                try:
-                    value = int(str(entry).strip())
-                except ValueError:
-                    value = str(entry).strip()
+                normalized = str(entry).strip().lower()
+                value = alias_to_value.get(normalized)
+                if value is None:
+                    try:
+                        value = int(str(entry).strip())
+                    except ValueError:
+                        value = str(entry).strip()
             if value not in selected_regions:
                 selected_regions.append(value)
     if not selected_regions:
