@@ -89,6 +89,8 @@ LOGGER = logging.getLogger(__name__)
 DEFAULT_CONFIG_PATH = Path(PROJECT_ROOT, 'src', 'common', 'run_config.toml')
 _DEFAULT_LOAD_MWH = 1_000_000.0
 _LARGE_ALLOWANCE_SUPPLY = 1e12
+_ALL_REGION_IDENTIFIERS = tuple(range(1, 26))
+_GENERAL_REGIONS_NORMALIZED_KEY = 'general_regions_normalized_selection'
 
 _T = TypeVar('_T')
 
@@ -336,6 +338,23 @@ def _regions_from_config(config: Mapping[str, Any]) -> list[int | str]:
     return regions
 
 
+def _normalize_region_labels(
+    selected_labels: Iterable[str],
+    previous_clean_selection: Iterable[str] | None,
+) -> list[str]:
+    """Return the cleaned region label selection for the multiselect widget."""
+
+    normalized = [str(entry) for entry in selected_labels]
+    if 'All' in normalized and len(normalized) > 1:
+        non_all = [entry for entry in normalized if entry != 'All']
+        previous_tuple = tuple(str(entry) for entry in (previous_clean_selection or ()))
+        if previous_tuple == ('All',) and non_all:
+            return non_all
+        return ['All']
+    return normalized
+
+
+
 def _render_general_config_section(
     container: Any,
     *,
@@ -404,91 +423,196 @@ def _render_general_config_section(
     slider_min_value = int(start_default)
     slider_max_value = int(end_default)
 
-    if slider_min_value > slider_max_value:
-        slider_min_value, slider_max_value = slider_max_value, slider_min_value
+slider_bounds = (slider_min_default, slider_max_default)
+if slider_min_value > slider_max_value:
+    slider_min_value, slider_max_value = slider_max_value, slider_min_value
 
-    slider_bounds = (slider_min_default, slider_max_default)
-    slider_default_state = (slider_min_value, slider_max_value)
+slider_key = 'general_year_range_slider'
+bounds_state_key = 'general_year_range_slider_bounds'
+config_state_key = 'general_config_active_label'
+start_input_key = 'general_year_range_min_text'
+end_input_key = 'general_year_range_max_text'
 
-    slider_key = 'general_year_range_slider'
-    bounds_state_key = 'general_year_range_slider_bounds'
-    config_state_key = 'general_config_active_label'
-    start_input_key = 'general_year_range_min_text'
-    end_input_key = 'general_year_range_max_text'
+slider_default_state = (slider_min_value, slider_max_value)
+slider_state = slider_default_state
+start_text_default = str(slider_state[0])
+end_text_default = str(slider_state[1])
 
-    slider_state = slider_default_state
-    start_text_default = str(slider_state[0])
-    end_text_default = str(slider_state[1])
-
-    if st is not None:
-        if (
-            st.session_state.get(config_state_key) != config_label
-            or st.session_state.get(bounds_state_key) != slider_bounds
+if st is not None:
+    if (
+        st.session_state.get(config_state_key) != config_label
+        or st.session_state.get(bounds_state_key) != slider_bounds
+    ):
+        st.session_state[config_state_key] = config_label
+        st.session_state[bounds_state_key] = slider_bounds
+        st.session_state[slider_key] = slider_default_state
+        st.session_state[start_input_key] = str(slider_default_state[0])
+        st.session_state[end_input_key] = str(slider_default_state[1])
+        for reset_key in (
+            'general_year_range_min_numeric',
+            'general_year_range_max_numeric',
+            'general_regions',
+            _GENERAL_REGIONS_NORMALIZED_KEY,
         ):
-            st.session_state[config_state_key] = config_label
-            st.session_state[bounds_state_key] = slider_bounds
-            st.session_state[slider_key] = slider_default_state
-            st.session_state[start_input_key] = str(slider_default_state[0])
-            st.session_state[end_input_key] = str(slider_default_state[1])
-            st.session_state.pop('general_regions', None)
+            st.session_state.pop(reset_key, None)
 
-        slider_state = st.session_state.get(slider_key, slider_default_state)
-        if not isinstance(slider_state, (tuple, list)) or len(slider_state) != 2:
-            slider_state = slider_default_state
+    slider_state = st.session_state.get(slider_key, slider_default_state)
+    if not isinstance(slider_state, (tuple, list)) or len(slider_state) != 2:
+        slider_state = slider_default_state
 
-        start_text_default = str(st.session_state.get(start_input_key, slider_state[0]))
-        end_text_default = str(st.session_state.get(end_input_key, slider_state[1]))
+    start_text_default = str(st.session_state.get(start_input_key, slider_state[0]))
+    end_text_default = str(st.session_state.get(end_input_key, slider_state[1]))
 
-    text_inputs_available = hasattr(container, 'text_input')
-    if text_inputs_available:
-        if hasattr(container, 'columns'):
-            start_col, end_col = container.columns(2)
-        else:  # pragma: no cover - non-Streamlit fallback
-            start_col = container
-            end_col = container
-        start_col.text_input('Start year', value=start_text_default, key=start_input_key)
-        end_col.text_input('End year', value=end_text_default, key=end_input_key)
-        if st is not None:
-            start_text_raw = st.session_state.get(start_input_key, start_text_default)
-            end_text_raw = st.session_state.get(end_input_key, end_text_default)
-        else:
-            start_text_raw = start_text_default
-            end_text_raw = end_text_default
+text_inputs_available = hasattr(container, 'text_input')
+if text_inputs_available:
+    if hasattr(container, 'columns'):
+        start_col, end_col = container.columns(2)
+    else:  # pragma: no cover - non-Streamlit fallback
+        start_col = container
+        end_col = container
+    start_col.text_input('Start year', value=start_text_default, key=start_input_key)
+    end_col.text_input('End year', value=end_text_default, key=end_input_key)
+    if st is not None:
+        start_text_raw = st.session_state.get(start_input_key, start_text_default)
+        end_text_raw = st.session_state.get(end_input_key, end_text_default)
     else:
         start_text_raw = start_text_default
         end_text_raw = end_text_default
+else:
+    start_text_raw = start_text_default
+    end_text_raw = end_text_default
 
-    start_numeric = _coerce_year(start_text_raw, slider_state[0])
-    end_numeric = _coerce_year(end_text_raw, slider_state[1])
-    start_numeric = max(slider_min_default, min(slider_max_default, start_numeric))
-    end_numeric = max(slider_min_default, min(slider_max_default, end_numeric))
-    if start_numeric > end_numeric:
-        start_numeric, end_numeric = end_numeric, start_numeric
+start_numeric = _coerce_year(start_text_raw, slider_state[0])
+end_numeric = _coerce_year(end_text_raw, slider_state[1])
+start_numeric = max(slider_min_default, min(slider_max_default, start_numeric))
+end_numeric = max(slider_min_default, min(slider_max_default, end_numeric))
+if start_numeric > end_numeric:
+    start_numeric, end_numeric = end_numeric, start_numeric
 
-    slider_state = (int(start_numeric), int(end_numeric))
-    if st is not None and tuple(st.session_state.get(slider_key, slider_state)) != slider_state:
-        st.session_state[slider_key] = slider_state
+slider_state = (int(start_numeric), int(end_numeric))
+if st is not None and tuple(st.session_state.get(slider_key, slider_state)) != slider_state:
+    st.session_state[slider_key] = slider_state
 
-    slider_kwargs: dict[str, Any] = {
-        'min_value': slider_min_default,
-        'max_value': slider_max_default,
-        'value': slider_state,
-        'step': 1,
-        'format': '%d',
-    }
-    if st is not None:
-        slider_kwargs['key'] = slider_key
+slider_kwargs: dict[str, Any] = {
+    'min_value': slider_min_default,
+    'max_value': slider_max_default,
+    'value': slider_state,
+    'step': 1,
+    'format': '%d',
+}
+if st is not None:
+    slider_kwargs['key'] = slider_key
 
-    slider_widgets_available = hasattr(container, 'slider')
-    if slider_widgets_available:
-        slider_value = container.slider('Run years', **slider_kwargs)
-        if isinstance(slider_value, tuple):
-            slider_min_value, slider_max_value = slider_value
-        else:  # pragma: no cover - slider fallback when tuple unsupported
-            slider_min_value = slider_value
-            slider_max_value = slider_value
-    else:
-        slider_min_value, slider_max_value = slider_state
+slider_widgets_available = hasattr(container, 'slider')
+if slider_widgets_available:
+    slider_value = container.slider('Run years', **slider_kwargs)
+    if isinstance(slider_value, tuple):
+        slider_min_value, slider_max_value = slider_value
+    else:  # pragma: no cover - slider fallback when tuple unsupported
+        slider_min_value = slider_value
+        slider_max_value = slider_value
+else:
+    slider_min_value, slider_max_value = slider_state
+
+        # Clamp within defaults
+        slider_min_value = max(slider_min_default, min(slider_max_default, int(slider_min_value)))
+        slider_max_value = max(slider_min_default, min(slider_max_default, int(slider_max_value)))
+        if slider_min_value > slider_max_value:
+            slider_min_value, slider_max_value = slider_max_value, slider_min_value
+
+        sanitized_slider_state = (slider_min_value, slider_max_value)
+        st.session_state[min_numeric_key] = slider_min_value
+        st.session_state[max_numeric_key] = slider_max_value
+        st.session_state['general_year_range_min_text'] = str(slider_min_value)
+        st.session_state['general_year_range_max_text'] = str(slider_max_value)
+
+        # Build slider kwargs
+        slider_kwargs: dict[str, Any] = {
+            'min_value': slider_min_default,
+            'max_value': slider_max_default,
+            'value': sanitized_slider_state,
+            'step': 1,
+            'format': '%d',
+            'key': 'general_year_range_slider',
+        }
+
+        slider_widgets_available = hasattr(container, 'slider')
+        if slider_widgets_available:
+            slider_value = container.slider('Run years', **slider_kwargs)
+            if isinstance(slider_value, tuple):
+                slider_min_value, slider_max_value = slider_value
+            else:  # Fallback for single-year sliders
+                slider_min_value = slider_value
+                slider_max_value = slider_value
+
+        slider_min_value = int(slider_min_value)
+        slider_max_value = int(slider_max_value)
+        slider_min_value = max(slider_min_default, min(slider_max_default, slider_min_value))
+        slider_max_value = max(slider_min_default, min(slider_max_default, slider_max_value))
+        if slider_min_value > slider_max_value:
+            slider_min_value, slider_max_value = slider_max_value, slider_min_value
+
+        slider_widgets_available = hasattr(container, 'slider')
+        if slider_widgets_available:
+            try:
+                start_col, end_col = container.columns(2)
+            except Exception:
+                start_col = container
+                end_col = container
+
+            if hasattr(start_col, 'text_input'):
+                start_text = start_col.text_input(
+                    'Start year',
+                    value=st.session_state['general_year_range_min_text'],
+                    key='general_year_range_min_text',
+                )
+            else:  # pragma: no cover - fallback for non-streamlit containers
+                start_text = st.session_state['general_year_range_min_text']
+
+            if hasattr(end_col, 'text_input'):
+                end_text = end_col.text_input(
+                    'End year',
+                    value=st.session_state['general_year_range_max_text'],
+                    key='general_year_range_max_text',
+                )
+            else:  # pragma: no cover - fallback for non-streamlit containers
+                end_text = st.session_state['general_year_range_max_text']
+
+            slider_min_value = _coerce_year(start_text, slider_min_value)
+            slider_max_value = _coerce_year(end_text, slider_max_value)
+            slider_min_value = int(slider_min_value)
+            slider_max_value = int(slider_max_value)
+            slider_min_value = max(slider_min_default, min(slider_max_default, slider_min_value))
+            slider_max_value = max(slider_min_default, min(slider_max_default, slider_max_value))
+            if slider_min_value > slider_max_value:
+                slider_min_value, slider_max_value = slider_max_value, slider_min_value
+
+            slider_value = container.slider(
+                'Run years',
+                min_value=slider_min_default,
+                max_value=slider_max_default,
+                value=(slider_min_value, slider_max_value),
+                step=1,
+                format='%d',
+                key='general_year_range_slider',
+            )
+            if isinstance(slider_value, tuple):
+                slider_min_value, slider_max_value = slider_value
+            else:  # pragma: no cover - slider fallback when tuple unsupported
+                slider_min_value = slider_value
+                slider_max_value = slider_value
+
+            slider_min_value = int(slider_min_value)
+            slider_max_value = int(slider_max_value)
+            slider_min_value = max(slider_min_default, min(slider_max_default, slider_min_value))
+            slider_max_value = max(slider_min_default, min(slider_max_default, slider_max_value))
+            if slider_min_value > slider_max_value:
+                slider_min_value, slider_max_value = slider_max_value, slider_min_value
+
+        st.session_state[min_numeric_key] = slider_min_value
+        st.session_state[max_numeric_key] = slider_max_value
+        st.session_state['general_year_range_min_text'] = str(slider_min_value)
+        st.session_state['general_year_range_max_text'] = str(slider_max_value)
 
     slider_min_value = int(slider_min_value)
     slider_max_value = int(slider_max_value)
@@ -497,18 +621,18 @@ def _render_general_config_section(
     if slider_min_value > slider_max_value:
         slider_min_value, slider_max_value = slider_max_value, slider_min_value
 
-    final_slider_state = (slider_min_value, slider_max_value)
-    if st is not None:
-        if tuple(st.session_state.get(slider_key, final_slider_state)) != final_slider_state:
-            st.session_state[slider_key] = final_slider_state
-        if st.session_state.get(bounds_state_key) != slider_bounds:
-            st.session_state[bounds_state_key] = slider_bounds
-        sanitized_start = str(final_slider_state[0])
-        sanitized_end = str(final_slider_state[1])
-        if st.session_state.get(start_input_key) != sanitized_start:
-            st.session_state[start_input_key] = sanitized_start
-        if st.session_state.get(end_input_key) != sanitized_end:
-            st.session_state[end_input_key] = sanitized_end
+final_slider_state = (slider_min_value, slider_max_value)
+if st is not None:
+    if tuple(st.session_state.get(slider_key, final_slider_state)) != final_slider_state:
+        st.session_state[slider_key] = final_slider_state
+    if st.session_state.get(bounds_state_key) != slider_bounds:
+        st.session_state[bounds_state_key] = slider_bounds
+    sanitized_start = str(final_slider_state[0])
+    sanitized_end = str(final_slider_state[1])
+    if st.session_state.get(start_input_key) != sanitized_start:
+        st.session_state[start_input_key] = sanitized_start
+    if st.session_state.get(end_input_key) != sanitized_end:
+        st.session_state[end_input_key] = sanitized_end
 
     start_year = slider_min_value
     end_year = slider_max_value
@@ -541,12 +665,42 @@ def _render_general_config_section(
         if label
     ]
     default_selection = default_region_labels or ['All']
-    selected_regions_raw = container.multiselect(
-        'Regions',
-        options=region_labels,
-        default=default_selection,
-        key='general_regions',
+    if st is not None:  # pragma: no branch - streamlit only when available
+        st.session_state.setdefault(
+            _GENERAL_REGIONS_NORMALIZED_KEY, list(default_selection)
+        )
+        previous_clean_selection_raw = st.session_state.get(
+            _GENERAL_REGIONS_NORMALIZED_KEY, []
+        )
+        if isinstance(previous_clean_selection_raw, (list, tuple)):
+            previous_clean_selection = tuple(
+                str(entry) for entry in previous_clean_selection_raw
+            )
+        elif isinstance(previous_clean_selection_raw, str):
+            previous_clean_selection = (previous_clean_selection_raw,)
+        else:
+            previous_clean_selection = ()
+    else:
+        previous_clean_selection = tuple(default_selection)
+    selected_regions_raw = list(
+        container.multiselect(
+            'Regions',
+            options=region_labels,
+            default=default_selection,
+            key='general_regions',
+        )
     )
+
+    normalized_selection = _normalize_region_labels(
+        selected_regions_raw, previous_clean_selection
+    )
+    if normalized_selection != selected_regions_raw and st is not None:  # pragma: no branch - streamlit only when available
+        st.session_state['general_regions'] = normalized_selection
+    selected_regions_raw = normalized_selection
+    if st is not None:  # pragma: no branch - streamlit only when available
+        st.session_state[_GENERAL_REGIONS_NORMALIZED_KEY] = list(selected_regions_raw)
+
+all_selected = 'All' in selected_regions_raw
 
     label_to_value: dict[str, int | str] = {
         str(value): value for value in available_region_values
