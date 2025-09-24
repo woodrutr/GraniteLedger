@@ -2239,7 +2239,6 @@ def run_policy_simulation(
             "control_period_years": control_period_years,
         }
     )
-return summary
 
 def _extract_result_frame(
     result: Mapping[str, Any],
