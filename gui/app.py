@@ -2896,9 +2896,14 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
         production_credits=[],
         investment_credits=[],
     )
+    output_directory_raw = run_config.get('output_name') if run_config else None
+    output_directory = str(output_directory_raw) if output_directory_raw else 'outputs'
+    downloads_root = get_downloads_directory()
+    resolved_output_path = downloads_root if not output_directory else downloads_root / output_directory
     outputs_settings = OutputsModuleSettings(
         enabled=False,
-        directory=run_config.get('output_name', 'outputs'),
+        directory=output_directory,
+        resolved_path=resolved_output_path,
         show_csv_downloads=False,
     )
     run_clicked = False
