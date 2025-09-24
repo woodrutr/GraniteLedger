@@ -399,7 +399,7 @@ def _regions_from_config(config: Mapping[str, Any]) -> list[int | str]:
 
 
 
-    def _render_general_config_section(
+def _render_general_config_section(
         container: Any,
         *,
         default_source: Any,
