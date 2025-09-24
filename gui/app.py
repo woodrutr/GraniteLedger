@@ -444,27 +444,30 @@ def _render_general_config_section(
             return int(fallback)
 
     start_default = _coerce_year(base_config.get("start_year", year_min), year_min)
-    end_default   = _coerce_year(base_config.get("end_year", year_max), year_max)
+    end_default = _coerce_year(base_config.get("end_year", year_max), year_max)
     start_default = max(year_min, min(year_max, start_default))
-    end_default   = max(year_min, min(year_max, end_default))
+    end_default = max(year_min, min(year_max, end_default))
     if start_default > end_default:
         start_default, end_default = end_default, start_default
 
+    # --- Slider for Year Range (clamped 2025–2050) ---
     slider_min_default = 2025
     slider_max_default = 2050
-    slider_min_value = max(slider_min_default, min(slider_max_default, start_default))
-    slider_max_value = max(slider_min_default, min(slider_max_default, end_default))
-    if slider_min_value > slider_max_value:
-        slider_min_value, slider_max_value = slider_max_value, slider_min_value
+    slider_min_value, slider_max_value = container.slider(
+        "Simulation Years",
+        min_value=slider_min_default,
+        max_value=slider_max_default,
+        value=(start_default, end_default),
+        step=1,
+        key="general_year_slider",
+    )
 
-    if st is not None:  # sync if needed
-        slider_state = (slider_min_value, slider_max_value)
-        slider_min_value, slider_max_value = slider_state
-
+    # --- Final Output Years ---
     start_year = slider_min_value
-    end_year   = slider_max_value
+    end_year = slider_max_value
+    run_years = list(range(start_year, end_year + 1))
 
-    # ----- Regions -----
+    # --- Regions ---
     region_options = _regions_from_config(base_config)
     default_region_values = list(range(1, 26))
     available_region_values: list[int | str] = []
@@ -475,8 +478,8 @@ def _render_general_config_section(
             seen.add(label)
             available_region_values.append(int(rv) if isinstance(rv, (bool, int, float)) else rv)
 
-    region_labels = ['All'] + [str(v) for v in available_region_values]
-    default_selection = ['All']
+    region_labels = ["All"] + [str(v) for v in available_region_values]
+    default_selection = ["All"]
 
     if st is not None:
         st.session_state.setdefault(_GENERAL_REGIONS_NORMALIZED_KEY, list(default_selection))
@@ -492,27 +495,27 @@ def _render_general_config_section(
 
     selected_regions_raw = list(
         container.multiselect(
-            'Regions',
+            "Regions",
             options=region_labels,
             default=default_selection,
-            key='general_regions',
+            key="general_regions",
         )
     )
     normalized_selection = _normalize_region_labels(selected_regions_raw, previous_clean_selection)
     if normalized_selection != selected_regions_raw and st is not None:
-        st.session_state['general_regions'] = normalized_selection
+        st.session_state["general_regions"] = normalized_selection
     selected_regions_raw = normalized_selection
     if st is not None:
         st.session_state[_GENERAL_REGIONS_NORMALIZED_KEY] = list(selected_regions_raw)
 
-    all_selected = 'All' in selected_regions_raw
+    all_selected = "All" in selected_regions_raw
     label_to_value = {str(v): v for v in available_region_values}
     if all_selected or not selected_regions_raw:
         selected_regions = list(available_region_values)
     else:
         selected_regions = []
         for entry in selected_regions_raw:
-            if entry == 'All':
+            if entry == "All":
                 continue
             value = label_to_value.get(entry)
             if value is None:
@@ -526,10 +529,10 @@ def _render_general_config_section(
         selected_regions = list(available_region_values)
 
     run_config = copy.deepcopy(base_config)
-    run_config['start_year'] = start_year
-    run_config['end_year'] = end_year
-    run_config['regions'] = selected_regions
-    run_config.setdefault('modules', {})
+    run_config["start_year"] = start_year
+    run_config["end_year"] = end_year
+    run_config["regions"] = selected_regions
+    run_config.setdefault("modules", {})
 
     try:
         selected_years = _select_years(candidate_years, start_year, end_year)
