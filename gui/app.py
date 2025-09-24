@@ -526,7 +526,7 @@ def _render_general_config_section(
     end_year = slider_max_value
 
 
-      region_options = _regions_from_config(base_config)
+    region_options = _regions_from_config(base_config)
     default_region_values = list(range(1, 26))
     available_region_values: list[int | str] = []
     seen_region_labels: set[str] = set()
