@@ -39,10 +39,18 @@ if importlib.util.find_spec('streamlit') is not None:  # pragma: no cover - opti
 else:  # pragma: no cover - optional dependency
     st = None  # type: ignore[assignment]
 
+_PANDAS_MODULE: Any | None
+_PANDAS_IMPORT_ERROR: ModuleNotFoundError | None
+
 try:  # pragma: no cover - optional dependency
-    import pandas as _PANDAS_MODULE  # type: ignore[import-not-found]
-except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    import pandas as pd  # type: ignore[import-not-found]
+except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency
+    pd = cast(Any, None)
     _PANDAS_MODULE = None
+    _PANDAS_IMPORT_ERROR = exc
+else:  # pragma: no cover - optional dependency
+    _PANDAS_MODULE = pd
+    _PANDAS_IMPORT_ERROR = None
 
 try:  # pragma: no cover - optional dependency
     from engine.run_loop import run_end_to_end_from_frames as _RUN_END_TO_END
@@ -56,18 +64,8 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency
 
 if TYPE_CHECKING:  # pragma: no cover - type-checking only
     from io_loader import Frames as FramesType
-    import pandas as pd
 else:
     FramesType = Any
-
-    if _PANDAS_MODULE is not None:
-        pd = cast(Any, _PANDAS_MODULE)
-    else:
-        class _PandasStub:
-            DataFrame = Any
-            Series = Any
-
-        pd = cast(Any, _PandasStub())
 
 
 PANDAS_REQUIRED_MESSAGE = (
@@ -84,6 +82,8 @@ def _ensure_pandas():
     """Return the pandas module or raise an informative error."""
 
     if _PANDAS_MODULE is None:
+        if _PANDAS_IMPORT_ERROR is not None:
+            raise ModuleNotFoundError(PANDAS_REQUIRED_MESSAGE) from _PANDAS_IMPORT_ERROR
         raise ModuleNotFoundError(PANDAS_REQUIRED_MESSAGE)
     return _PANDAS_MODULE
 
@@ -110,7 +110,21 @@ def _ensure_streamlit() -> None:
     if st is None:
         raise ModuleNotFoundError(STREAMLIT_REQUIRED_MESSAGE)
 
+
 LOGGER = logging.getLogger(__name__)
+
+
+def _handle_missing_pandas(error: ModuleNotFoundError) -> None:
+    """Report a missing pandas dependency in the most helpful way available."""
+
+    message = PANDAS_REQUIRED_MESSAGE
+    LOGGER.error('pandas is not available for the policy simulator UI', exc_info=error)
+    if st is None:
+        raise ModuleNotFoundError(message) from error
+
+    st.error(message)
+    st.caption('Install it with `pip install -r requirements.txt` before launching Streamlit.')
+    st.stop()
 
 DEFAULT_CONFIG_PATH = Path(PROJECT_ROOT, 'src', 'common', 'run_config.toml')
 _DEFAULT_LOAD_MWH = 1_000_000.0
@@ -2150,14 +2164,11 @@ def _render_results(result: dict[str, Any]) -> None:  # pragma: no cover - UI re
 
 def main() -> None:  # pragma: no cover - Streamlit entry point
     _ensure_streamlit()
-    global _PANDAS_MODULE, pd
     try:
-        import pandas as pandas_module  # type: ignore[import-not-found]
+        _ensure_pandas()
     except ModuleNotFoundError as exc:  # pragma: no cover - dependency missing at runtime
-        raise ModuleNotFoundError(PANDAS_REQUIRED_MESSAGE) from exc
-    else:
-        _PANDAS_MODULE = pandas_module
-        pd = cast(Any, pandas_module)
+        _handle_missing_pandas(exc)
+        return
     st.set_page_config(page_title='BlueSky Policy Simulator', layout='wide')
     st.title('BlueSky Policy Simulator')
     st.write('Upload a run configuration and execute the annual allowance market engine.')
