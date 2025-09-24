@@ -163,7 +163,7 @@ The repository will be cloned to your specified location.
    On **Linux** or **macOS**, run the contents of the bat file in Terminal.
 
    ```bash
-   conda env create -f envs/conda_env.yml && conda activate bsky
+   conda env create -f environment.yml && conda activate bluesky
    ```
 
    This will create and set up the necessary Conda environment for the project.
@@ -173,13 +173,13 @@ The repository will be cloned to your specified location.
    The update from BlueSky version 1.0 to 1.1 has several package changes that will require an environment update. To update an environment that already exists, run the following:
 
    ```bash
-   conda env update --f envs/conda_env.yml  --prune
+   conda env update -f environment.yml --prune
    ```
 
    We are aware of some conda issues where this may throw errors and not correctly update. In this case, run the following to re-create the environment from scratch:
 
    ```bash
-   conda env create --f envs/conda_env.yml  --yes
+   conda env create -f environment.yml --yes
    ```
 
 
@@ -388,7 +388,7 @@ See the tab below for instructions on how to run the model using the command pro
 
 <details>
 
-Be sure to have the 'bsky' environment activated in a terminal, navigate to the 'BlueSky' directory in your terminal, and then run the following code:
+Be sure to have the 'bluesky' environment activated in a terminal, navigate to the 'BlueSky' directory in your terminal, and then run the following code:
 
 ```bash
 python main.py --help

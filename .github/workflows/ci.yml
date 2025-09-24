@@ -9,6 +9,9 @@ on:
 jobs:
   lint-test:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash -l {0}
     env:
       PIP_CACHE_DIR: ${{ github.workspace }}/.pip
     steps:
@@ -26,13 +29,16 @@ jobs:
           path: |
             ./.pip
             ./.pytest_cache
-          key: ${{ runner.os }}-pip-py312-${{ hashFiles('requirements.txt', 'pyproject.toml') }}
+          key: ${{ runner.os }}-pip-py312-${{ hashFiles('requirements.txt', 'pyproject.toml', 'environment.yml') }}
           restore-keys: |
             ${{ runner.os }}-pip-
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up Conda environment
+        uses: conda-incubator/setup-miniconda@v3
         with:
+          activate-environment: bluesky
+          environment-file: environment.yml
+          auto-activate-base: false
           python-version: '3.12'
 
       - name: Verify dependency manifest
@@ -48,8 +54,6 @@ jobs:
               path = Path(name)
               lower_name = path.name.lower()
               if lower_name.startswith('requirements') and lower_name.endswith('.txt'):
-                  candidates.append(path)
-              elif lower_name in {'environment.yml', 'environment.yaml'}:
                   candidates.append(path)
 
           allowed = {Path('requirements.txt')}

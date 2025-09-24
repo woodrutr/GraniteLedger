@@ -14,7 +14,7 @@ This directory contains data sourcing scripts for multiple input files used with
 
 Follow the instructions within the main repository ReadMe to setup your python environment. 
 
-Be sure to have the 'bsky' environment activated in a terminal, navigate to the 'sample\electricity_data_pipeline' directory in your terminal, and then run the following code:
+Be sure to have the 'bluesky' environment activated in a terminal, navigate to the 'sample\electricity_data_pipeline' directory in your terminal, and then run the following code:
 
 ```bash
 python main.py --help

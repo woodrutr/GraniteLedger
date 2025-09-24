@@ -116,14 +116,14 @@ Finally, **Snakemake makes feeding arguments to scripts easy**, even if the scri
 
 ### Checking Installation
 
-All software necessary for working with Snakemake is contained within the *bsky* Conda environment. 
+All software necessary for working with Snakemake is contained within the *bluesky* Conda environment. 
 
 For help creating the environment, you can navigate to the main README located in the root directory of the *Bluesky_Prototype* repo and see the *Usage* section. 
 
-Once you've created *bsky*, with an open Conda-enabled terminal, activate the environment; 
+Once you've created *bluesky*, with an open Conda-enabled terminal, activate the environment; 
 
 ```bash
-conda activate bsky
+conda activate bluesky
 ```
 
 You can test whether snakemake was installed by checking the version.

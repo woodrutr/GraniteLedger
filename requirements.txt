@@ -1,18 +1,30 @@
-# GraniteLedger dependency manifest used by CI and Streamlit
+# GraniteLedger dependency manifest used by CI, Streamlit, and local development
 
 # Core runtime dependencies
 numpy
-pandas>=2.0.0,<3.0
+pandas>=2.0
 pyomo
 scipy
-streamlit
+streamlit>=1.25
 toml
 tomli; python_version < "3.11"
 typer>=0.12
 
-# Additional modeling libraries
+# Data access and orchestration
+aiohttp>=3.10
+grequests>=0.6
+h5py
+requests>=2.31
+snakemake>=8.0
+sqlalchemy>=2.0
+tomlkit>=0.13
+
+# Visualization and web interfaces
+dash>=2.17
+dash-bootstrap-components>=1.6
 matplotlib
 networkx
+plotly>=5.24
 sympy
 
 # Development and testing tools
