@@ -420,7 +420,9 @@ def _render_general_config_section(
         start_default, end_default = end_default, start_default
 
     slider_min_default = int(min(2025, year_min, start_default, end_default))
-    slider_max_default = int(max(2030, year_max, start_default, end_default))
+    slider_max_default = int(
+        min(2050, max(2030, year_max, start_default, end_default))
+    )
 
     def _sanitize_year_range(raw_min: Any, raw_max: Any, *, fallback: tuple[int, int]) -> tuple[int, int]:
         fallback_min, fallback_max = fallback
@@ -636,12 +638,7 @@ def _render_general_config_section(
             available_region_values.append(region_value)
 
     region_labels = ['All'] + [str(value) for value in available_region_values]
-    default_region_labels = [
-        label
-        for label in (str(entry).strip() for entry in region_options)
-        if label
-    ]
-    default_selection = default_region_labels or ['All']
+    default_selection = ['All']
 
     if st is not None:  # pragma: no branch - streamlit only when available
         st.session_state.setdefault(
