@@ -588,59 +588,6 @@ def _normalize_region_labels(
 
 
 # -------------------------
-# Dataclasses
-# -------------------------
-@dataclass
-class GeneralConfigResult:
-    config_label: str
-    config_source: Any
-    run_config: dict[str, Any]
-    candidate_years: list[int]
-    start_year: int
-    end_year: int
-    selected_years: list[int]
-    regions: list[int | str]
-
-
-@dataclass
-class CarbonModuleSettings:
-    enabled: bool
-    enable_floor: bool
-    enable_ccr: bool
-    ccr1_enabled: bool
-    ccr2_enabled: bool
-    banking_enabled: bool
-    control_period_years: int | None
-    errors: list[str] = field(default_factory=list)
-
-
-@dataclass
-class DispatchModuleSettings:
-    enabled: bool
-    mode: str
-    capacity_expansion: bool
-    reserve_margins: bool
-    errors: list[str] = field(default_factory=list)
-
-
-@dataclass
-class IncentivesModuleSettings:
-    enabled: bool
-    production_credits: list[dict[str, Any]]
-    investment_credits: list[dict[str, Any]]
-    errors: list[str] = field(default_factory=list)
-
-
-@dataclass
-class OutputsModuleSettings:
-    enabled: bool
-    directory: str
-    resolved_path: Path
-    show_csv_downloads: bool
-    errors: list[str] = field(default_factory=list)
-
-
-# -------------------------
 # General Config UI
 # -------------------------
 def _render_general_config_section(
