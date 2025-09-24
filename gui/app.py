@@ -11,6 +11,7 @@ import copy
 import io
 import importlib.util
 import logging
+import re
 import shutil
 import tempfile
 from collections.abc import Iterable, Mapping
@@ -53,6 +54,12 @@ try:  # pragma: no cover - optional dependency
     from io_loader import Frames as _FRAMES_CLASS
 except ModuleNotFoundError:  # pragma: no cover - optional dependency
     _FRAMES_CLASS = None
+
+from src.models.electricity.scripts.technology_metadata import (
+    TECH_ID_TO_LABEL,
+    get_technology_label,
+    resolve_technology_key,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - type-checking only
     from io_loader import Frames as FramesType
@@ -186,9 +193,8 @@ class IncentivesModuleSettings:
     """Record of incentive and credit selections."""
 
     enabled: bool
-    ptc_enabled: bool
-    ira_bonus: bool
-    production_multiplier: float
+    production_credits: list[dict[str, Any]]
+    investment_credits: list[dict[str, Any]]
     errors: list[str] = field(default_factory=list)
 
 
@@ -767,14 +773,193 @@ def _render_incentives_section(
     modules = run_config.setdefault('modules', {})
     defaults = modules.get('incentives', {})
     enabled_default = bool(defaults.get('enabled', False))
-    ptc_default = bool(defaults.get('ptc', True))
-    ira_default = bool(defaults.get('ira_bonus', False))
-    multiplier_default_raw = defaults.get('production_multiplier', 1.0)
-    try:
-        multiplier_default = float(multiplier_default_raw)
-    except (TypeError, ValueError):
-        multiplier_default = 1.0
-    multiplier_default = float(max(0.1, min(3.0, multiplier_default)))
+
+    incentives_cfg = run_config.get('electricity_incentives')
+    production_source: Any | None = None
+    investment_source: Any | None = None
+    if isinstance(incentives_cfg, Mapping):
+        enabled_default = bool(incentives_cfg.get('enabled', enabled_default))
+        production_source = incentives_cfg.get('production')
+        investment_source = incentives_cfg.get('investment')
+    if production_source is None and isinstance(defaults, Mapping):
+        production_source = defaults.get('production')
+    if investment_source is None and isinstance(defaults, Mapping):
+        investment_source = defaults.get('investment')
+
+    def _normalise_config_entries(
+        source: Any, *, credit_key: str, limit_key: str
+    ) -> list[dict[str, Any]]:
+        entries: list[dict[str, Any]] = []
+        if isinstance(source, Mapping):
+            iterable: Iterable[Any] = [source]
+        elif isinstance(source, Iterable) and not isinstance(source, (str, bytes)):
+            iterable = source
+        else:
+            iterable = []
+        for entry in iterable:
+            if not isinstance(entry, Mapping):
+                continue
+            tech_id = resolve_technology_key(entry.get('technology'))
+            if tech_id is None:
+                continue
+            try:
+                year_int = int(entry.get('year'))
+            except (TypeError, ValueError):
+                continue
+            credit_val = _coerce_optional_float(entry.get(credit_key))
+            if credit_val is None:
+                continue
+            limit_val = _coerce_optional_float(entry.get(limit_key))
+            record: dict[str, Any] = {
+                'technology': get_technology_label(tech_id),
+                'year': year_int,
+                credit_key: float(credit_val),
+            }
+            if limit_val is not None:
+                record[limit_key] = float(limit_val)
+            entries.append(record)
+        entries.sort(key=lambda item: (str(item['technology']).lower(), int(item['year'])))
+        return entries
+
+    existing_production_entries = _normalise_config_entries(
+        production_source, credit_key='credit_per_mwh', limit_key='limit_mwh'
+    )
+    existing_investment_entries = _normalise_config_entries(
+        investment_source, credit_key='credit_per_mw', limit_key='limit_mw'
+    )
+
+    technology_options: set[str] = {
+        get_technology_label(tech_id) for tech_id in sorted(TECH_ID_TO_LABEL)
+    }
+    for entry in (*existing_production_entries, *existing_investment_entries):
+        label = str(entry.get('technology', '')).strip()
+        if label:
+            technology_options.add(label)
+    technology_labels = sorted(technology_options)
+
+    production_credit_col = 'Credit ($/MWh)'
+    production_limit_col = 'Limit (MWh)'
+    investment_credit_col = 'Credit ($/MW)'
+    investment_limit_col = 'Limit (MW)'
+
+    def _build_editor_rows(
+        entries: list[dict[str, Any]],
+        *,
+        credit_key: str,
+        limit_key: str,
+        credit_label: str,
+        limit_label: str,
+    ) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for entry in entries:
+            rows.append(
+                {
+                    'Technology': entry['technology'],
+                    'Years': str(entry['year']),
+                    credit_label: entry.get(credit_key),
+                    limit_label: entry.get(limit_key),
+                }
+            )
+        seen = {str(row.get('Technology')) for row in rows if row.get('Technology')}
+        for label in technology_labels:
+            if label not in seen:
+                rows.append({'Technology': label, 'Years': '', credit_label: None, limit_label: None})
+        rows.sort(
+            key=lambda row: (
+                str(row.get('Technology', '')).lower(),
+                str(row.get('Years', '')).lower(),
+            )
+        )
+        return rows
+
+    production_rows_default = _build_editor_rows(
+        existing_production_entries,
+        credit_key='credit_per_mwh',
+        limit_key='limit_mwh',
+        credit_label=production_credit_col,
+        limit_label=production_limit_col,
+    )
+    investment_rows_default = _build_editor_rows(
+        existing_investment_entries,
+        credit_key='credit_per_mw',
+        limit_key='limit_mw',
+        credit_label=investment_credit_col,
+        limit_label=investment_limit_col,
+    )
+
+    available_years = _simulation_years_from_config(run_config)
+    valid_years_set = {int(year) for year in available_years}
+
+    def _rows_to_config_entries(
+        rows: list[Mapping[str, Any]],
+        *,
+        credit_column: str,
+        limit_column: str,
+        credit_config_key: str,
+        limit_config_key: str,
+        context_label: str,
+        valid_years: set[int],
+    ) -> tuple[list[dict[str, Any]], list[str]]:
+        results: dict[tuple[int, int], dict[str, Any]] = {}
+        messages: list[str] = []
+        for index, row in enumerate(rows, start=1):
+            technology_value = row.get('Technology')
+            technology_label = (
+                str(technology_value).strip() if technology_value not in (None, '') else ''
+            )
+            if not technology_label:
+                continue
+            tech_id = resolve_technology_key(technology_label)
+            if tech_id is None:
+                messages.append(
+                    f'{context_label} row {index}: Unknown technology "{technology_label}".'
+                )
+                continue
+            years_value = row.get('Years')
+            years, invalid_tokens, out_of_range = _parse_years_field(
+                years_value, valid_years=valid_years
+            )
+            if invalid_tokens:
+                tokens_display = ', '.join(
+                    sorted({token.strip() for token in invalid_tokens if token.strip()})
+                )
+                if tokens_display:
+                    messages.append(
+                        f'{context_label} row {index}: Unable to parse year value(s): {tokens_display}.'
+                    )
+            if out_of_range:
+                years_display = ', '.join(str(year) for year in out_of_range)
+                messages.append(
+                    f'{context_label} row {index}: Year(s) {years_display} fall outside the selected simulation years.'
+                )
+            if not years:
+                years_text = str(years_value).strip() if isinstance(years_value, str) else ''
+                credit_candidate = _coerce_optional_float(row.get(credit_column))
+                if years_text or credit_candidate is not None:
+                    messages.append(
+                        f'{context_label} row {index}: Specify one or more valid years.'
+                    )
+                continue
+            credit_value = _coerce_optional_float(row.get(credit_column))
+            if credit_value is None:
+                messages.append(f'{context_label} row {index}: Provide a credit value.')
+                continue
+            limit_value = _coerce_optional_float(row.get(limit_column))
+            label = get_technology_label(tech_id)
+            for year in years:
+                entry = {
+                    'technology': label,
+                    'year': int(year),
+                    credit_config_key: float(credit_value),
+                }
+                if limit_value is not None:
+                    entry[limit_config_key] = float(limit_value)
+                results[(tech_id, int(year))] = entry
+        ordered = sorted(
+            results.values(),
+            key=lambda item: (str(item['technology']).lower(), int(item['year'])),
+        )
+        return ordered, messages
 
     enabled = container.toggle(
         'Enable incentives and credits',
@@ -782,35 +967,107 @@ def _render_incentives_section(
         key='incentives_enable',
     )
 
-    ptc_enabled = ptc_default
-    ira_bonus = ira_default
-    multiplier_value = multiplier_default
     errors: list[str] = []
+    production_entries = existing_production_entries
+    investment_entries = existing_investment_entries
 
     with _sidebar_panel(container, enabled) as panel:
-        ptc_enabled = panel.checkbox(
-            'Apply production tax credits (PTC)',
-            value=ptc_default,
-            disabled=not enabled,
-            key='incentives_ptc',
+        panel.caption(
+            'Specify technology-specific tax credits that feed the electricity capacity and generation modules.'
         )
-        ira_bonus = panel.checkbox(
-            'Include IRA bonus credits',
-            value=ira_default,
-            disabled=not enabled,
-            key='incentives_ira',
+        if available_years:
+            years_display = ', '.join(str(year) for year in available_years)
+            panel.caption(f'Simulation years: {years_display}')
+        panel.caption(
+            'Enter comma-separated years or ranges (e.g., 2025, 2030-2032). Leave blank to exclude a technology.'
         )
-        multiplier_value = float(
-            panel.slider(
-                'Production multiplier',
-                min_value=0.1,
-                max_value=3.0,
-                value=float(multiplier_default),
-                step=0.05,
-                disabled=not enabled,
-                key='incentives_multiplier',
+
+        panel.markdown('**Production tax credits ($/MWh)**')
+        production_editor_value = panel.data_editor(
+            production_rows_default,
+            disabled=not enabled,
+            hide_index=True,
+            num_rows='dynamic',
+            use_container_width=True,
+            key='incentives_production_editor',
+            column_config={
+                'Technology': st.column_config.SelectboxColumn(
+                    'Technology', options=technology_labels
+                ),
+                'Years': st.column_config.TextColumn(
+                    'Applicable years',
+                    help='Comma-separated years or ranges (e.g., 2025, 2030-2032).',
+                ),
+                production_credit_col: st.column_config.NumberColumn(
+                    production_credit_col,
+                    format='$%.2f',
+                    min_value=0.0,
+                    help='Credit value applied per megawatt-hour.',
+                ),
+                production_limit_col: st.column_config.NumberColumn(
+                    production_limit_col,
+                    min_value=0.0,
+                    help='Optional annual limit on eligible production (MWh).',
+                ),
+            },
+        )
+
+        panel.markdown('**Investment tax credits ($/MW)**')
+        investment_editor_value = panel.data_editor(
+            investment_rows_default,
+            disabled=not enabled,
+            hide_index=True,
+            num_rows='dynamic',
+            use_container_width=True,
+            key='incentives_investment_editor',
+            column_config={
+                'Technology': st.column_config.SelectboxColumn(
+                    'Technology', options=technology_labels
+                ),
+                'Years': st.column_config.TextColumn(
+                    'Applicable years',
+                    help='Comma-separated years or ranges (e.g., 2025, 2030-2032).',
+                ),
+                investment_credit_col: st.column_config.NumberColumn(
+                    investment_credit_col,
+                    format='$%.2f',
+                    min_value=0.0,
+                    help='Credit value applied per megawatt of installed capacity.',
+                ),
+                investment_limit_col: st.column_config.NumberColumn(
+                    investment_limit_col,
+                    min_value=0.0,
+                    help='Optional annual limit on eligible capacity additions (MW).',
+                ),
+            },
+        )
+
+        validation_messages: list[str] = []
+        if enabled:
+            production_entries, production_messages = _rows_to_config_entries(
+                _data_editor_records(production_editor_value),
+                credit_column=production_credit_col,
+                limit_column=production_limit_col,
+                credit_config_key='credit_per_mwh',
+                limit_config_key='limit_mwh',
+                context_label='Production tax credit',
+                valid_years=valid_years_set,
             )
-        )
+            investment_entries, investment_messages = _rows_to_config_entries(
+                _data_editor_records(investment_editor_value),
+                credit_column=investment_credit_col,
+                limit_column=investment_limit_col,
+                credit_config_key='credit_per_mw',
+                limit_config_key='limit_mw',
+                context_label='Investment tax credit',
+                valid_years=valid_years_set,
+            )
+            validation_messages.extend(production_messages)
+            validation_messages.extend(investment_messages)
+
+        for message in validation_messages:
+            panel.error(message)
+        errors.extend(validation_messages)
 
         if enabled:
             if frames is None:
@@ -829,30 +1086,23 @@ def _render_incentives_section(
                         message = 'Incentives require at least one generating unit.'
                         panel.error(message)
                         errors.append(message)
-        else:
-            ptc_enabled = False
-            ira_bonus = False
-            multiplier_value = 1.0
 
-    if not enabled:
-        ptc_enabled = False
-        ira_bonus = False
-        multiplier_value = 1.0
+    incentives_record: dict[str, Any] = {'enabled': bool(enabled)}
+    if production_entries:
+        incentives_record['production'] = copy.deepcopy(production_entries)
+    if investment_entries:
+        incentives_record['investment'] = copy.deepcopy(investment_entries)
 
-    modules['incentives'] = {
-        'enabled': bool(enabled),
-        'ptc': bool(ptc_enabled),
-        'ira_bonus': bool(ira_bonus),
-        'production_multiplier': float(multiplier_value),
-    }
+    run_config['electricity_incentives'] = copy.deepcopy(incentives_record)
+    modules['incentives'] = copy.deepcopy(incentives_record)
 
     return IncentivesModuleSettings(
         enabled=bool(enabled),
-        ptc_enabled=bool(ptc_enabled),
-        ira_bonus=bool(ira_bonus),
-        production_multiplier=float(multiplier_value),
+        production_credits=copy.deepcopy(production_entries),
+        investment_credits=copy.deepcopy(investment_entries),
         errors=errors,
     )
+
 
 
 def _render_outputs_section(
@@ -982,6 +1232,47 @@ def _coerce_year_value_map(
     return result
 
 
+def _simulation_years_from_config(config: Mapping[str, Any]) -> list[int]:
+    """Return an ordered list of simulation years inferred from ``config``."""
+
+    try:
+        base_years = _years_from_config(config)
+    except Exception:
+        base_years = []
+
+    start_raw = config.get('start_year')
+    end_raw = config.get('end_year')
+
+    def _to_int(value: Any) -> int | None:
+        if value in (None, ''):
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    start_year = _to_int(start_raw)
+    end_year = _to_int(end_raw)
+
+    years: list[int] = []
+
+    if base_years:
+        try:
+            years = _select_years(base_years, start_year, end_year)
+        except Exception:
+            years = [int(year) for year in base_years]
+    else:
+        if start_year is not None and end_year is not None:
+            step = 1 if end_year >= start_year else -1
+            years = list(range(start_year, end_year + step, step))
+        elif start_year is not None:
+            years = [start_year]
+        elif end_year is not None:
+            years = [end_year]
+
+    return sorted({int(year) for year in years})
+
+
 def _coerce_float(value: Any, default: float = 0.0) -> float:
     try:
         if isinstance(value, str):
@@ -989,6 +1280,22 @@ def _coerce_float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return float(default)
+
+
+def _coerce_optional_float(value: Any) -> float | None:
+    """Return ``value`` coerced to ``float`` when possible."""
+
+    if value in (None, ''):
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        value = text
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _coerce_bool_flag(value: Any, default: bool = True) -> bool:
@@ -1031,6 +1338,96 @@ def _coerce_year_set(value: Any, fallback: Iterable[int]) -> set[int]:
     if not years:
         years = {int(year) for year in fallback}
     return years
+
+
+def _parse_years_field(
+    value: Any,
+    *,
+    valid_years: set[int] | None = None,
+) -> tuple[list[int], list[str], list[int]]:
+    """Parse a free-form year selector into structured values."""
+
+    if value in (None, ''):
+        return [], [], []
+
+    text = str(value).strip()
+    if not text:
+        return [], [], []
+
+    normalized = text.translate({ord(char): None for char in '[]{}()'})
+    tokens = [token for token in re.split(r'[;,\s]+', normalized) if token]
+
+    parsed_years: list[int] = []
+    invalid_tokens: list[str] = []
+    out_of_range: list[int] = []
+
+    valid_set = {int(year) for year in valid_years} if valid_years else set()
+
+    for token in tokens:
+        token_str = token.strip()
+        if not token_str:
+            continue
+
+        if '-' in token_str:
+            start_text, end_text = token_str.split('-', 1)
+            try:
+                start_year = int(start_text.strip())
+                end_year = int(end_text.strip())
+            except (TypeError, ValueError):
+                invalid_tokens.append(token_str)
+                continue
+
+            step = 1 if end_year >= start_year else -1
+            for year in range(start_year, end_year + step, step):
+                if valid_set and year not in valid_set:
+                    out_of_range.append(year)
+                else:
+                    parsed_years.append(year)
+            continue
+
+        try:
+            year_int = int(token_str)
+        except (TypeError, ValueError):
+            invalid_tokens.append(token_str)
+            continue
+
+        if valid_set and year_int not in valid_set:
+            out_of_range.append(year_int)
+        else:
+            parsed_years.append(year_int)
+
+    parsed_years = sorted({int(year) for year in parsed_years})
+    out_of_range = sorted({int(year) for year in out_of_range if year not in parsed_years})
+
+    return parsed_years, invalid_tokens, out_of_range
+
+
+def _data_editor_records(value: Any) -> list[dict[str, Any]]:
+    """Return ``value`` normalised to a list of row dictionaries."""
+
+    if value is None:
+        return []
+
+    if hasattr(value, 'to_dict'):
+        try:
+            records = value.to_dict('records')  # type: ignore[call-arg]
+        except Exception:
+            records = None
+        if isinstance(records, list):
+            return [dict(entry) for entry in records if isinstance(entry, Mapping)]
+
+    if isinstance(value, Mapping):
+        return [dict(value)]
+
+    if isinstance(value, Iterable) and not isinstance(value, (str, bytes)):
+        records: list[dict[str, Any]] = []
+        for entry in value:
+            if isinstance(entry, Mapping):
+                records.append(dict(entry))
+        if records:
+            return records
+
+    return []
 
 
 def _build_policy_frame(
@@ -2062,23 +2459,56 @@ def _build_run_summary(settings: Mapping[str, Any], *, config_label: str) -> lis
         summary.append(('Reserve margins', _bool_label(reserve_margins)))
 
     incentives_enabled = False
-    ptc_enabled = False
-    ira_bonus = False
-    production_multiplier = 1.0
+    production_entries: list[Mapping[str, Any]] = []
+    investment_entries: list[Mapping[str, Any]] = []
     if isinstance(incentives_cfg, Mapping):
         incentives_enabled = bool(incentives_cfg.get('enabled', incentives_enabled))
-        ptc_enabled = bool(incentives_cfg.get('ptc', ptc_enabled))
-        ira_bonus = bool(incentives_cfg.get('ira_bonus', ira_bonus))
-        try:
-            production_multiplier = float(incentives_cfg.get('production_multiplier', production_multiplier))
-        except (TypeError, ValueError):
-            production_multiplier = 1.0
+
+        def _extract_entries(raw: Any) -> list[Mapping[str, Any]]:
+            if isinstance(raw, Mapping):
+                candidates = [raw]
+            elif isinstance(raw, Iterable) and not isinstance(raw, (str, bytes)):
+                candidates = [entry for entry in raw if isinstance(entry, Mapping)]
+            else:
+                candidates = []
+            normalised: list[Mapping[str, Any]] = []
+            for entry in candidates:
+                tech_label = str(entry.get('technology', '')).strip()
+                try:
+                    year_val = int(entry.get('year'))
+                except (TypeError, ValueError):
+                    continue
+                record: dict[str, Any] = {'technology': tech_label, 'year': year_val}
+                normalised.append(record)
+            return normalised
+
+        production_entries = _extract_entries(incentives_cfg.get('production'))
+        investment_entries = _extract_entries(incentives_cfg.get('investment'))
 
     summary.append(('Incentives module', _bool_label(incentives_enabled)))
     if incentives_enabled:
-        summary.append(('PTC / production credits', _bool_label(ptc_enabled)))
-        summary.append(('IRA bonus credits', _bool_label(ira_bonus)))
-        summary.append(('Production multiplier', f'{production_multiplier:.2f}x'))
+        summary.append(('Production tax credit entries', str(len(production_entries))))
+        if production_entries:
+            ptc_technologies = sorted(
+                {
+                    str(entry.get('technology')).strip()
+                    for entry in production_entries
+                    if str(entry.get('technology')).strip()
+                }
+            )
+            if ptc_technologies:
+                summary.append(('PTC technologies', ', '.join(ptc_technologies)))
+        summary.append(('Investment tax credit entries', str(len(investment_entries))))
+        if investment_entries:
+            itc_technologies = sorted(
+                {
+                    str(entry.get('technology')).strip()
+                    for entry in investment_entries
+                    if str(entry.get('technology')).strip()
+                }
+            )
+            if itc_technologies:
+                summary.append(('ITC technologies', ', '.join(itc_technologies)))
 
     outputs_enabled = True
     output_directory = settings.get('output_name', 'outputs')
