@@ -24,6 +24,7 @@ import sys
 # Import python modules
 from main.definitions import PROJECT_ROOT
 from main import app_main
+from src.common.utilities import get_downloads_directory
 from src.models.electricity.scripts.technology_metadata import (
     get_technology_label,
     resolve_technology_key,
@@ -589,8 +590,9 @@ def run_mode(n_clicks, selected_mode):
         # run selected mode
         app_main(selected_mode)
 
+        downloads_root = get_downloads_directory()
         return (
-            f"{selected_mode} mode has finished running. See results in output/{selected_mode}.",
+            f"{selected_mode} mode has finished running. See results in {downloads_root}.",
             100,
         )
     except Exception:

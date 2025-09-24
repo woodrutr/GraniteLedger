@@ -33,7 +33,7 @@ SHORT_TON_TO_METRIC_TON = 0.90718474
 # Import python modules
 from main.definitions import PROJECT_ROOT
 from src.integrator.utilities import create_temporal_mapping
-from src.common.utilities import make_dir
+from src.common.utilities import get_downloads_directory, make_dir
 from src.models.electricity.scripts.technology_metadata import resolve_technology_key
 from src.models.electricity.scripts.incentives import TechnologyIncentives
 
@@ -123,7 +123,8 @@ class Config_settings:
             OUTPUT_ROOT = Path(PROJECT_ROOT, 'unit_tests', 'test_logs')
         else:
             output_folder_name = self._determine_output_folder(config)
-            OUTPUT_ROOT = Path(PROJECT_ROOT / 'output' / output_folder_name)
+            downloads_root = get_downloads_directory()
+            OUTPUT_ROOT = downloads_root / output_folder_name
             OUTPUT_ROOT = self._ensure_unique_output_dir(OUTPUT_ROOT)
         self.OUTPUT_ROOT = OUTPUT_ROOT
         self.output_folder_name = OUTPUT_ROOT.name
