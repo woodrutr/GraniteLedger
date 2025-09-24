@@ -54,6 +54,11 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when root not on sys.
 
 FramesType = Frames
 
+from pathlib import Path
+import logging
+
+LOGGER = logging.getLogger(__name__)
+
 try:  # pragma: no cover - optional dependency shim
     from src.common.utilities import get_downloads_directory as _get_downloads_directory
 except ImportError:  # pragma: no cover - compatibility fallback
@@ -64,7 +69,6 @@ _download_directory_fallback_used = False
 
 def _fallback_downloads_directory(app_subdir: str = 'GraniteLedger') -> Path:
     """Return a reasonable downloads location when utilities helper is unavailable."""
-
     base_path = Path.home() / 'Downloads'
     if app_subdir:
         base_path = base_path / app_subdir
@@ -74,7 +78,6 @@ def _fallback_downloads_directory(app_subdir: str = 'GraniteLedger') -> Path:
 
 def get_downloads_directory(app_subdir: str = 'GraniteLedger') -> Path:
     """Resolve the downloads directory, falling back to the user's home folder."""
-
     global _download_directory_fallback_used
 
     if _get_downloads_directory is not None:
@@ -83,9 +86,12 @@ def get_downloads_directory(app_subdir: str = 'GraniteLedger') -> Path:
         except Exception:  # pragma: no cover - defensive: ensure GUI still loads
             LOGGER.warning('Falling back to home Downloads directory; helper raised an error.')
     if not _download_directory_fallback_used:
-        LOGGER.warning('get_downloads_directory is unavailable; using ~/Downloads for model outputs.')
+        LOGGER.warning(
+            'get_downloads_directory is unavailable; using ~/Downloads for model outputs.'
+        )
         _download_directory_fallback_used = True
     return _fallback_downloads_directory(app_subdir)
+
 from src.models.electricity.scripts.technology_metadata import (
     TECH_ID_TO_LABEL,
     get_technology_label,
@@ -122,6 +128,7 @@ DEFAULT_CONFIG_PATH = Path(PROJECT_ROOT, 'src', 'common', 'run_config.toml')
 _DEFAULT_LOAD_MWH = 1_000_000.0
 _LARGE_ALLOWANCE_SUPPLY = 1e12
 _ALL_REGION_IDENTIFIERS = tuple(range(1, 26))
+_GENERAL_REGIONS_NORMALIZED_KEY = 'general_regions_normalized_selection'
 
 _T = TypeVar('_T')
 
@@ -316,8 +323,13 @@ def _select_years(
 
     if start is not None and end is not None:
         selected = [year for year in years if start <= year <= end]
-        if not selected:
-            selected = list(range(start, end + 1))
+        complete_range = range(start, end + 1)
+        if selected:
+            selected_set = set(selected)
+            selected_set.update(complete_range)
+            selected = sorted(selected_set)
+        else:
+            selected = list(complete_range)
         years = selected
     elif start is not None:
         selected = [year for year in years if year >= start]
@@ -368,6 +380,23 @@ def _regions_from_config(config: Mapping[str, Any]) -> list[int | str]:
         regions = [1]
 
     return regions
+
+
+def _normalize_region_labels(
+    selected_labels: Iterable[str],
+    previous_clean_selection: Iterable[str] | None,
+) -> list[str]:
+    """Return the cleaned region label selection for the multiselect widget."""
+
+    normalized = [str(entry) for entry in selected_labels]
+    if 'All' in normalized and len(normalized) > 1:
+        non_all = [entry for entry in normalized if entry != 'All']
+        previous_tuple = tuple(str(entry) for entry in (previous_clean_selection or ()))
+        if previous_tuple == ('All',) and non_all:
+            return non_all
+        return ['All']
+    return normalized
+
 
 
 def _render_general_config_section(
@@ -432,55 +461,207 @@ def _render_general_config_section(
     if start_default > end_default:
         start_default, end_default = end_default, start_default
 
-    slider_min_default = min(2025, year_min, start_default, end_default)
-    slider_max_default = max(2030, year_max, start_default, end_default)
+    slider_min_default = int(min(2025, year_min, start_default, end_default))
+    slider_max_default = int(
+        min(2050, max(2030, year_max, start_default, end_default))
+    )
 
-    slider_min_value = int(start_default)
-    slider_max_value = int(end_default)
+    def _sanitize_year_range(raw_min: Any, raw_max: Any, *, fallback: tuple[int, int]) -> tuple[int, int]:
+        fallback_min, fallback_max = fallback
+        candidate_min = _coerce_year(raw_min, fallback_min)
+        candidate_max = _coerce_year(raw_max, fallback_max)
+        candidate_min = max(slider_min_default, min(slider_max_default, candidate_min))
+        candidate_max = max(slider_min_default, min(slider_max_default, candidate_max))
+        if candidate_min > candidate_max:
+            candidate_min, candidate_max = candidate_max, candidate_min
+        return int(candidate_min), int(candidate_max)
+
+    slider_min_value = start_default
+    slider_max_value = end_default
+    slider_bounds = (slider_min_default, slider_max_default)
+    slider_key = 'general_year_range_slider'
+    bounds_state_key = 'general_year_range_slider_bounds'
+    min_numeric_key = 'general_year_range_min_numeric'
+    max_numeric_key = 'general_year_range_max_numeric'
+    start_input_key = 'general_year_range_min_text'
+    end_input_key = 'general_year_range_max_text'
+    sync_source_key = 'general_year_range_sync_source'
+    slider_default_state = (slider_min_value, slider_max_value)
 
     if st is not None:
         config_state_key = 'general_config_active_label'
-        if st.session_state.get(config_state_key) != config_label:
+        if (
+            st.session_state.get(config_state_key) != config_label
+            or st.session_state.get(bounds_state_key) != slider_bounds
+        ):
             st.session_state[config_state_key] = config_label
             for reset_key in (
-                'general_year_range_min_text',
-                'general_year_range_max_text',
-                'general_year_range_min_numeric',
-                'general_year_range_max_numeric',
+                start_input_key,
+                end_input_key,
+                min_numeric_key,
+                max_numeric_key,
                 'general_regions',
+                _GENERAL_REGIONS_NORMALIZED_KEY,
+                slider_key,
+                bounds_state_key,
+                sync_source_key,
             ):
                 st.session_state.pop(reset_key, None)
 
-        min_numeric_key = 'general_year_range_min_numeric'
-        max_numeric_key = 'general_year_range_max_numeric'
-        st.session_state.setdefault(min_numeric_key, int(slider_min_default))
-        st.session_state.setdefault(max_numeric_key, int(slider_max_default))
-        st.session_state.setdefault('general_year_range_min_text', str(st.session_state[min_numeric_key]))
-        st.session_state.setdefault('general_year_range_max_text', str(st.session_state[max_numeric_key]))
+        st.session_state.setdefault(bounds_state_key, slider_bounds)
+        st.session_state[bounds_state_key] = slider_bounds
+        st.session_state.setdefault(slider_key, slider_default_state)
+        st.session_state.setdefault(min_numeric_key, slider_default_state[0])
+        st.session_state.setdefault(max_numeric_key, slider_default_state[1])
+        st.session_state.setdefault(start_input_key, str(slider_default_state[0]))
+        st.session_state.setdefault(end_input_key, str(slider_default_state[1]))
+        st.session_state.setdefault(sync_source_key, None)
 
-        slider_min_value = _coerce_year(
-            st.session_state.get('general_year_range_min_text'),
-            st.session_state[min_numeric_key],
+        raw_slider_state = st.session_state.get(slider_key, slider_default_state)
+        if not (
+            isinstance(raw_slider_state, (tuple, list))
+            and len(raw_slider_state) == 2
+        ):
+            raw_slider_state = slider_default_state
+        slider_state = _sanitize_year_range(
+            raw_slider_state[0], raw_slider_state[1], fallback=slider_default_state
         )
-        slider_max_value = _coerce_year(
-            st.session_state.get('general_year_range_max_text'),
-            st.session_state[max_numeric_key],
+        if tuple(raw_slider_state) != slider_state:
+            st.session_state[slider_key] = slider_state
+
+        numeric_state_raw = (
+            st.session_state.get(min_numeric_key, slider_state[0]),
+            st.session_state.get(max_numeric_key, slider_state[1]),
+        )
+        numeric_state = _sanitize_year_range(
+            numeric_state_raw[0], numeric_state_raw[1], fallback=slider_state
+        )
+        if numeric_state != numeric_state_raw:
+            st.session_state[min_numeric_key] = numeric_state[0]
+            st.session_state[max_numeric_key] = numeric_state[1]
+        slider_state = numeric_state
+
+        sync_source = st.session_state.get(sync_source_key)
+        start_text_value_raw = st.session_state.get(start_input_key)
+        end_text_value_raw = st.session_state.get(end_input_key)
+        start_text_value = (
+            str(start_text_value_raw)
+            if start_text_value_raw is not None
+            else str(slider_state[0])
+        )
+        end_text_value = (
+            str(end_text_value_raw)
+            if end_text_value_raw is not None
+            else str(slider_state[1])
         )
 
-    slider_min_value = int(slider_min_value)
-    slider_max_value = int(slider_max_value)
-    slider_min_value = max(int(slider_min_default), min(int(slider_max_default), slider_min_value))
-    slider_max_value = max(int(slider_min_default), min(int(slider_max_default), slider_max_value))
-    if slider_min_value > slider_max_value:
-        slider_min_value, slider_max_value = slider_max_value, slider_min_value
+        if sync_source == 'slider':
+            desired_start_text = str(slider_state[0])
+            desired_end_text = str(slider_state[1])
+            if start_text_value != desired_start_text:
+                st.session_state[start_input_key] = desired_start_text
+                start_text_value = desired_start_text
+            if end_text_value != desired_end_text:
+                st.session_state[end_input_key] = desired_end_text
+                end_text_value = desired_end_text
+            st.session_state[sync_source_key] = None
+        else:
+            sanitized_text_state = _sanitize_year_range(
+                start_text_value, end_text_value, fallback=slider_state
+            )
+            if sanitized_text_state != slider_state:
+                slider_state = sanitized_text_state
+                st.session_state[slider_key] = slider_state
+                st.session_state[min_numeric_key] = slider_state[0]
+                st.session_state[max_numeric_key] = slider_state[1]
+                sanitized_start_text = str(slider_state[0])
+                sanitized_end_text = str(slider_state[1])
+                if start_text_value != sanitized_start_text:
+                    st.session_state[start_input_key] = sanitized_start_text
+                    start_text_value = sanitized_start_text
+                if end_text_value != sanitized_end_text:
+                    st.session_state[end_input_key] = sanitized_end_text
+                    end_text_value = sanitized_end_text
+            else:
+                desired_start_text = str(slider_state[0])
+                desired_end_text = str(slider_state[1])
+                if start_text_value != desired_start_text:
+                    st.session_state[start_input_key] = desired_start_text
+                    start_text_value = desired_start_text
+                if end_text_value != desired_end_text:
+                    st.session_state[end_input_key] = desired_end_text
+                    end_text_value = desired_end_text
+            st.session_state[sync_source_key] = None
+
+        start_text_default = start_text_value
+        end_text_default = end_text_value
+    else:
+        slider_state = slider_default_state
+        start_text_default = str(slider_state[0])
+        end_text_default = str(slider_state[1])
+
+    if hasattr(container, 'text_input'):
+        if hasattr(container, 'columns'):
+            start_col, end_col = container.columns(2)
+        else:
+            start_col = container
+            end_col = container
+        start_text_raw = start_col.text_input('Start year', value=start_text_default, key=start_input_key if st else None)
+        end_text_raw = end_col.text_input('End year', value=end_text_default, key=end_input_key if st else None)
+    else:
+        start_text_raw = start_text_default
+        end_text_raw = end_text_default
+
+    if st is None:
+        start_numeric = _coerce_year(start_text_raw, slider_state[0])
+        end_numeric = _coerce_year(end_text_raw, slider_state[1])
+        start_numeric, end_numeric = _sanitize_year_range(
+            start_numeric, end_numeric, fallback=slider_state
+        )
+        slider_state = (start_numeric, end_numeric)
+    else:
+        start_numeric, end_numeric = slider_state
+
+    slider_kwargs: dict[str, Any] = {
+        'min_value': slider_min_default,
+        'max_value': slider_max_default,
+        'value': slider_state,
+        'step': 1,
+        'format': '%d',
+    }
+    if st is not None:
+        slider_kwargs['key'] = slider_key
+
+    if hasattr(container, 'slider'):
+        slider_value = container.slider('Run years', **slider_kwargs)
+        if isinstance(slider_value, tuple):
+            slider_min_value, slider_max_value = slider_value
+        else:
+            slider_min_value = slider_value
+            slider_max_value = slider_value
+    else:
+        slider_min_value, slider_max_value = slider_state
+
+    slider_min_value, slider_max_value = _sanitize_year_range(
+        slider_min_value, slider_max_value, fallback=slider_state
+    )
+    final_slider_state = (slider_min_value, slider_max_value)
+
+    if st is not None:
+        st.session_state[min_numeric_key] = slider_min_value
+        st.session_state[max_numeric_key] = slider_max_value
+        if final_slider_state != tuple(slider_state):
+            st.session_state[sync_source_key] = 'slider'
+        else:
+            st.session_state[sync_source_key] = None
+        slider_state = final_slider_state
 
     start_year = slider_min_value
     end_year = slider_max_value
 
-        
 
     region_options = _regions_from_config(base_config)
-    default_region_values = list(_ALL_REGION_IDENTIFIERS)
+    default_region_values = list(range(1, 26))
     available_region_values: list[int | str] = []
     seen_region_labels: set[str] = set()
 
@@ -499,32 +680,52 @@ def _render_general_config_section(
             available_region_values.append(region_value)
 
     region_labels = ['All'] + [str(value) for value in available_region_values]
-    default_region_labels = [
-        label
-        for label in (str(entry).strip() for entry in region_options)
-        if label
-    ]
-    default_selection = default_region_labels or ['All']
-    selected_regions_raw = container.multiselect(
-        'Regions',
-        options=region_labels,
-        default=default_selection,
-        key='general_regions',
+    default_selection = ['All']
+
+    if st is not None:  # pragma: no branch - streamlit only when available
+        st.session_state.setdefault(
+            _GENERAL_REGIONS_NORMALIZED_KEY, list(default_selection)
+        )
+        previous_clean_selection_raw = st.session_state.get(
+            _GENERAL_REGIONS_NORMALIZED_KEY, []
+        )
+        if isinstance(previous_clean_selection_raw, (list, tuple)):
+            previous_clean_selection = tuple(
+                str(entry) for entry in previous_clean_selection_raw
+            )
+        elif isinstance(previous_clean_selection_raw, str):
+            previous_clean_selection = (previous_clean_selection_raw,)
+        else:
+            previous_clean_selection = ()
+    else:
+        previous_clean_selection = tuple(default_selection)
+
+    selected_regions_raw = list(
+        container.multiselect(
+            'Regions',
+            options=region_labels,
+            default=default_selection,
+            key='general_regions',
+        )
     )
 
+    normalized_selection = _normalize_region_labels(
+        selected_regions_raw, previous_clean_selection
+    )
+    if normalized_selection != selected_regions_raw and st is not None:
+        st.session_state['general_regions'] = normalized_selection
+    selected_regions_raw = normalized_selection
+
+    if st is not None:
+        st.session_state[_GENERAL_REGIONS_NORMALIZED_KEY] = list(selected_regions_raw)
+
+    # Track if "All" was selected explicitly
     all_selected = 'All' in selected_regions_raw
-    if all_selected and selected_regions_raw != ['All']:
-        if st is not None:  # pragma: no branch - streamlit only when available
-            st.session_state['general_regions'] = ['All']
-        selected_regions_raw = ['All']
 
     label_to_value: dict[str, int | str] = {
         str(value): value for value in available_region_values
     }
-    selected_regions: list[int | str]
-    if all_selected:
-        selected_regions = list(_ALL_REGION_IDENTIFIERS)
-    elif not selected_regions_raw:
+    if all_selected or not selected_regions_raw:
         selected_regions = list(available_region_values)
     else:
         selected_regions = []
@@ -542,6 +743,7 @@ def _render_general_config_section(
                     value = text
             if value not in selected_regions:
                 selected_regions.append(value)
+
     if not selected_regions:
         selected_regions = list(available_region_values)
 
@@ -850,6 +1052,7 @@ def _render_incentives_section(
     production_limit_col = 'Limit (MWh)'
     investment_credit_col = 'Credit ($/MW)'
     investment_limit_col = 'Limit (MW)'
+    selection_column = 'Apply credit'
 
     def _build_editor_rows(
         entries: list[dict[str, Any]],
@@ -858,11 +1061,13 @@ def _render_incentives_section(
         limit_key: str,
         credit_label: str,
         limit_label: str,
+        selection_label: str,
     ) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         for entry in entries:
             rows.append(
                 {
+                    selection_label: True,
                     'Technology': entry['technology'],
                     'Years': str(entry['year']),
                     credit_label: entry.get(credit_key),
@@ -872,7 +1077,15 @@ def _render_incentives_section(
         seen = {str(row.get('Technology')) for row in rows if row.get('Technology')}
         for label in technology_labels:
             if label not in seen:
-                rows.append({'Technology': label, 'Years': '', credit_label: None, limit_label: None})
+                rows.append(
+                    {
+                        selection_label: False,
+                        'Technology': label,
+                        'Years': '',
+                        credit_label: None,
+                        limit_label: None,
+                    }
+                )
         rows.sort(
             key=lambda row: (
                 str(row.get('Technology', '')).lower(),
@@ -887,6 +1100,7 @@ def _render_incentives_section(
         limit_key='limit_mwh',
         credit_label=production_credit_col,
         limit_label=production_limit_col,
+        selection_label=selection_column,
     )
     investment_rows_default = _build_editor_rows(
         existing_investment_entries,
@@ -894,6 +1108,7 @@ def _render_incentives_section(
         limit_key='limit_mw',
         credit_label=investment_credit_col,
         limit_label=investment_limit_col,
+        selection_label=selection_column,
     )
 
     available_years = _simulation_years_from_config(run_config)
@@ -908,10 +1123,15 @@ def _render_incentives_section(
         limit_config_key: str,
         context_label: str,
         valid_years: set[int],
+        selection_column: str | None = None,
     ) -> tuple[list[dict[str, Any]], list[str]]:
         results: dict[tuple[int, int], dict[str, Any]] = {}
         messages: list[str] = []
         for index, row in enumerate(rows, start=1):
+            if selection_column and selection_column in row:
+                include_row = _coerce_bool_flag(row.get(selection_column), default=False)
+                if not include_row:
+                    continue
             technology_value = row.get('Technology')
             technology_label = (
                 str(technology_value).strip() if technology_value not in (None, '') else ''
@@ -999,7 +1219,22 @@ def _render_incentives_section(
             num_rows='dynamic',
             use_container_width=True,
             key='incentives_production_editor',
+            column_order=[
+                selection_column,
+                'Technology',
+                'Years',
+                production_credit_col,
+                production_limit_col,
+            ],
             column_config={
+                selection_column: st.column_config.CheckboxColumn(
+                    'Apply credit',
+                    help=(
+                        'Select to apply production tax credits for this technology. '
+                        'Unchecked technologies default to $0 incentives across all years.'
+                    ),
+                    default=False,
+                ),
                 'Technology': st.column_config.SelectboxColumn(
                     'Technology', options=technology_labels
                 ),
@@ -1029,7 +1264,22 @@ def _render_incentives_section(
             num_rows='dynamic',
             use_container_width=True,
             key='incentives_investment_editor',
+            column_order=[
+                selection_column,
+                'Technology',
+                'Years',
+                investment_credit_col,
+                investment_limit_col,
+            ],
             column_config={
+                selection_column: st.column_config.CheckboxColumn(
+                    'Apply credit',
+                    help=(
+                        'Select to apply investment tax credits for this technology. '
+                        'Unchecked technologies default to $0 incentives across all years.'
+                    ),
+                    default=False,
+                ),
                 'Technology': st.column_config.SelectboxColumn(
                     'Technology', options=technology_labels
                 ),
@@ -1061,6 +1311,7 @@ def _render_incentives_section(
                 limit_config_key='limit_mwh',
                 context_label='Production tax credit',
                 valid_years=valid_years_set,
+                selection_column=selection_column,
             )
             investment_entries, investment_messages = _rows_to_config_entries(
                 _data_editor_records(investment_editor_value),
@@ -1070,6 +1321,7 @@ def _render_incentives_section(
                 limit_config_key='limit_mw',
                 context_label='Investment tax credit',
                 valid_years=valid_years_set,
+                selection_column=selection_column,
             )
             validation_messages.extend(production_messages)
             validation_messages.extend(investment_messages)

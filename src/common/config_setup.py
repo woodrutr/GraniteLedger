@@ -33,6 +33,7 @@ SHORT_TON_TO_METRIC_TON = 0.90718474
 # Import python modules
 from main.definitions import PROJECT_ROOT
 from src.integrator.utilities import create_temporal_mapping
+from pathlib import Path
 from src.common import utilities as _common_utilities
 
 make_dir = _common_utilities.make_dir
@@ -57,6 +58,7 @@ def _resolve_downloads_directory(app_subdir: str = 'GraniteLedger') -> Path:
         base_path = base_path / app_subdir
     base_path.mkdir(parents=True, exist_ok=True)
     return base_path
+
 from src.models.electricity.scripts.technology_metadata import resolve_technology_key
 from src.models.electricity.scripts.incentives import TechnologyIncentives
 
@@ -140,7 +142,7 @@ class Config_settings:
         else:
             self.selected_mode = self.args.op_mode
 
-        # __INIT__: Setting output paths
+            # __INIT__: Setting output paths
         # Setup the output directory and write out its name for other scripts to grab
         if test:
             OUTPUT_ROOT = Path(PROJECT_ROOT, 'unit_tests', 'test_logs')
@@ -149,6 +151,7 @@ class Config_settings:
             downloads_root = _resolve_downloads_directory()
             OUTPUT_ROOT = downloads_root / output_folder_name
             OUTPUT_ROOT = self._ensure_unique_output_dir(OUTPUT_ROOT)
+
         self.OUTPUT_ROOT = OUTPUT_ROOT
         self.output_folder_name = OUTPUT_ROOT.name
         make_dir(self.OUTPUT_ROOT)
