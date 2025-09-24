@@ -981,170 +981,169 @@ def _render_incentives_section(
     investment_entries = existing_investment_entries
 
     with _sidebar_panel(container, enabled) as panel:
-        panel.caption(
-            'Specify technology-specific tax credits that feed the electricity capacity and generation modules.'
-        )
-        if available_years:
-            years_display = ', '.join(str(year) for year in available_years)
-            panel.caption(f'Simulation years: {years_display}')
-        panel.caption(
-            'Enter comma-separated years or ranges (e.g., 2025, 2030-2032). Leave blank to exclude a technology.'
-        )
+    panel.caption(
+        "Specify technology-specific tax credits that feed the electricity capacity and generation modules."
+    )
+    if available_years:
+        years_display = ", ".join(str(year) for year in available_years)
+        panel.caption(f"Simulation years: {years_display}")
+    panel.caption(
+        "Enter comma-separated years or ranges (e.g., 2025, 2030-2032). "
+        "Leave blank to exclude a technology."
+    )
 
-        panel.markdown('**Production tax credits ($/MWh)**')
-        production_editor_value = panel.data_editor(
-            production_rows_default,
-            disabled=not enabled,
-            hide_index=True,
-            num_rows='dynamic',
-            use_container_width=True,
-            key='incentives_production_editor',
-            column_order=[
-                selection_column,
-                'Technology',
-                'Years',
+    panel.markdown("**Production tax credits ($/MWh)**")
+    production_editor_value = panel.data_editor(
+        production_rows_default,
+        disabled=not enabled,
+        hide_index=True,
+        num_rows="dynamic",
+        width="stretch",  # was use_container_width=True
+        key="incentives_production_editor",
+        column_order=[
+            selection_column,
+            "Technology",
+            "Years",
+            production_credit_col,
+            production_limit_col,
+        ],
+        column_config={
+            selection_column: st.column_config.CheckboxColumn(
+                "Apply credit",
+                help=(
+                    "Select to apply production tax credits for this technology. "
+                    "Unchecked technologies default to $0 incentives across all years."
+                ),
+                default=False,
+            ),
+            "Technology": st.column_config.SelectboxColumn(
+                "Technology", options=technology_labels
+            ),
+            "Years": st.column_config.TextColumn(
+                "Applicable years",
+                help="Comma-separated years or ranges (e.g., 2025, 2030-2032).",
+            ),
+            production_credit_col: st.column_config.NumberColumn(
                 production_credit_col,
+                format="$%.2f",
+                min_value=0.0,
+                help="Credit value applied per megawatt-hour.",
+            ),
+            production_limit_col: st.column_config.NumberColumn(
                 production_limit_col,
-            ],
-            column_config={
-                selection_column: st.column_config.CheckboxColumn(
-                    'Apply credit',
-                    help=(
-                        'Select to apply production tax credits for this technology. '
-                        'Unchecked technologies default to $0 incentives across all years.'
-                    ),
-                    default=False,
-                ),
-                'Technology': st.column_config.SelectboxColumn(
-                    'Technology', options=technology_labels
-                ),
-                'Years': st.column_config.TextColumn(
-                    'Applicable years',
-                    help='Comma-separated years or ranges (e.g., 2025, 2030-2032).',
-                ),
-                production_credit_col: st.column_config.NumberColumn(
-                    production_credit_col,
-                    format='$%.2f',
-                    min_value=0.0,
-                    help='Credit value applied per megawatt-hour.',
-                ),
-                production_limit_col: st.column_config.NumberColumn(
-                    production_limit_col,
-                    min_value=0.0,
-                    help='Optional annual limit on eligible production (MWh).',
-                ),
-            },
-        )
+                min_value=0.0,
+                help="Optional annual limit on eligible production (MWh).",
+            ),
+        },
+    )
 
-        panel.markdown('**Investment tax credits ($/MW)**')
-        investment_editor_value = panel.data_editor(
-            investment_rows_default,
-            disabled=not enabled,
-            hide_index=True,
-            num_rows='dynamic',
-            use_container_width=True,
-            key='incentives_investment_editor',
-            column_order=[
-                selection_column,
-                'Technology',
-                'Years',
+    panel.markdown("**Investment tax credits ($/MW)**")
+    investment_editor_value = panel.data_editor(
+        investment_rows_default,
+        disabled=not enabled,
+        hide_index=True,
+        num_rows="dynamic",
+        width="stretch",  # was use_container_width=True
+        key="incentives_investment_editor",
+        column_order=[
+            selection_column,
+            "Technology",
+            "Years",
+            investment_credit_col,
+            investment_limit_col,
+        ],
+        column_config={
+            selection_column: st.column_config.CheckboxColumn(
+                "Apply credit",
+                help=(
+                    "Select to apply investment tax credits for this technology. "
+                    "Unchecked technologies default to $0 incentives across all years."
+                ),
+                default=False,
+            ),
+            "Technology": st.column_config.SelectboxColumn(
+                "Technology", options=technology_labels
+            ),
+            "Years": st.column_config.TextColumn(
+                "Applicable years",
+                help="Comma-separated years or ranges (e.g., 2025, 2030-2032).",
+            ),
+            investment_credit_col: st.column_config.NumberColumn(
                 investment_credit_col,
+                format="$%.2f",
+                min_value=0.0,
+                help="Credit value applied per megawatt of installed capacity.",
+            ),
+            investment_limit_col: st.column_config.NumberColumn(
                 investment_limit_col,
-            ],
-            column_config={
-                selection_column: st.column_config.CheckboxColumn(
-                    'Apply credit',
-                    help=(
-                        'Select to apply investment tax credits for this technology. '
-                        'Unchecked technologies default to $0 incentives across all years.'
-                    ),
-                    default=False,
-                ),
-                'Technology': st.column_config.SelectboxColumn(
-                    'Technology', options=technology_labels
-                ),
-                'Years': st.column_config.TextColumn(
-                    'Applicable years',
-                    help='Comma-separated years or ranges (e.g., 2025, 2030-2032).',
-                ),
-                investment_credit_col: st.column_config.NumberColumn(
-                    investment_credit_col,
-                    format='$%.2f',
-                    min_value=0.0,
-                    help='Credit value applied per megawatt of installed capacity.',
-                ),
-                investment_limit_col: st.column_config.NumberColumn(
-                    investment_limit_col,
-                    min_value=0.0,
-                    help='Optional annual limit on eligible capacity additions (MW).',
-                ),
-            },
+                min_value=0.0,
+                help="Optional annual limit on eligible capacity additions (MW).",
+            ),
+        },
+    )
+
+    validation_messages: list[str] = []
+    if enabled:
+        production_entries, production_messages = _rows_to_config_entries(
+            _data_editor_records(production_editor_value),
+            credit_column=production_credit_col,
+            limit_column=production_limit_col,
+            credit_config_key="credit_per_mwh",
+            limit_config_key="limit_mwh",
+            context_label="Production tax credit",
+            valid_years=valid_years_set,
+            selection_column=selection_column,
         )
+        investment_entries, investment_messages = _rows_to_config_entries(
+            _data_editor_records(investment_editor_value),
+            credit_column=investment_credit_col,
+            limit_column=investment_limit_col,
+            credit_config_key="credit_per_mw",
+            limit_config_key="limit_mw",
+            context_label="Investment tax credit",
+            valid_years=valid_years_set,
+            selection_column=selection_column,
+        )
+        validation_messages.extend(production_messages)
+        validation_messages.extend(investment_messages)
 
-        validation_messages: list[str] = []
-        if enabled:
-            production_entries, production_messages = _rows_to_config_entries(
-                _data_editor_records(production_editor_value),
-                credit_column=production_credit_col,
-                limit_column=production_limit_col,
-                credit_config_key='credit_per_mwh',
-                limit_config_key='limit_mwh',
-                context_label='Production tax credit',
-                valid_years=valid_years_set,
-                selection_column=selection_column,
-            )
-            investment_entries, investment_messages = _rows_to_config_entries(
-                _data_editor_records(investment_editor_value),
-                credit_column=investment_credit_col,
-                limit_column=investment_limit_col,
-                credit_config_key='credit_per_mw',
-                limit_config_key='limit_mw',
-                context_label='Investment tax credit',
-                valid_years=valid_years_set,
-                selection_column=selection_column,
-            )
-            validation_messages.extend(production_messages)
-            validation_messages.extend(investment_messages)
+    for message in validation_messages:
+        panel.error(message)
+    errors.extend(validation_messages)
 
-        for message in validation_messages:
+    if enabled:
+        if frames is None:
+            message = "Incentives require generating unit data."
             panel.error(message)
-        errors.extend(validation_messages)
-
-        if enabled:
-            if frames is None:
-                message = 'Incentives require generating unit data.'
+            errors.append(message)
+        else:
+            try:
+                units_df = frames.units()
+            except Exception as exc:
+                message = f"Unable to access unit data: {exc}"
                 panel.error(message)
                 errors.append(message)
             else:
-                try:
-                    units_df = frames.units()
-                except Exception as exc:
-                    message = f'Unable to access unit data: {exc}'
+                if units_df.empty:
+                    message = "Incentives require at least one generating unit."
                     panel.error(message)
                     errors.append(message)
-                else:
-                    if units_df.empty:
-                        message = 'Incentives require at least one generating unit.'
-                        panel.error(message)
-                        errors.append(message)
 
-    incentives_record: dict[str, Any] = {'enabled': bool(enabled)}
-    if production_entries:
-        incentives_record['production'] = copy.deepcopy(production_entries)
-    if investment_entries:
-        incentives_record['investment'] = copy.deepcopy(investment_entries)
+incentives_record: dict[str, Any] = {"enabled": bool(enabled)}
+if production_entries:
+    incentives_record["production"] = copy.deepcopy(production_entries)
+if investment_entries:
+    incentives_record["investment"] = copy.deepcopy(investment_entries)
 
-    run_config['electricity_incentives'] = copy.deepcopy(incentives_record)
-    modules['incentives'] = copy.deepcopy(incentives_record)
+run_config["electricity_incentives"] = copy.deepcopy(incentives_record)
+modules["incentives"] = copy.deepcopy(incentives_record)
 
-    return IncentivesModuleSettings(
-        enabled=bool(enabled),
-        production_credits=copy.deepcopy(production_entries),
-        investment_credits=copy.deepcopy(investment_entries),
-        errors=errors,
-    )
-
-
+return IncentivesModuleSettings(
+    enabled=bool(enabled),
+    production_credits=copy.deepcopy(production_entries),
+    investment_credits=copy.deepcopy(investment_entries),
+    errors=errors,
+)
 
 def _render_outputs_section(
     container: Any,
