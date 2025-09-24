@@ -2490,31 +2490,241 @@ def _build_run_summary(settings: Mapping[str, Any], *, config_label: str) -> lis
     return summary
 
 
-def _render_results(result: dict[str, Any]) -> None:  # pragma: no cover - UI rendering
+def _extract_result_frame(
+    result: Mapping[str, Any],
+    key: str,
+    *,
+    csv_name: str | None = None,
+) -> pd.DataFrame | None:
+    """Return a DataFrame from ``result`` or load it from cached CSV bytes."""
+
+    frame = result.get(key)
+    if isinstance(frame, pd.DataFrame):
+        return frame
+
+    csv_files = result.get('csv_files')
+    if isinstance(csv_files, Mapping):
+        filename = csv_name or f'{key}.csv'
+        raw = csv_files.get(filename)
+        if isinstance(raw, (bytes, bytearray)):
+            try:
+                return pd.read_csv(io.BytesIO(raw))
+            except Exception:  # pragma: no cover - defensive guard for malformed CSV
+                return None
+
+    return None
+
+
+def _render_technology_section(
+    frame: pd.DataFrame | None,
+    *,
+    section_title: str,
+    candidate_columns: list[tuple[str, str]],
+) -> None:
+    """Render charts summarising technology-level output data."""
+
     _ensure_streamlit()
+    st.subheader(section_title)
+
+    if frame is None or frame.empty:
+        st.caption(f'{section_title} data not available for this run.')
+        return
+
+    if 'technology' not in frame.columns:
+        st.caption('Technology detail unavailable; displaying raw data instead.')
+        st.dataframe(frame, use_container_width=True)
+        return
+
+    value_col: str | None = None
+    value_label = ''
+    for column, label in candidate_columns:
+        if column in frame.columns:
+            value_col = column
+            value_label = label
+            break
+
+    if value_col is None:
+        numeric_cols = frame.select_dtypes(include='number').columns.tolist()
+        if numeric_cols:
+            value_col = numeric_cols[0]
+            value_label = numeric_cols[0]
+        else:
+            st.caption('No numeric values available to chart; showing raw data.')
+            st.dataframe(frame, use_container_width=True)
+            return
+
+    display_frame = frame.copy()
+
+    if 'year' in display_frame.columns:
+        display_frame['year'] = pd.to_numeric(display_frame['year'], errors='coerce')
+        display_frame = display_frame.dropna(subset=['year'])
+        if display_frame.empty:
+            st.caption('No valid year entries available; showing raw data.')
+            st.dataframe(frame, use_container_width=True)
+            return
+
+        display_frame = display_frame.sort_values(['year', 'technology'])
+        pivot = display_frame.pivot_table(
+            index='year',
+            columns='technology',
+            values=value_col,
+            aggfunc='sum',
+        )
+
+        if pivot.empty:
+            st.caption('No data available to chart; showing raw data.')
+            st.dataframe(frame, use_container_width=True)
+            return
+
+        st.line_chart(pivot)
+
+        latest_year = pivot.index.max()
+        latest_totals = pivot.loc[latest_year].fillna(0.0)
+        latest_df = latest_totals.to_frame(name=value_label)
+        latest_df.index.name = 'technology'
+        st.caption(f'Latest year visualised: {latest_year}')
+        st.bar_chart(latest_df)
+    else:
+        totals = (
+            display_frame.groupby('technology')[value_col]
+            .sum()
+            .sort_values(ascending=False)
+        )
+        if totals.empty:
+            st.caption('No data available to chart; showing raw data.')
+            st.dataframe(frame, use_container_width=True)
+            return
+
+        totals_df = totals.to_frame(name=value_label)
+        totals_df.index.name = 'technology'
+        st.bar_chart(totals_df)
+
+
+def _render_results(result: Mapping[str, Any]) -> None:  # pragma: no cover - UI rendering
+    _ensure_streamlit()
+
     if 'error' in result:
         st.error(result['error'])
         return
 
-    annual = result['annual']
+    annual = result.get('annual')
+    if not isinstance(annual, pd.DataFrame):
+        annual = pd.DataFrame()
+
+    emissions_df = result.get('emissions_by_region')
+    if not isinstance(emissions_df, pd.DataFrame):
+        emissions_df = pd.DataFrame()
+
+    price_df = result.get('price_by_region')
+    if not isinstance(price_df, pd.DataFrame):
+        price_df = pd.DataFrame()
+
+    st.caption('Visualisations reflect the most recent model run.')
+
+    st.subheader('Allowance market results')
     if not annual.empty:
-        chart_data = annual.set_index('year')
-        st.subheader('Allowance market results')
-        col_price, col_emissions, col_bank = st.columns(3)
-        with col_price:
-            st.markdown('**Allowance price ($/ton)**')
-            st.line_chart(chart_data[['p_co2']])
-        with col_emissions:
-            st.markdown('**Emissions (tons)**')
-            st.line_chart(chart_data[['emissions_tons']])
-        with col_bank:
-            st.markdown('**Bank balance (tons)**')
-            st.line_chart(chart_data[['bank']])
+        display_annual = annual.copy()
+        if 'year' in display_annual.columns:
+            display_annual['year'] = pd.to_numeric(display_annual['year'], errors='coerce')
+            display_annual = display_annual.dropna(subset=['year'])
+            display_annual = display_annual.sort_values('year')
+            chart_data = display_annual.set_index('year')
+        else:
+            chart_data = display_annual
+
+        metric_columns: list[tuple[str, str]] = [
+            ('p_co2', 'Allowance price ($/ton)'),
+            ('emissions_tons', 'Total emissions (tons)'),
+            ('bank', 'Bank balance (tons)'),
+        ]
+        cols = st.columns(len(metric_columns))
+        for column_container, (column_name, label) in zip(cols, metric_columns):
+            with column_container:
+                if column_name in chart_data.columns:
+                    st.markdown(f'**{label}**')
+                    st.line_chart(chart_data[[column_name]])
+                    st.bar_chart(chart_data[[column_name]])
+                else:
+                    st.caption(f'{label} unavailable for this run.')
 
         st.markdown('---')
-        st.dataframe(annual, use_container_width=True)
+        st.dataframe(display_annual, use_container_width=True)
     else:
         st.info('No annual results to display.')
+
+    st.subheader('Emissions by region')
+    if not emissions_df.empty:
+        display_emissions = emissions_df.copy()
+        display_emissions['year'] = pd.to_numeric(display_emissions['year'], errors='coerce')
+        display_emissions = display_emissions.dropna(subset=['year'])
+        if 'region' in display_emissions.columns:
+            emissions_pivot = display_emissions.pivot_table(
+                index='year',
+                columns='region',
+                values='emissions_tons',
+                aggfunc='sum',
+            ).sort_index()
+            st.line_chart(emissions_pivot)
+            if not emissions_pivot.empty:
+                latest_year = emissions_pivot.index.max()
+                latest_totals = emissions_pivot.loc[latest_year].fillna(0.0)
+                latest_df = latest_totals.to_frame(name='emissions_tons')
+                latest_df.index.name = 'region'
+                st.caption(f'Latest year visualised: {latest_year}')
+                st.bar_chart(latest_df)
+        else:
+            st.caption('Regional emissions data unavailable; showing raw table below.')
+            st.dataframe(display_emissions, use_container_width=True)
+    else:
+        st.caption('No regional emissions data available for this run.')
+
+    st.subheader('Energy prices by region')
+    if not price_df.empty:
+        display_price = price_df.copy()
+        display_price['year'] = pd.to_numeric(display_price['year'], errors='coerce')
+        display_price = display_price.dropna(subset=['year'])
+        if 'region' in display_price.columns:
+            price_pivot = display_price.pivot_table(
+                index='year',
+                columns='region',
+                values='price',
+                aggfunc='mean',
+            ).sort_index()
+            st.line_chart(price_pivot)
+            if not price_pivot.empty:
+                latest_year = price_pivot.index.max()
+                latest_totals = price_pivot.loc[latest_year].fillna(0.0)
+                latest_df = latest_totals.to_frame(name='price')
+                latest_df.index.name = 'region'
+                st.caption(f'Latest year visualised: {latest_year}')
+                st.bar_chart(latest_df)
+        else:
+            st.caption('Regional price data unavailable; showing raw table below.')
+            st.dataframe(display_price, use_container_width=True)
+    else:
+        st.caption('No regional price data available for this run.')
+
+    capacity_df = _extract_result_frame(result, 'capacity_by_technology')
+    _render_technology_section(
+        capacity_df,
+        section_title='Capacity by technology',
+        candidate_columns=[
+            ('capacity_mw', 'Capacity (MW)'),
+            ('capacity', 'Capacity'),
+            ('value', 'Capacity'),
+        ],
+    )
+
+    generation_df = _extract_result_frame(result, 'generation_by_technology')
+    _render_technology_section(
+        generation_df,
+        section_title='Generation by technology',
+        candidate_columns=[
+            ('generation_mwh', 'Generation (MWh)'),
+            ('generation', 'Generation'),
+            ('value', 'Generation'),
+        ],
+    )
 
     documentation = result.get('documentation')
     overrides: list[str] = []
@@ -2529,17 +2739,33 @@ def _render_results(result: dict[str, Any]) -> None:  # pragma: no cover - UI re
         st.caption('No assumption overrides were applied in this run.')
 
     st.subheader('Download outputs')
-    for filename, content in sorted(result['csv_files'].items()):
-        st.download_button(
-            label=f'Download {filename}',
-            data=content,
-            file_name=filename,
-            mime='text/csv',
-        )
+    csv_files = result.get('csv_files')
+    if isinstance(csv_files, Mapping) and csv_files:
+        for filename, content in sorted(csv_files.items()):
+            st.download_button(
+                label=f'Download {filename}',
+                data=content,
+                file_name=filename,
+                mime='text/csv',
+            )
+    else:
+        st.caption('No CSV outputs are available for download.')
 
     temp_dir = result.get('temp_dir')
     if temp_dir:
         st.caption(f'Temporary files saved to {temp_dir}')
+
+
+def _render_outputs_tab(last_result: Mapping[str, Any] | None) -> None:
+    """Render the sidebar Outputs tab with charts for the latest run."""
+
+    _ensure_streamlit()
+
+    if not isinstance(last_result, Mapping) or not last_result:
+        st.caption('Run the model to populate this tab with results.')
+        return
+
+    _render_results(last_result)
 
 
 def main() -> None:  # pragma: no cover - Streamlit entry point
@@ -2564,66 +2790,105 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
     run_config: dict[str, Any] = copy.deepcopy(default_config_data) if default_config_data else {}
     config_label = DEFAULT_CONFIG_PATH.name
     selected_years: list[int] = []
+    candidate_years: list[int] = []
     frames_for_run: FramesType | None = None
     start_year_val = int(run_config.get('start_year', 2025)) if run_config else 2025
     end_year_val = int(run_config.get('end_year', start_year_val)) if run_config else start_year_val
 
+    carbon_settings = CarbonModuleSettings(
+        enabled=False,
+        enable_floor=False,
+        enable_ccr=False,
+        ccr1_enabled=False,
+        ccr2_enabled=False,
+        banking_enabled=False,
+        control_period_years=None,
+    )
+    dispatch_settings = DispatchModuleSettings(
+        enabled=False,
+        mode='single',
+        capacity_expansion=False,
+        reserve_margins=False,
+    )
+    incentives_settings = IncentivesModuleSettings(
+        enabled=False,
+        production_credits=[],
+        investment_credits=[],
+    )
+    outputs_settings = OutputsModuleSettings(
+        enabled=False,
+        directory=run_config.get('output_name', 'outputs'),
+        show_csv_downloads=False,
+    )
+    run_clicked = False
+
     with st.sidebar:
         st.markdown(SIDEBAR_STYLE, unsafe_allow_html=True)
 
-        general_label, general_expanded = SIDEBAR_SECTIONS[0]
-        general_expander = st.expander(general_label, expanded=general_expanded)
-        general_result = _render_general_config_section(
-            general_expander,
-            default_source=DEFAULT_CONFIG_PATH,
-            default_label=DEFAULT_CONFIG_PATH.name,
-            default_config=default_config_data,
-        )
-        run_config = general_result.run_config
-        config_label = general_result.config_label
-        candidate_years = general_result.candidate_years
-        start_year_val = general_result.start_year
-        end_year_val = general_result.end_year
-        selected_years = general_result.selected_years
-
-        carbon_label, carbon_expanded = SIDEBAR_SECTIONS[1]
-        carbon_expander = st.expander(carbon_label, expanded=carbon_expanded)
-        carbon_settings = _render_carbon_policy_section(carbon_expander, run_config)
-        module_errors.extend(carbon_settings.errors)
-
-        try:
-            frames_for_run = _build_default_frames(
-                selected_years or [start_year_val],
-                carbon_policy_enabled=carbon_settings.enabled,
-                banking_enabled=carbon_settings.banking_enabled,
-            )
-        except Exception as exc:  # pragma: no cover - defensive UI path
-            frames_for_run = None
-            st.warning(f'Unable to prepare default assumption tables: {exc}')
-
-        dispatch_label, dispatch_expanded = SIDEBAR_SECTIONS[2]
-        dispatch_expander = st.expander(dispatch_label, expanded=dispatch_expanded)
-        dispatch_settings = _render_dispatch_section(dispatch_expander, run_config, frames_for_run)
-        module_errors.extend(dispatch_settings.errors)
-
-        incentives_label, incentives_expanded = SIDEBAR_SECTIONS[3]
-        incentives_expander = st.expander(incentives_label, expanded=incentives_expanded)
-        incentives_settings = _render_incentives_section(incentives_expander, run_config, frames_for_run)
-        module_errors.extend(incentives_settings.errors)
-
-        outputs_label, outputs_expanded = SIDEBAR_SECTIONS[4]
-        outputs_expander = st.expander(outputs_label, expanded=outputs_expanded)
         last_result_mapping = st.session_state.get('last_result')
         if not isinstance(last_result_mapping, Mapping):
             last_result_mapping = None
-        outputs_settings = _render_outputs_section(
-            outputs_expander,
-            run_config,
-            last_result_mapping,
-        )
-        module_errors.extend(outputs_settings.errors)
 
-        run_clicked = st.button('Run Model', type='primary', use_container_width=True)
+        inputs_tab, outputs_tab = st.tabs(['Inputs', 'Outputs'])
+
+        with inputs_tab:
+            general_label, general_expanded = SIDEBAR_SECTIONS[0]
+            general_expander = st.expander(general_label, expanded=general_expanded)
+            general_result = _render_general_config_section(
+                general_expander,
+                default_source=DEFAULT_CONFIG_PATH,
+                default_label=DEFAULT_CONFIG_PATH.name,
+                default_config=default_config_data,
+            )
+            run_config = general_result.run_config
+            config_label = general_result.config_label
+            candidate_years = general_result.candidate_years
+            start_year_val = general_result.start_year
+            end_year_val = general_result.end_year
+            selected_years = general_result.selected_years
+
+            carbon_label, carbon_expanded = SIDEBAR_SECTIONS[1]
+            carbon_expander = st.expander(carbon_label, expanded=carbon_expanded)
+            carbon_settings = _render_carbon_policy_section(carbon_expander, run_config)
+            module_errors.extend(carbon_settings.errors)
+
+            try:
+                frames_for_run = _build_default_frames(
+                    selected_years or [start_year_val],
+                    carbon_policy_enabled=carbon_settings.enabled,
+                    banking_enabled=carbon_settings.banking_enabled,
+                )
+            except Exception as exc:  # pragma: no cover - defensive UI path
+                frames_for_run = None
+                st.warning(f'Unable to prepare default assumption tables: {exc}')
+
+            dispatch_label, dispatch_expanded = SIDEBAR_SECTIONS[2]
+            dispatch_expander = st.expander(dispatch_label, expanded=dispatch_expanded)
+            dispatch_settings = _render_dispatch_section(dispatch_expander, run_config, frames_for_run)
+            module_errors.extend(dispatch_settings.errors)
+
+            incentives_label, incentives_expanded = SIDEBAR_SECTIONS[3]
+            incentives_expander = st.expander(incentives_label, expanded=incentives_expanded)
+            incentives_settings = _render_incentives_section(
+                incentives_expander,
+                run_config,
+                frames_for_run,
+            )
+            module_errors.extend(incentives_settings.errors)
+
+            outputs_label, outputs_expanded = SIDEBAR_SECTIONS[4]
+            outputs_expander = st.expander(outputs_label, expanded=outputs_expanded)
+            outputs_settings = _render_outputs_section(
+                outputs_expander,
+                run_config,
+                last_result_mapping,
+            )
+            module_errors.extend(outputs_settings.errors)
+
+            run_clicked = st.button('Run Model', type='primary', use_container_width=True)
+
+        with outputs_tab:
+            _render_outputs_tab(last_result_mapping)
 
     try:
         selected_years = _select_years(candidate_years, start_year_val, end_year_val)
@@ -2874,10 +3139,13 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
             st.session_state['temp_dirs'] = [str(result['temp_dir'])]
         st.session_state['last_result'] = result
 
-    if result:
-        _render_results(result)
+    if isinstance(result, Mapping):
+        if 'error' in result:
+            st.error(result['error'])
+        else:
+            st.info('Open the Outputs tab to review charts and downloads from the most recent run.')
     else:
-        st.info('Use the sidebar to configure and run the simulation.')
+        st.info('Use the Inputs tab to configure and run the simulation.')
 
 
 if __name__ == '__main__':  # pragma: no cover - exercised via streamlit runtime
