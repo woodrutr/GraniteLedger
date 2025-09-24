@@ -406,111 +406,86 @@ def _render_general_config_section(
     default_label: str,
     default_config: Mapping[str, Any],
 ) -> GeneralConfigResult:
+def render_general_config(container, default_config, default_label="default_config.toml"):
     """Render general configuration controls and return the selected settings."""
 
-    config_label = default_label
+    # --- Load Base Config ---
     try:
         base_config = copy.deepcopy(dict(default_config))
     except Exception:
         base_config = dict(default_config)
 
     uploaded = container.file_uploader(
-        'Run configuration (TOML)',
-        type='toml',
-        key='general_config_upload',
+        "Run configuration (TOML)",
+        type="toml",
+        key="general_config_upload",
     )
     if uploaded is not None:
-        config_label = uploaded.name or 'uploaded_config.toml'
+        config_label = uploaded.name or "uploaded_config.toml"
         try:
             base_config = _load_config_data(uploaded.getvalue())
         except Exception as exc:
-            container.error(f'Failed to read configuration: {exc}')
+            container.error(f"Failed to read configuration: {exc}")
             base_config = copy.deepcopy(dict(default_config))
             config_label = default_label
     else:
         config_label = default_label
 
-    container.caption(f'Using configuration: {config_label}')
+    container.caption(f"Using configuration: {config_label}")
 
+    # --- Determine Year Bounds ---
     candidate_years = _years_from_config(base_config)
     if candidate_years:
         year_min = min(candidate_years)
         year_max = max(candidate_years)
     else:
-        try:
-            year_min = int(base_config.get('start_year', 2025))
-        except (TypeError, ValueError):
-            year_min = 2025
-        try:
-            year_max = int(base_config.get('end_year', year_min))
-        except (TypeError, ValueError):
-            year_max = year_min
+        year_min = int(base_config.get("start_year", 2025) or 2025)
+        year_max = int(base_config.get("end_year", year_min) or year_min)
+
     if year_min > year_max:
         year_min, year_max = year_max, year_min
 
-    def _coerce_year(value: Any, fallback: int) -> int:
+    def _coerce_year(value, fallback):
         try:
             return int(value)
         except (TypeError, ValueError):
             return int(fallback)
 
-    start_default = _coerce_year(base_config.get('start_year', year_min), year_min)
-    end_default = _coerce_year(base_config.get('end_year', year_max), year_max)
+    start_default = _coerce_year(base_config.get("start_year", year_min), year_min)
+    end_default = _coerce_year(base_config.get("end_year", year_max), year_max)
+
     start_default = max(year_min, min(year_max, start_default))
     end_default = max(year_min, min(year_max, end_default))
     if start_default > end_default:
         start_default, end_default = end_default, start_default
 
-        # Clamp slider defaults to 2025–2050
+    # --- Slider Defaults (clamped 2025–2050) ---
     slider_min_default = 2025
     slider_max_default = 2050
 
-    def _sanitize_year_range(raw_min: Any, raw_max: Any, *, fallback: tuple[int, int]) -> tuple[int, int]:
-        fallback_min, fallback_max = fallback
-        candidate_min = _coerce_year(raw_min, fallback_min)
-        candidate_max = _coerce_year(raw_max, fallback_max)
-        candidate_min = max(slider_min_default, min(slider_max_default, candidate_min))
-        candidate_max = max(slider_min_default, min(slider_max_default, candidate_max))
-        if candidate_min > candidate_max:
-            candidate_min, candidate_max = candidate_max, candidate_min
-        return int(candidate_min), int(candidate_max)
+    slider_min_value = max(slider_min_default, min(slider_max_default, start_default))
+    slider_max_value = max(slider_min_default, min(slider_max_default, end_default))
+    if slider_min_value > slider_max_value:
+        slider_min_value, slider_max_value = slider_max_value, slider_min_value
 
-    # Initialize values
-    slider_min_value: int = int(start_default)
-    slider_max_value: int = int(end_default)
-    slider_bounds = (slider_min_default, slider_max_default)
-    slider_key = 'general_year_range_slider'
-    bounds_state_key = 'general_year_range_slider_bounds'
-    min_numeric_key = 'general_year_range_min_numeric'
-    max_numeric_key = 'general_year_range_max_numeric'
-    start_input_key = 'general_year_range_min_text'
-    end_input_key = 'general_year_range_max_text'
-    sync_source_key = 'general_year_range_sync_source'
-    slider_state = (slider_min_value, slider_max_value)
-
+    # --- Sync With Streamlit State ---
     if st is not None:
-        # ... all your session_state syncing logic ...
-        # At the end of this block, force re-assignment:
-        slider_min_value, slider_max_value = slider_state
-    else:
-        # Fallback case with no Streamlit
+        # TODO: Replace with actual st.session_state logic
+        slider_state = (slider_min_value, slider_max_value)
         slider_min_value, slider_max_value = slider_state
 
-    # Final sanitize so both values are guaranteed valid
-    slider_min_value, slider_max_value = _sanitize_year_range(
-        slider_min_value, slider_max_value, fallback=slider_state
-    )
-    final_slider_state = (slider_min_value, slider_max_value)
-
-    if st is not None:
-        st.session_state[min_numeric_key] = slider_min_value
-        st.session_state[max_numeric_key] = slider_max_value
-        st.session_state[slider_key] = final_slider_state
-
-    # Explicitly set start/end years for the run config
+    # --- Final Output Years ---
     start_year = slider_min_value
     end_year = slider_max_value
+    run_years = list(range(start_year, end_year + 1))
 
+    return {
+        "config_label": config_label,
+        "base_config": base_config,
+        "start_year": start_year,
+        "end_year": end_year,
+        "run_years": run_years,  # inclusive range [min..max]
+    }
 
     region_options = _regions_from_config(base_config)
     default_region_values = list(range(1, 26))
