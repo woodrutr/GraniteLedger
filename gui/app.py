@@ -45,8 +45,9 @@ try:  # pragma: no cover - optional dependency
 except ModuleNotFoundError:  # pragma: no cover - optional dependency
     _RUN_END_TO_END = None
 
-from io_loader import Frames as FramesType
-import pandas as pd
+from io_loader import Frames
+
+FramesType = Frames
 
 from src.models.electricity.scripts.technology_metadata import (
     TECH_ID_TO_LABEL,
