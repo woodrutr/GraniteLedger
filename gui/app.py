@@ -428,6 +428,9 @@ def _render_general_config_section(
     slider_min_default = min(2025, year_min, start_default, end_default)
     slider_max_default = max(2030, year_max, start_default, end_default)
 
+    slider_min_value = int(start_default)
+    slider_max_value = int(end_default)
+
     if st is not None:
         config_state_key = 'general_config_active_label'
         if st.session_state.get(config_state_key) != config_label:
@@ -447,6 +450,25 @@ def _render_general_config_section(
         st.session_state.setdefault(max_numeric_key, int(slider_max_default))
         st.session_state.setdefault('general_year_range_min_text', str(st.session_state[min_numeric_key]))
         st.session_state.setdefault('general_year_range_max_text', str(st.session_state[max_numeric_key]))
+
+        slider_min_value = _coerce_year(
+            st.session_state.get('general_year_range_min_text'),
+            st.session_state[min_numeric_key],
+        )
+        slider_max_value = _coerce_year(
+            st.session_state.get('general_year_range_max_text'),
+            st.session_state[max_numeric_key],
+        )
+
+    slider_min_value = int(slider_min_value)
+    slider_max_value = int(slider_max_value)
+    slider_min_value = max(int(slider_min_default), min(int(slider_max_default), slider_min_value))
+    slider_max_value = max(int(slider_min_default), min(int(slider_max_default), slider_max_value))
+    if slider_min_value > slider_max_value:
+        slider_min_value, slider_max_value = slider_max_value, slider_min_value
+
+    start_year = slider_min_value
+    end_year = slider_max_value
 
         
 
@@ -509,8 +531,8 @@ def _render_general_config_section(
         selected_regions = list(available_region_values)
 
     run_config = copy.deepcopy(base_config)
-    run_config['start_year'] = start_year
-    run_config['end_year'] = end_year
+    run_config['start_year'] = slider_min_value
+    run_config['end_year'] = slider_max_value
     run_config['regions'] = selected_regions
     run_config.setdefault('modules', {})
 
