@@ -3068,21 +3068,21 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
             st.session_state['show_confirm_modal'] = True
             show_confirm_modal = True
             
-if isinstance(pending_run, Mapping) and show_confirm_modal:
-    # Pick dialog if available (Streamlit >= 1.31), else use expander
-    streamlit_version = getattr(st, "__version__", "0")
-    use_dialog = False
-    try:
-        major, minor, *_ = streamlit_version.split(".")
-        use_dialog = int(major) > 1 or (int(major) == 1 and int(minor) >= 31)
-    except Exception:
-        use_dialog = hasattr(st, "dialog")
+    if isinstance(pending_run, Mapping) and show_confirm_modal:
+        # Pick dialog if available (Streamlit >= 1.31), else use expander
+        streamlit_version = getattr(st, "__version__", "0")
+        use_dialog = False
+        try:
+            major, minor, *_ = streamlit_version.split(".")
+            use_dialog = int(major) > 1 or (int(major) == 1 and int(minor) >= 31)
+        except Exception:
+            use_dialog = hasattr(st, "dialog")
 
-    context_manager = (
-        st.dialog("Confirm model run")
-        if use_dialog and hasattr(st, "dialog")
-        else st.expander("Confirm model run")
-    )
+        context_manager = (
+            st.dialog("Confirm model run")
+            if use_dialog and hasattr(st, "dialog")
+            else st.expander("Confirm model run")
+        )
 
     with context_manager:
     
