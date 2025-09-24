@@ -135,7 +135,7 @@ jobs:
           PYTHONWARNINGS: error
         run: |
           if [[ "${{ steps.detect-env.outputs.use_conda }}" == "true" ]]; then
-            conda run --no-capture-output -n ${{ steps.detect-env.outputs.env_name }} pytest -q --cov=engine --cov=dispatch --cov=policy --cov-report=term-missing --cov-fail-under=80 -p pytest_cov
+            CONDA_NO_PLUGINS=true conda run --no-capture-output -n ${{ steps.detect-env.outputs.env_name }} pytest -q --cov=engine --cov=dispatch --cov=policy --cov-report=term-missing --cov-fail-under=80 -p pytest_cov
           else
             pytest -q --cov=engine --cov=dispatch --cov=policy --cov-report=term-missing --cov-fail-under=80 -p pytest_cov
           fi
