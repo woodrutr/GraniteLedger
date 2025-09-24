@@ -181,6 +181,7 @@ class CarbonModuleSettings:
     ccr2_enabled: bool
     banking_enabled: bool
     control_period_years: int | None
+    initial_bank: float
     errors: list[str] = field(default_factory=list)
 
 
@@ -574,6 +575,20 @@ def _render_carbon_policy_section(
         control_default = 3
     control_override_default = control_default_raw is not None
 
+    allowance_cfg_raw = run_config.get('allowance_market')
+    if isinstance(allowance_cfg_raw, Mapping):
+        if isinstance(allowance_cfg_raw, dict):
+            allowance_cfg = allowance_cfg_raw
+        else:
+            allowance_cfg = dict(allowance_cfg_raw)
+            run_config['allowance_market'] = allowance_cfg
+    else:
+        allowance_cfg = {}
+        run_config['allowance_market'] = allowance_cfg
+    bank_default = _coerce_float(allowance_cfg.get('bank0'), default=0.0)
+    bank_default = max(0.0, float(bank_default))
+    bank0_value = float(bank_default)
+
     enabled = container.toggle('Enable carbon cap', value=enabled_default, key='carbon_enable')
 
     with _sidebar_panel(container, enabled) as panel:
@@ -606,6 +621,17 @@ def _render_carbon_policy_section(
             value=banking_default,
             disabled=not enabled,
             key='carbon_banking',
+        )
+        bank0_value = float(
+            panel.number_input(
+                'Initial allowance bank (tons)',
+                min_value=0.0,
+                value=float(bank_default),
+                step=1000.0,
+                format='%f',
+                key='carbon_bank0',
+                disabled=not (enabled and banking_enabled),
+            )
         )
         control_override = panel.checkbox(
             'Specify control period length',
@@ -640,7 +666,10 @@ def _render_carbon_policy_section(
         'ccr2_enabled': bool(ccr2_enabled),
         'allowance_banking_enabled': bool(banking_enabled),
         'control_period_years': control_period_years,
+        'bank0': float(bank0_value),
     }
+
+    allowance_cfg['bank0'] = float(bank0_value)
 
     errors: list[str] = []
     if enabled and not isinstance(run_config.get('allowance_market'), Mapping):
@@ -656,6 +685,7 @@ def _render_carbon_policy_section(
         ccr2_enabled=bool(ccr2_enabled),
         banking_enabled=bool(banking_enabled),
         control_period_years=control_period_years,
+        initial_bank=float(bank0_value),
         errors=errors,
     )
 
@@ -981,169 +1011,169 @@ def _render_incentives_section(
     investment_entries = existing_investment_entries
 
     with _sidebar_panel(container, enabled) as panel:
-    panel.caption(
-        "Specify technology-specific tax credits that feed the electricity capacity and generation modules."
-    )
-    if available_years:
-        years_display = ", ".join(str(year) for year in available_years)
-        panel.caption(f"Simulation years: {years_display}")
-    panel.caption(
-        "Enter comma-separated years or ranges (e.g., 2025, 2030-2032). "
-        "Leave blank to exclude a technology."
-    )
+        panel.caption(
+            "Specify technology-specific tax credits that feed the electricity capacity and generation modules."
+        )
+        if available_years:
+            years_display = ", ".join(str(year) for year in available_years)
+            panel.caption(f"Simulation years: {years_display}")
+        panel.caption(
+            "Enter comma-separated years or ranges (e.g., 2025, 2030-2032). "
+            "Leave blank to exclude a technology."
+        )
 
-    panel.markdown("**Production tax credits ($/MWh)**")
-    production_editor_value = panel.data_editor(
-        production_rows_default,
-        disabled=not enabled,
-        hide_index=True,
-        num_rows="dynamic",
-        width="stretch",  # was use_container_width=True
-        key="incentives_production_editor",
-        column_order=[
-            selection_column,
-            "Technology",
-            "Years",
-            production_credit_col,
-            production_limit_col,
-        ],
-        column_config={
-            selection_column: st.column_config.CheckboxColumn(
-                "Apply credit",
-                help=(
-                    "Select to apply production tax credits for this technology. "
-                    "Unchecked technologies default to $0 incentives across all years."
-                ),
-                default=False,
-            ),
-            "Technology": st.column_config.SelectboxColumn(
-                "Technology", options=technology_labels
-            ),
-            "Years": st.column_config.TextColumn(
-                "Applicable years",
-                help="Comma-separated years or ranges (e.g., 2025, 2030-2032).",
-            ),
-            production_credit_col: st.column_config.NumberColumn(
+        panel.markdown("**Production tax credits ($/MWh)**")
+        production_editor_value = panel.data_editor(
+            production_rows_default,
+            disabled=not enabled,
+            hide_index=True,
+            num_rows="dynamic",
+            width="stretch",  # was use_container_width=True
+            key="incentives_production_editor",
+            column_order=[
+                selection_column,
+                "Technology",
+                "Years",
                 production_credit_col,
-                format="$%.2f",
-                min_value=0.0,
-                help="Credit value applied per megawatt-hour.",
-            ),
-            production_limit_col: st.column_config.NumberColumn(
                 production_limit_col,
-                min_value=0.0,
-                help="Optional annual limit on eligible production (MWh).",
-            ),
-        },
-    )
-
-    panel.markdown("**Investment tax credits ($/MW)**")
-    investment_editor_value = panel.data_editor(
-        investment_rows_default,
-        disabled=not enabled,
-        hide_index=True,
-        num_rows="dynamic",
-        width="stretch",  # was use_container_width=True
-        key="incentives_investment_editor",
-        column_order=[
-            selection_column,
-            "Technology",
-            "Years",
-            investment_credit_col,
-            investment_limit_col,
-        ],
-        column_config={
-            selection_column: st.column_config.CheckboxColumn(
-                "Apply credit",
-                help=(
-                    "Select to apply investment tax credits for this technology. "
-                    "Unchecked technologies default to $0 incentives across all years."
+            ],
+            column_config={
+                selection_column: st.column_config.CheckboxColumn(
+                    "Apply credit",
+                    help=(
+                        "Select to apply production tax credits for this technology. "
+                        "Unchecked technologies default to $0 incentives across all years."
+                    ),
+                    default=False,
                 ),
-                default=False,
-            ),
-            "Technology": st.column_config.SelectboxColumn(
-                "Technology", options=technology_labels
-            ),
-            "Years": st.column_config.TextColumn(
-                "Applicable years",
-                help="Comma-separated years or ranges (e.g., 2025, 2030-2032).",
-            ),
-            investment_credit_col: st.column_config.NumberColumn(
+                "Technology": st.column_config.SelectboxColumn(
+                    "Technology", options=technology_labels
+                ),
+                "Years": st.column_config.TextColumn(
+                    "Applicable years",
+                    help="Comma-separated years or ranges (e.g., 2025, 2030-2032).",
+                ),
+                production_credit_col: st.column_config.NumberColumn(
+                    production_credit_col,
+                    format="$%.2f",
+                    min_value=0.0,
+                    help="Credit value applied per megawatt-hour.",
+                ),
+                production_limit_col: st.column_config.NumberColumn(
+                    production_limit_col,
+                    min_value=0.0,
+                    help="Optional annual limit on eligible production (MWh).",
+                ),
+            },
+        )
+
+        panel.markdown("**Investment tax credits ($/MW)**")
+        investment_editor_value = panel.data_editor(
+            investment_rows_default,
+            disabled=not enabled,
+            hide_index=True,
+            num_rows="dynamic",
+            width="stretch",  # was use_container_width=True
+            key="incentives_investment_editor",
+            column_order=[
+                selection_column,
+                "Technology",
+                "Years",
                 investment_credit_col,
-                format="$%.2f",
-                min_value=0.0,
-                help="Credit value applied per megawatt of installed capacity.",
-            ),
-            investment_limit_col: st.column_config.NumberColumn(
                 investment_limit_col,
-                min_value=0.0,
-                help="Optional annual limit on eligible capacity additions (MW).",
-            ),
-        },
-    )
-
-    validation_messages: list[str] = []
-    if enabled:
-        production_entries, production_messages = _rows_to_config_entries(
-            _data_editor_records(production_editor_value),
-            credit_column=production_credit_col,
-            limit_column=production_limit_col,
-            credit_config_key="credit_per_mwh",
-            limit_config_key="limit_mwh",
-            context_label="Production tax credit",
-            valid_years=valid_years_set,
-            selection_column=selection_column,
+            ],
+            column_config={
+                selection_column: st.column_config.CheckboxColumn(
+                    "Apply credit",
+                    help=(
+                        "Select to apply investment tax credits for this technology. "
+                        "Unchecked technologies default to $0 incentives across all years."
+                    ),
+                    default=False,
+                ),
+                "Technology": st.column_config.SelectboxColumn(
+                    "Technology", options=technology_labels
+                ),
+                "Years": st.column_config.TextColumn(
+                    "Applicable years",
+                    help="Comma-separated years or ranges (e.g., 2025, 2030-2032).",
+                ),
+                investment_credit_col: st.column_config.NumberColumn(
+                    investment_credit_col,
+                    format="$%.2f",
+                    min_value=0.0,
+                    help="Credit value applied per megawatt of installed capacity.",
+                ),
+                investment_limit_col: st.column_config.NumberColumn(
+                    investment_limit_col,
+                    min_value=0.0,
+                    help="Optional annual limit on eligible capacity additions (MW).",
+                ),
+            },
         )
-        investment_entries, investment_messages = _rows_to_config_entries(
-            _data_editor_records(investment_editor_value),
-            credit_column=investment_credit_col,
-            limit_column=investment_limit_col,
-            credit_config_key="credit_per_mw",
-            limit_config_key="limit_mw",
-            context_label="Investment tax credit",
-            valid_years=valid_years_set,
-            selection_column=selection_column,
-        )
-        validation_messages.extend(production_messages)
-        validation_messages.extend(investment_messages)
 
-    for message in validation_messages:
-        panel.error(message)
-    errors.extend(validation_messages)
+        validation_messages: list[str] = []
+        if enabled:
+            production_entries, production_messages = _rows_to_config_entries(
+                _data_editor_records(production_editor_value),
+                credit_column=production_credit_col,
+                limit_column=production_limit_col,
+                credit_config_key="credit_per_mwh",
+                limit_config_key="limit_mwh",
+                context_label="Production tax credit",
+                valid_years=valid_years_set,
+                selection_column=selection_column,
+            )
+            investment_entries, investment_messages = _rows_to_config_entries(
+                _data_editor_records(investment_editor_value),
+                credit_column=investment_credit_col,
+                limit_column=investment_limit_col,
+                credit_config_key="credit_per_mw",
+                limit_config_key="limit_mw",
+                context_label="Investment tax credit",
+                valid_years=valid_years_set,
+                selection_column=selection_column,
+            )
+            validation_messages.extend(production_messages)
+            validation_messages.extend(investment_messages)
 
-    if enabled:
-        if frames is None:
-            message = "Incentives require generating unit data."
+        for message in validation_messages:
             panel.error(message)
-            errors.append(message)
-        else:
-            try:
-                units_df = frames.units()
-            except Exception as exc:
-                message = f"Unable to access unit data: {exc}"
+        errors.extend(validation_messages)
+
+        if enabled:
+            if frames is None:
+                message = "Incentives require generating unit data."
                 panel.error(message)
                 errors.append(message)
             else:
-                if units_df.empty:
-                    message = "Incentives require at least one generating unit."
+                try:
+                    units_df = frames.units()
+                except Exception as exc:
+                    message = f"Unable to access unit data: {exc}"
                     panel.error(message)
                     errors.append(message)
+                else:
+                    if units_df.empty:
+                        message = "Incentives require at least one generating unit."
+                        panel.error(message)
+                        errors.append(message)
 
-incentives_record: dict[str, Any] = {"enabled": bool(enabled)}
-if production_entries:
-    incentives_record["production"] = copy.deepcopy(production_entries)
-if investment_entries:
-    incentives_record["investment"] = copy.deepcopy(investment_entries)
+    incentives_record: dict[str, Any] = {"enabled": bool(enabled)}
+    if production_entries:
+        incentives_record["production"] = copy.deepcopy(production_entries)
+    if investment_entries:
+        incentives_record["investment"] = copy.deepcopy(investment_entries)
 
-run_config["electricity_incentives"] = copy.deepcopy(incentives_record)
-modules["incentives"] = copy.deepcopy(incentives_record)
+    run_config["electricity_incentives"] = copy.deepcopy(incentives_record)
+    modules["incentives"] = copy.deepcopy(incentives_record)
 
-return IncentivesModuleSettings(
-    enabled=bool(enabled),
-    production_credits=copy.deepcopy(production_entries),
-    investment_credits=copy.deepcopy(investment_entries),
-    errors=errors,
-)
+    return IncentivesModuleSettings(
+        enabled=bool(enabled),
+        production_credits=copy.deepcopy(production_entries),
+        investment_credits=copy.deepcopy(investment_entries),
+        errors=errors,
+    )
 
 def _render_outputs_section(
     container: Any,
@@ -2256,6 +2286,18 @@ def run_policy_simulation(
     except Exception as exc:  # pragma: no cover - defensive path
         return {'error': f'Unable to load configuration: {exc}'}
 
+    allowance_section_raw = config.get('allowance_market')
+    if isinstance(allowance_section_raw, Mapping):
+        if isinstance(allowance_section_raw, dict):
+            allowance_section = allowance_section_raw
+        else:
+            allowance_section = dict(allowance_section_raw)
+            config['allowance_market'] = allowance_section
+    else:
+        allowance_section = {}
+        config['allowance_market'] = allowance_section
+    bank_from_config = _coerce_optional_float(allowance_section.get('bank0'))
+
     modules_section = config.setdefault('modules', {})
     merged_modules: dict[str, dict[str, Any]] = {}
     if isinstance(modules_section, Mapping):
@@ -2322,6 +2364,15 @@ def run_policy_simulation(
     if not enable_ccr:
         carbon_record['ccr1_enabled'] = False
         carbon_record['ccr2_enabled'] = False
+
+    bank_override = _coerce_optional_float(carbon_record.get('bank0'))
+    if bank_override is None:
+        bank_override = bank_from_config
+    if bank_override is not None:
+        allowance_section['bank0'] = float(bank_override)
+        carbon_record['bank0'] = float(bank_override)
+    elif 'bank0' in allowance_section:
+        carbon_record.pop('bank0', None)
 
     try:
         frames_obj = (
@@ -2404,6 +2455,14 @@ def _build_run_summary(settings: Mapping[str, Any], *, config_label: str) -> lis
         except (TypeError, ValueError):
             return None
 
+    def _as_float(value: Any) -> float | None:
+        if value in (None, ''):
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
     def _bool_label(value: bool) -> str:
         return 'Yes' if value else 'No'
 
@@ -2432,6 +2491,7 @@ def _build_run_summary(settings: Mapping[str, Any], *, config_label: str) -> lis
     )
 
     control_period = settings.get('control_period_years') if carbon_enabled else None
+    initial_bank_value: float | None = None
 
     modules = settings.get('module_config')
     if isinstance(modules, Mapping):
@@ -2448,6 +2508,9 @@ def _build_run_summary(settings: Mapping[str, Any], *, config_label: str) -> lis
                 else False
             )
             control_period = carbon_cfg.get('control_period_years') if carbon_enabled else control_period
+            bank_candidate = _as_float(carbon_cfg.get('bank0'))
+            if bank_candidate is not None:
+                initial_bank_value = bank_candidate
 
         dispatch_cfg = modules.get('electricity_dispatch')
         incentives_cfg = modules.get('incentives')
@@ -2456,12 +2519,28 @@ def _build_run_summary(settings: Mapping[str, Any], *, config_label: str) -> lis
         dispatch_cfg = None
         incentives_cfg = None
         outputs_cfg = None
+
+    if initial_bank_value is None:
+        config_source = settings.get('config_source')
+        if isinstance(config_source, Mapping):
+            allowance_cfg = config_source.get('allowance_market')
+            if isinstance(allowance_cfg, Mapping):
+                bank_candidate = _as_float(allowance_cfg.get('bank0'))
+                if bank_candidate is not None:
+                    initial_bank_value = bank_candidate
     if not carbon_enabled:
         control_display = 'Not applicable'
     elif control_period is None:
         control_display = 'Automatic'
     else:
         control_display = str(control_period)
+
+    if not carbon_enabled or not banking_enabled:
+        bank_display = 'Not applicable'
+    elif initial_bank_value is None:
+        bank_display = 'Not specified'
+    else:
+        bank_display = f"{initial_bank_value:,.0f} tons"
 
     summary: list[tuple[str, str]] = [
         ('Configuration', config_label),
@@ -2472,6 +2551,7 @@ def _build_run_summary(settings: Mapping[str, Any], *, config_label: str) -> lis
         ('CCR tranche 1', _bool_label(ccr1_enabled)),
         ('CCR tranche 2', _bool_label(ccr2_enabled)),
         ('Allowance banking enabled', _bool_label(banking_enabled)),
+        ('Initial allowance bank', bank_display),
         ('Control period length', control_display),
     ]
 
@@ -2883,6 +2963,7 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
         ccr2_enabled=False,
         banking_enabled=False,
         control_period_years=None,
+        initial_bank=0.0,
     )
     dispatch_settings = DispatchModuleSettings(
         enabled=False,
