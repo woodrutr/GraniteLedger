@@ -448,47 +448,57 @@ def _render_general_config_section(
         st.session_state.setdefault('general_year_range_min_text', str(st.session_state[min_numeric_key]))
         st.session_state.setdefault('general_year_range_max_text', str(st.session_state[max_numeric_key]))
 
-        def _parse_year_input(raw_value: Any, fallback: int, *, state_key: str) -> int:
-            text = str(raw_value).strip()
-            if not text:
-                return int(fallback)
-            try:
-                value = int(text)
-            except (TypeError, ValueError):
-                st.session_state[state_key] = str(int(fallback))
-                return int(fallback)
-            else:
-                st.session_state[state_key] = str(value)
-                return value
+          def _parse_year_input(raw_value: Any, fallback: int, *, state_key: str) -> int:
+        text = str(raw_value).strip()
+        if not text:
+            st.session_state[state_key] = str(int(fallback))
+            return int(fallback)
+        try:
+            value = int(text)
+        except (TypeError, ValueError):
+            st.session_state[state_key] = str(int(fallback))
+            return int(fallback)
+        else:
+            st.session_state[state_key] = str(value)
+            return value
 
-        min_col, slider_col, max_col = container.columns([1, 4, 1])
-        slider_min_raw = min_col.text_input('Start year', key='general_year_range_min_text')
-        slider_max_raw = max_col.text_input('End year', key='general_year_range_max_text')
+    min_col, slider_col, max_col = container.columns([1, 4, 1])
+    slider_min_raw = min_col.text_input('Start year', key='general_year_range_min_text')
+    slider_max_raw = max_col.text_input('End year', key='general_year_range_max_text')
 
-        slider_min_value = _parse_year_input(
-            slider_min_raw,
-            st.session_state[min_numeric_key],
-            state_key='general_year_range_min_text',
-        )
-        slider_max_value = _parse_year_input(
-            slider_max_raw,
-            st.session_state[max_numeric_key],
-            state_key='general_year_range_max_text',
-        )
-        st.session_state[min_numeric_key] = slider_min_value
-        st.session_state[max_numeric_key] = slider_max_value
-    else:  # pragma: no cover - streamlit unavailable
-        slider_min_value = slider_min_default
-        slider_max_value = slider_max_default
-        slider_col = container
+    slider_min_value = _parse_year_input(
+        slider_min_raw,
+        st.session_state[min_numeric_key],
+        state_key='general_year_range_min_text',
+    )
+    slider_max_value = _parse_year_input(
+        slider_max_raw,
+        st.session_state[max_numeric_key],
+        state_key='general_year_range_max_text',
+    )
+
+    st.session_state[min_numeric_key] = slider_min_value
+    st.session_state[max_numeric_key] = slider_max_value
 
     if slider_min_value > slider_max_value:
         slider_min_value, slider_max_value = slider_max_value, slider_min_value
-        if st is not None:
-            st.session_state[min_numeric_key] = slider_min_value
-            st.session_state[max_numeric_key] = slider_max_value
-            st.session_state['general_year_range_min_text'] = str(slider_min_value)
-            st.session_state['general_year_range_max_text'] = str(slider_max_value)
+        st.session_state[min_numeric_key] = slider_min_value
+        st.session_state[max_numeric_key] = slider_max_value
+        st.session_state['general_year_range_min_text'] = str(slider_min_value)
+        st.session_state['general_year_range_max_text'] = str(slider_max_value)
+
+else:  # pragma: no cover - streamlit unavailable
+    slider_min_value = slider_min_default
+    slider_max_value = slider_max_default
+    slider_col = container
+
+if slider_min_value > slider_max_value:
+    slider_min_value, slider_max_value = slider_max_value, slider_min_value
+    if st is not None:
+        st.session_state[min_numeric_key] = slider_min_value
+        st.session_state[max_numeric_key] = slider_max_value
+        st.session_state['general_year_range_min_text'] = str(slider_min_value)
+        st.session_state['general_year_range_max_text'] = str(slider_max_value)
 
     start_default = max(slider_min_value, min(slider_max_value, start_default))
     end_default = max(slider_min_value, min(slider_max_value, end_default))
