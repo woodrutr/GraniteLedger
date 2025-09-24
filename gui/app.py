@@ -382,32 +382,25 @@ def _regions_from_config(config: Mapping[str, Any]) -> list[int | str]:
     return regions
 
 
-    def _normalize_region_labels(
-        selected_labels: Iterable[str],
-        previous_clean_selection: Iterable[str] | None,
-    ) -> list[str]:
-        """Return the cleaned region label selection for the multiselect widget."""
-
+def _normalize_region_labels(
+    selected_labels: Iterable[str],
+    previous_clean_selection: Iterable[str] | None,
+) -> list[str]:
     normalized = [str(entry) for entry in selected_labels]
     if 'All' in normalized and len(normalized) > 1:
-        non_all = [entry for entry in normalized if entry != 'All']
-        previous_tuple = tuple(str(entry) for entry in (previous_clean_selection or ()))
-        if previous_tuple == ('All',) and non_all:
-            return non_all
-        return ['All']
+        non_all = [e for e in normalized if e != 'All']
+        prev = tuple(str(e) for e in (previous_clean_selection or ()))
+        return non_all if prev == ('All',) and non_all else ['All']
     return normalized
-
-
-
+      
 def _render_general_config_section(
-        container: Any,
-        *,
-        default_source: Any,
-        default_label: str,
-        default_config: Mapping[str, Any],
-    ) -> GeneralConfigResult:
-def render_general_config(container, default_config, default_label="default_config.toml"):
-        """Render general configuration controls and return the selected settings."""
+    container: Any,
+    *,
+    default_source: Any,
+    default_label: str,
+    default_config: Mapping[str, Any],
+) -> GeneralConfigResult:
+    """Render general configuration controls and return the selected settings."""
 
     # --- Load Base Config ---
     try:
@@ -441,87 +434,57 @@ def render_general_config(container, default_config, default_label="default_conf
     else:
         year_min = int(base_config.get("start_year", 2025) or 2025)
         year_max = int(base_config.get("end_year", year_min) or year_min)
-
     if year_min > year_max:
         year_min, year_max = year_max, year_min
 
-def _coerce_year(value, fallback):
+    def _coerce_year(value: Any, fallback: int) -> int:
         try:
             return int(value)
         except (TypeError, ValueError):
             return int(fallback)
 
     start_default = _coerce_year(base_config.get("start_year", year_min), year_min)
-    end_default = _coerce_year(base_config.get("end_year", year_max), year_max)
-
+    end_default   = _coerce_year(base_config.get("end_year", year_max), year_max)
     start_default = max(year_min, min(year_max, start_default))
-    end_default = max(year_min, min(year_max, end_default))
+    end_default   = max(year_min, min(year_max, end_default))
     if start_default > end_default:
         start_default, end_default = end_default, start_default
 
-    # --- Slider Defaults (clamped 2025–2050) ---
     slider_min_default = 2025
     slider_max_default = 2050
-
     slider_min_value = max(slider_min_default, min(slider_max_default, start_default))
     slider_max_value = max(slider_min_default, min(slider_max_default, end_default))
     if slider_min_value > slider_max_value:
         slider_min_value, slider_max_value = slider_max_value, slider_min_value
 
-    # --- Sync With Streamlit State ---
-    if st is not None:
-        # TODO: Replace with actual st.session_state logic
+    if st is not None:  # sync if needed
         slider_state = (slider_min_value, slider_max_value)
         slider_min_value, slider_max_value = slider_state
 
-    # --- Final Output Years ---
     start_year = slider_min_value
-    end_year = slider_max_value
-    run_years = list(range(start_year, end_year + 1))
+    end_year   = slider_max_value
 
-    return {
-        "config_label": config_label,
-        "base_config": base_config,
-        "start_year": start_year,
-        "end_year": end_year,
-        "run_years": run_years,  # inclusive range [min..max]
-    }
-
+    # ----- Regions -----
     region_options = _regions_from_config(base_config)
     default_region_values = list(range(1, 26))
     available_region_values: list[int | str] = []
-    seen_region_labels: set[str] = set()
+    seen: set[str] = set()
+    for rv in (*default_region_values, *region_options):
+        label = str(rv).strip()
+        if label and label not in seen:
+            seen.add(label)
+            available_region_values.append(int(rv) if isinstance(rv, (bool, int, float)) else rv)
 
-    for region_value in (*default_region_values, *region_options):
-        label = str(region_value).strip()
-        if not label:
-            continue
-        if label in seen_region_labels:
-            continue
-        seen_region_labels.add(label)
-        if isinstance(region_value, bool):
-            available_region_values.append(int(region_value))
-        elif isinstance(region_value, (int, float)):
-            available_region_values.append(int(region_value))
-        else:
-            available_region_values.append(region_value)
-
-    region_labels = ['All'] + [str(value) for value in available_region_values]
+    region_labels = ['All'] + [str(v) for v in available_region_values]
     default_selection = ['All']
 
-    if st is not None:  # pragma: no branch - streamlit only when available
-        st.session_state.setdefault(
-            _GENERAL_REGIONS_NORMALIZED_KEY, list(default_selection)
-        )
-        previous_clean_selection_raw = st.session_state.get(
-            _GENERAL_REGIONS_NORMALIZED_KEY, []
-        )
-        if isinstance(previous_clean_selection_raw, (list, tuple)):
-            previous_clean_selection = tuple(
-                str(entry) for entry in previous_clean_selection_raw
-            )
-        elif isinstance(previous_clean_selection_raw, str):
-            previous_clean_selection = (previous_clean_selection_raw,)
+    if st is not None:
+        st.session_state.setdefault(_GENERAL_REGIONS_NORMALIZED_KEY, list(default_selection))
+        prev_raw = st.session_state.get(_GENERAL_REGIONS_NORMALIZED_KEY, [])
+        if isinstance(prev_raw, (list, tuple)):
+            previous_clean_selection = tuple(str(e) for e in prev_raw)
+        elif isinstance(prev_raw, str):
+            previous_clean_selection = (prev_raw,)
         else:
             previous_clean_selection = ()
     else:
@@ -535,23 +498,15 @@ def _coerce_year(value, fallback):
             key='general_regions',
         )
     )
-
-    normalized_selection = _normalize_region_labels(
-        selected_regions_raw, previous_clean_selection
-    )
+    normalized_selection = _normalize_region_labels(selected_regions_raw, previous_clean_selection)
     if normalized_selection != selected_regions_raw and st is not None:
         st.session_state['general_regions'] = normalized_selection
     selected_regions_raw = normalized_selection
-
     if st is not None:
         st.session_state[_GENERAL_REGIONS_NORMALIZED_KEY] = list(selected_regions_raw)
 
-    # Track if "All" was selected explicitly
     all_selected = 'All' in selected_regions_raw
-
-    label_to_value: dict[str, int | str] = {
-        str(value): value for value in available_region_values
-    }
+    label_to_value = {str(v): v for v in available_region_values}
     if all_selected or not selected_regions_raw:
         selected_regions = list(available_region_values)
     else:
@@ -561,22 +516,18 @@ def _coerce_year(value, fallback):
                 continue
             value = label_to_value.get(entry)
             if value is None:
-                text = str(entry).strip()
-                if not text:
-                    continue
                 try:
-                    value = int(text)
+                    value = int(str(entry).strip())
                 except ValueError:
-                    value = text
+                    value = str(entry).strip()
             if value not in selected_regions:
                 selected_regions.append(value)
-
     if not selected_regions:
         selected_regions = list(available_region_values)
 
     run_config = copy.deepcopy(base_config)
-    run_config['start_year'] = slider_min_value
-    run_config['end_year'] = slider_max_value
+    run_config['start_year'] = start_year
+    run_config['end_year'] = end_year
     run_config['regions'] = selected_regions
     run_config.setdefault('modules', {})
 
@@ -598,7 +549,6 @@ def _coerce_year(value, fallback):
         selected_years=selected_years,
         regions=selected_regions,
     )
-
 
 def _render_carbon_policy_section(
     container: Any,
