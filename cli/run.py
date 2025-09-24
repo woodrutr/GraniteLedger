@@ -134,6 +134,52 @@ def _run_engine(
     banking_enabled = bool(flags['banking_enabled'])
     control_period = flags.get('control_period_years')
 
+    modules_cfg = config.get('modules')
+    carbon_price_argument: Mapping[Any, float] | float | None = None
+    if isinstance(modules_cfg, Mapping):
+        price_cfg = modules_cfg.get('carbon_price')
+        if isinstance(price_cfg, Mapping):
+            price_enabled = bool(price_cfg.get('enabled', False))
+            schedule_raw = price_cfg.get('schedule') or price_cfg.get('price_schedule')
+            price_schedule: dict[Any, float] = {}
+            if isinstance(schedule_raw, Mapping):
+                for key, raw_val in schedule_raw.items():
+                    try:
+                        price_val = float(raw_val)
+                    except (TypeError, ValueError):
+                        continue
+                    if isinstance(key, str):
+                        token = key.strip()
+                        if not token:
+                            continue
+                        try:
+                            normalized_key: Any = int(token)
+                        except (TypeError, ValueError):
+                            normalized_key = token
+                    else:
+                        normalized_key = key
+                    price_schedule[normalized_key] = price_val
+            price_value = 0.0
+            for candidate in (
+                price_cfg.get('price_per_ton'),
+                price_cfg.get('price'),
+                price_cfg.get('value'),
+            ):
+                try:
+                    price_value = float(candidate)
+                except (TypeError, ValueError):
+                    continue
+                else:
+                    break
+            price_value = max(0.0, price_value)
+            if price_enabled:
+                carbon_enabled = False
+                ccr1_enabled = False
+                ccr2_enabled = False
+                banking_enabled = False
+                control_period = None
+                carbon_price_argument = price_schedule if price_schedule else float(price_value)
+
     frames = _build_default_frames(
         years,
         carbon_policy_enabled=carbon_enabled,
@@ -160,6 +206,7 @@ def _run_engine(
         enable_floor=carbon_enabled,
         enable_ccr=enable_ccr,
         use_network=use_network,
+        carbon_price=carbon_price_argument,
     )
 
 

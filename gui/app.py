@@ -181,6 +181,8 @@ class CarbonModuleSettings:
     ccr2_enabled: bool
     banking_enabled: bool
     control_period_years: int | None
+    price_enabled: bool = False
+    price_per_ton: float = 0.0
     errors: list[str] = field(default_factory=list)
 
 
@@ -559,8 +561,10 @@ def _render_carbon_policy_section(
 ) -> CarbonModuleSettings:
     """Render the carbon policy module controls."""
 
+    _ensure_streamlit()
     modules = run_config.setdefault('modules', {})
     defaults = modules.get('carbon_policy', {})
+    price_defaults = modules.get('carbon_price', {})
     enabled_default = bool(defaults.get('enabled', True))
     enable_floor_default = bool(defaults.get('enable_floor', True))
     enable_ccr_default = bool(defaults.get('enable_ccr', True))
@@ -574,7 +578,38 @@ def _render_carbon_policy_section(
         control_default = 3
     control_override_default = control_default_raw is not None
 
-    enabled = container.toggle('Enable carbon cap', value=enabled_default, key='carbon_enable')
+    price_enabled_default = bool(price_defaults.get('enabled', False))
+    price_value_raw = price_defaults.get('price_per_ton', price_defaults.get('price'))
+    try:
+        price_value_default = float(price_value_raw)
+    except (TypeError, ValueError):
+        price_value_default = 0.0
+    price_value_default = max(0.0, float(price_value_default))
+
+    price_toggle_key = 'carbon_price_enable'
+    policy_toggle_key = 'carbon_enable'
+    price_state = st.session_state.get(price_toggle_key, price_enabled_default)
+
+    enabled = container.toggle(
+        'Enable carbon cap',
+        value=enabled_default and not price_state,
+        key=policy_toggle_key,
+        disabled=bool(price_state),
+    )
+
+    if enabled:
+        st.session_state[price_toggle_key] = False
+
+    price_enabled = container.toggle(
+        'Enable carbon price',
+        value=price_enabled_default and not enabled,
+        key=price_toggle_key,
+        disabled=bool(enabled),
+    )
+
+    if price_enabled:
+        st.session_state[policy_toggle_key] = False
+        enabled = False
 
     with _sidebar_panel(container, enabled) as panel:
         enable_floor = panel.checkbox(
@@ -623,6 +658,17 @@ def _render_carbon_policy_section(
             disabled=not (enabled and control_override),
         )
 
+    with _sidebar_panel(container, price_enabled) as price_panel:
+        price_value = price_panel.number_input(
+            'Carbon price ($/ton)',
+            min_value=0.0,
+            value=float(price_value_default),
+            step=1.0,
+            format='%0.2f',
+            key='carbon_price_value',
+            disabled=not price_enabled,
+        )
+
     control_period_years = int(control_period_value) if enabled and control_override else None
     if not enabled:
         enable_floor = False
@@ -631,6 +677,8 @@ def _render_carbon_policy_section(
         ccr2_enabled = False
         banking_enabled = False
         control_period_years = None
+    if not price_enabled:
+        price_value = float(price_value_default)
 
     modules['carbon_policy'] = {
         'enabled': bool(enabled),
@@ -640,6 +688,11 @@ def _render_carbon_policy_section(
         'ccr2_enabled': bool(ccr2_enabled),
         'allowance_banking_enabled': bool(banking_enabled),
         'control_period_years': control_period_years,
+    }
+
+    modules['carbon_price'] = {
+        'enabled': bool(price_enabled),
+        'price_per_ton': float(price_value if price_enabled else 0.0),
     }
 
     errors: list[str] = []
@@ -656,6 +709,8 @@ def _render_carbon_policy_section(
         ccr2_enabled=bool(ccr2_enabled),
         banking_enabled=bool(banking_enabled),
         control_period_years=control_period_years,
+        price_enabled=bool(price_enabled),
+        price_per_ton=float(price_value if price_enabled else 0.0),
         errors=errors,
     )
 
@@ -2240,6 +2295,8 @@ def run_policy_simulation(
     ccr2_enabled: bool = True,
     allowance_banking_enabled: bool = True,
     control_period_years: int | None = None,
+    carbon_price_enabled: bool | None = None,
+    carbon_price_per_ton: float | Mapping[int, float] | None = None,
     dispatch_use_network: bool = False,
     module_config: Mapping[str, Any] | None = None,
     frames: FramesType | Mapping[str, pd.DataFrame] | None = None,
@@ -2271,6 +2328,91 @@ def run_policy_simulation(
             else:
                 merged_modules[str(name)] = {'value': settings}
 
+    price_record_raw = merged_modules.get('carbon_price')
+    if isinstance(price_record_raw, Mapping):
+        price_record = dict(price_record_raw)
+    else:
+        price_record = {}
+    merged_modules['carbon_price'] = price_record
+
+    def _normalize_price_schedule(value: Any) -> dict[Any, float]:
+        schedule: dict[Any, float] = {}
+        if isinstance(value, Mapping):
+            for key, raw_val in value.items():
+                try:
+                    price_val = float(raw_val)
+                except (TypeError, ValueError):
+                    continue
+                normalized_key: Any
+                if isinstance(key, str):
+                    token = key.strip()
+                    if not token:
+                        continue
+                    try:
+                        normalized_key = int(token)
+                    except (TypeError, ValueError):
+                        normalized_key = token
+                else:
+                    normalized_key = key
+                schedule[normalized_key] = price_val
+        return schedule
+
+    price_enabled = bool(price_record.get('enabled', False))
+    if carbon_price_enabled is not None:
+        price_enabled = bool(carbon_price_enabled)
+
+    price_schedule = _normalize_price_schedule(
+        price_record.get('schedule') or price_record.get('price_schedule')
+    )
+
+    price_value = 0.0
+    for candidate in (
+        price_record.get('price_per_ton'),
+        price_record.get('value'),
+        price_record.get('price'),
+    ):
+        try:
+            price_value = float(candidate)
+        except (TypeError, ValueError):
+            continue
+        else:
+            break
+
+    if isinstance(carbon_price_per_ton, Mapping):
+        price_schedule = _normalize_price_schedule(carbon_price_per_ton)
+        if price_schedule:
+            price_value = float(next(iter(price_schedule.values())))
+    elif carbon_price_per_ton is not None:
+        try:
+            price_value = float(carbon_price_per_ton)
+        except (TypeError, ValueError):
+            pass
+
+    if not price_enabled:
+        price_schedule = {}
+        price_value = 0.0
+
+    price_value = max(0.0, float(price_value))
+    if price_schedule and price_value <= 0.0:
+        price_value = float(next(iter(price_schedule.values())))
+
+    if price_enabled:
+        carbon_policy_enabled = False
+        enable_floor = False
+        enable_ccr = False
+        ccr1_enabled = False
+        ccr2_enabled = False
+        allowance_banking_enabled = False
+        control_period_years = None
+
+    price_record.clear()
+    price_record['enabled'] = bool(price_enabled)
+    price_record['price_per_ton'] = float(price_value if price_enabled else 0.0)
+    if price_schedule and price_enabled:
+        price_record['schedule'] = {key: float(val) for key, val in price_schedule.items()}
+    else:
+        price_record.pop('schedule', None)
+
     carbon_record = merged_modules.setdefault('carbon_policy', {})
     carbon_record.update(
         {
@@ -2286,6 +2428,12 @@ def run_policy_simulation(
     if not enable_ccr:
         carbon_record['ccr1_enabled'] = False
         carbon_record['ccr2_enabled'] = False
+
+    price_argument: float | Mapping[Any, float] | None
+    if price_enabled:
+        price_argument = price_schedule if price_schedule else float(price_value)
+    else:
+        price_argument = None
 
     dispatch_record = merged_modules.setdefault('electricity_dispatch', {})
     dispatch_enabled = bool(dispatch_record.get('enabled')) or bool(dispatch_use_network)
@@ -2357,6 +2505,7 @@ def run_policy_simulation(
             enable_floor=bool(enable_floor),
             enable_ccr=bool(enable_ccr),
             use_network=bool(dispatch_use_network),
+            carbon_price=price_argument,
             progress_cb=progress_cb,
         )
         temp_dir, csv_files = _write_outputs_to_temp(outputs)
@@ -2431,6 +2580,12 @@ def _build_run_summary(settings: Mapping[str, Any], *, config_label: str) -> lis
     banking_enabled = (
         bool(settings.get('allowance_banking_enabled', False)) if carbon_enabled else False
     )
+    carbon_price_enabled = bool(settings.get('carbon_price_enabled', False))
+    raw_price_value = settings.get('carbon_price_per_ton', 0.0)
+    try:
+        carbon_price_value = float(raw_price_value)
+    except (TypeError, ValueError):
+        carbon_price_value = 0.0
 
     control_period = settings.get('control_period_years') if carbon_enabled else None
 
@@ -2450,6 +2605,15 @@ def _build_run_summary(settings: Mapping[str, Any], *, config_label: str) -> lis
             )
             control_period = carbon_cfg.get('control_period_years') if carbon_enabled else control_period
 
+        price_cfg = modules.get('carbon_price')
+        if isinstance(price_cfg, Mapping):
+            carbon_price_enabled = bool(price_cfg.get('enabled', carbon_price_enabled))
+            candidate_price = price_cfg.get('price_per_ton', price_cfg.get('price'))
+            try:
+                carbon_price_value = float(candidate_price)
+            except (TypeError, ValueError):
+                pass
+
         dispatch_cfg = modules.get('electricity_dispatch')
         incentives_cfg = modules.get('incentives')
         outputs_cfg = modules.get('outputs')
@@ -2457,6 +2621,16 @@ def _build_run_summary(settings: Mapping[str, Any], *, config_label: str) -> lis
         dispatch_cfg = None
         incentives_cfg = None
         outputs_cfg = None
+
+    if carbon_price_enabled:
+        carbon_enabled = False
+        enable_floor = False
+        enable_ccr = False
+        ccr1_enabled = False
+        ccr2_enabled = False
+        banking_enabled = False
+        control_period = None
+
     if not carbon_enabled:
         control_display = 'Not applicable'
     elif control_period is None:
@@ -2473,6 +2647,11 @@ def _build_run_summary(settings: Mapping[str, Any], *, config_label: str) -> lis
         ('CCR tranche 1', _bool_label(ccr1_enabled)),
         ('CCR tranche 2', _bool_label(ccr2_enabled)),
         ('Allowance banking enabled', _bool_label(banking_enabled)),
+        ('Carbon price enabled', _bool_label(carbon_price_enabled)),
+        (
+            'Carbon price ($/ton)',
+            f'{carbon_price_value:,.2f}' if carbon_price_enabled else 'Not applicable',
+        ),
         ('Control period length', control_display),
     ]
 
@@ -2884,6 +3063,8 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
         ccr2_enabled=False,
         banking_enabled=False,
         control_period_years=None,
+        price_enabled=False,
+        price_per_ton=0.0,
     )
     dispatch_settings = DispatchModuleSettings(
         enabled=False,
@@ -3048,6 +3229,8 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
                 'ccr2_enabled': bool(carbon_settings.ccr2_enabled),
                 'allowance_banking_enabled': bool(carbon_settings.banking_enabled),
                 'control_period_years': carbon_settings.control_period_years,
+                'carbon_price_enabled': bool(carbon_settings.price_enabled),
+                'carbon_price_per_ton': float(carbon_settings.price_per_ton),
                 'dispatch_use_network': bool(
                     dispatch_settings.enabled and dispatch_settings.mode == 'network'
                 ),
@@ -3204,6 +3387,12 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
                 ),
                 control_period_years=inputs_for_run.get(
                     'control_period_years', carbon_settings.control_period_years
+                ),
+                carbon_price_enabled=inputs_for_run.get(
+                    'carbon_price_enabled', carbon_settings.price_enabled
+                ),
+                carbon_price_per_ton=inputs_for_run.get(
+                    'carbon_price_per_ton', carbon_settings.price_per_ton
                 ),
                 dispatch_use_network=bool(
                     inputs_for_run.get('dispatch_use_network', dispatch_use_network)

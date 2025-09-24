@@ -101,7 +101,21 @@ def test_engine_matches_dispatch_when_policy_disabled():
         assert annual.loc[year, "available_allowances"] == pytest.approx(emissions)
         assert annual.loc[year, "allowances_total"] == pytest.approx(emissions)
         assert not bool(annual.loc[year, "finalized"])
-        assert not bool(annual.loc[year, "shortage_flag"])
+    assert not bool(annual.loc[year, "shortage_flag"])
+
+
+def test_engine_applies_carbon_price_when_policy_disabled():
+    years = [2045]
+    policy_df = pd.DataFrame({"year": years, "policy_enabled": False})
+    frames = _frames_with_policy(years, policy_df)
+
+    outputs = run_end_to_end_from_frames(frames, years=years, carbon_price=47.5)
+
+    annual = outputs.annual.set_index("year")
+    assert annual.loc[years[0], "p_co2"] == pytest.approx(47.5)
+    assert annual.loc[years[0], "available_allowances"] == pytest.approx(
+        annual.loc[years[0], "emissions_tons"]
+    )
 
 
 def test_policy_disabled_with_minimal_inputs():

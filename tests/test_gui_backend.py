@@ -112,6 +112,33 @@ def test_backend_policy_toggle_affects_price():
     _cleanup_temp_dir(disabled)
 
 
+def test_backend_carbon_price_module_overrides_cap():
+    config = _baseline_config()
+    frames = _frames_for_years([2025])
+
+    module_config = {'carbon_price': {'enabled': True, 'price_per_ton': 37.5}}
+    result = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2025,
+        frames=frames,
+        carbon_policy_enabled=True,
+        module_config=module_config,
+    )
+
+    assert 'error' not in result
+    annual = result['annual']
+    price = float(annual.loc[annual['year'] == 2025, 'p_co2'].iloc[0])
+    assert price == pytest.approx(37.5)
+
+    modules = result['module_config']
+    assert modules['carbon_policy']['enabled'] is False
+    assert modules['carbon_price']['enabled'] is True
+    assert modules['carbon_price']['price_per_ton'] == pytest.approx(37.5)
+
+    _cleanup_temp_dir(result)
+
+
 def test_backend_disabled_toggle_propagates_flags(monkeypatch):
     real_runner = importlib.import_module("engine.run_loop").run_end_to_end_from_frames
     captured: dict[str, object] = {}

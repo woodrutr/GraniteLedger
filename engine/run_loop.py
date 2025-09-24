@@ -813,6 +813,7 @@ def run_fixed_point_from_frames(
     _ensure_pandas()
 
     frames_obj = Frames.coerce(frames)
+
     policy_spec = frames_obj.policy()
     policy = policy_spec.to_policy()
     years_sequence = _coerce_years(policy, years)
@@ -1049,6 +1050,7 @@ def run_end_to_end_from_frames(
     enable_ccr: bool = True,
     price_cap: float = 1000.0,
     use_network: bool = False,
+    carbon_price: Mapping[Any, float] | float | None = None,
     progress_cb: ProgressCallback | None = None,
 ) -> EngineOutputs:
     """Run the integrated dispatch and allowance engine returning structured outputs.
@@ -1059,6 +1061,60 @@ def run_end_to_end_from_frames(
     """
 
     _ensure_pandas()
+
+    carbon_price_map: dict[Any, float] = {}
+    default_carbon_price: float | None = None
+    if isinstance(carbon_price, Mapping):
+        for key, raw_val in carbon_price.items():
+            try:
+                price_val = float(raw_val)
+            except (TypeError, ValueError):
+                continue
+            if isinstance(key, str):
+                token = key.strip()
+                if not token:
+                    continue
+                try:
+                    normalized_key: Any = int(token)
+                except (TypeError, ValueError):
+                    normalized_key = token
+            else:
+                normalized_key = key
+            carbon_price_map[normalized_key] = price_val
+    elif carbon_price is not None:
+        try:
+            default_carbon_price = float(carbon_price)
+        except (TypeError, ValueError):
+            default_carbon_price = None
+
+    def _price_for_period(period: Any) -> float:
+        if not carbon_price_map and default_carbon_price is None:
+            return 0.0
+        if period in carbon_price_map:
+            return float(carbon_price_map[period])
+        normalized_candidates: list[Any] = []
+        if isinstance(period, str):
+            token = period.strip()
+            if token:
+                normalized_candidates.append(token)
+                try:
+                    normalized_candidates.append(int(token))
+                except (TypeError, ValueError):
+                    pass
+        else:
+            normalized_candidates.append(period)
+            try:
+                normalized_candidates.append(int(period))
+            except (TypeError, ValueError):
+                pass
+        for candidate in normalized_candidates:
+            if candidate in carbon_price_map:
+                return float(carbon_price_map[candidate])
+        if default_carbon_price is not None:
+            return float(default_carbon_price)
+        if carbon_price_map:
+            return float(next(iter(carbon_price_map.values())))
+        return 0.0
 
     frames_obj = Frames.coerce(frames)
     policy_spec = frames_obj.policy()
@@ -1102,11 +1158,12 @@ def run_end_to_end_from_frames(
             )
 
         if not policy_enabled_global:
-            dispatch_result = dispatch_solver(year, 0.0)
+            price_for_year = _price_for_period(year)
+            dispatch_result = dispatch_solver(year, price_for_year)
             emissions = _extract_emissions(dispatch_result)
             summary_disabled: dict[str, object] = {
                 'year': year,
-                'p_co2': 0.0,
+                'p_co2': float(price_for_year),
                 'available_allowances': float(emissions),
                 'allowances_total': float(emissions),
                 'bank_prev': 0.0,
@@ -1136,7 +1193,7 @@ def run_end_to_end_from_frames(
                         "index": idx,
                         "total_years": total_years,
                         "shortage": False,
-                        "price": 0.0,
+                        "price": float(price_for_year),
                         "iterations": 0,
                     },
                 )
