@@ -1,8 +1,6 @@
 """Streamlit interface for running BlueSky policy simulations.
 
-The interface lazily resolves heavy optional dependencies such as :mod:`pandas`
-so command-line environments without the GUI stack can still import the module
-and report clear error messages.
+The GUI assumes that core dependencies such as :mod:`pandas` are installed.
 """
 
 from __future__ import annotations
@@ -17,7 +15,9 @@ from collections.abc import Iterable, Mapping
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, TypeVar, cast
+from typing import Any, Callable, TypeVar
+
+import pandas as pd
 
 try:
     import tomllib
@@ -39,68 +39,26 @@ if importlib.util.find_spec('streamlit') is not None:  # pragma: no cover - opti
 else:  # pragma: no cover - optional dependency
     st = None  # type: ignore[assignment]
 
-_PANDAS_MODULE: Any | None
-_PANDAS_IMPORT_ERROR: ModuleNotFoundError | None
-
-try:  # pragma: no cover - optional dependency
-    import pandas as pd  # type: ignore[import-not-found]
-except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency
-    pd = cast(Any, None)
-    _PANDAS_MODULE = None
-    _PANDAS_IMPORT_ERROR = exc
-else:  # pragma: no cover - optional dependency
-    _PANDAS_MODULE = pd
-    _PANDAS_IMPORT_ERROR = None
-
 try:  # pragma: no cover - optional dependency
     from engine.run_loop import run_end_to_end_from_frames as _RUN_END_TO_END
 except ModuleNotFoundError:  # pragma: no cover - optional dependency
     _RUN_END_TO_END = None
 
-try:  # pragma: no cover - optional dependency
-    from io_loader import Frames as _FRAMES_CLASS
-except ModuleNotFoundError:  # pragma: no cover - optional dependency
-    _FRAMES_CLASS = None
-
-if TYPE_CHECKING:  # pragma: no cover - type-checking only
-    from io_loader import Frames as FramesType
-else:
-    FramesType = Any
-
-
-PANDAS_REQUIRED_MESSAGE = (
-    'pandas is required to run the policy simulator UI. '
-    'Install it with `pip install -r requirements.txt` before launching Streamlit.'
-)
-
+from io_loader import Frames as FramesType
 STREAMLIT_REQUIRED_MESSAGE = (
     'streamlit is required to run the policy simulator UI. Install streamlit to continue.'
 )
 
-
-def _ensure_pandas():
-    """Return the pandas module or raise an informative error."""
-
-    if _PANDAS_MODULE is None:
-        if _PANDAS_IMPORT_ERROR is not None:
-            raise ModuleNotFoundError(PANDAS_REQUIRED_MESSAGE) from _PANDAS_IMPORT_ERROR
-        raise ModuleNotFoundError(PANDAS_REQUIRED_MESSAGE)
-    return _PANDAS_MODULE
-
-
-def _ensure_frames_class() -> type[FramesType]:
-    """Return the :class:`Frames` class, validating optional dependencies."""
-
-    if _FRAMES_CLASS is None:
-        raise ModuleNotFoundError(PANDAS_REQUIRED_MESSAGE)
-    return cast('type[FramesType]', _FRAMES_CLASS)
+ENGINE_RUNNER_REQUIRED_MESSAGE = (
+    'engine.run_loop.run_end_to_end_from_frames is required to run the policy simulator UI.'
+)
 
 
 def _ensure_engine_runner():
     """Return the network runner callable used to solve the market model."""
 
     if _RUN_END_TO_END is None:
-        raise ModuleNotFoundError(PANDAS_REQUIRED_MESSAGE)
+        raise ModuleNotFoundError(ENGINE_RUNNER_REQUIRED_MESSAGE)
     return _RUN_END_TO_END
 
 
@@ -112,19 +70,6 @@ def _ensure_streamlit() -> None:
 
 
 LOGGER = logging.getLogger(__name__)
-
-
-def _handle_missing_pandas(error: ModuleNotFoundError) -> None:
-    """Report a missing pandas dependency in the most helpful way available."""
-
-    message = PANDAS_REQUIRED_MESSAGE
-    LOGGER.error('pandas is not available for the policy simulator UI', exc_info=error)
-    if st is None:
-        raise ModuleNotFoundError(message) from error
-
-    st.error(message)
-    st.caption('Install it with `pip install -r requirements.txt` before launching Streamlit.')
-    st.stop()
 
 DEFAULT_CONFIG_PATH = Path(PROJECT_ROOT, 'src', 'common', 'run_config.toml')
 _DEFAULT_LOAD_MWH = 1_000_000.0
@@ -1059,7 +1004,6 @@ def _build_policy_frame(
 ) -> pd.DataFrame:
     """Construct the policy frame consumed by :class:`io_loader.Frames`."""
 
-    pd = _ensure_pandas()
     years_list = sorted(int(year) for year in years)
     if not years_list:
         raise ValueError('No years supplied for policy frame')
@@ -1178,7 +1122,6 @@ def _build_policy_frame(
 
 
 def _default_units() -> pd.DataFrame:
-    pd = _ensure_pandas()
 
     data = [
         {
@@ -1219,7 +1162,6 @@ def _default_units() -> pd.DataFrame:
 
 
 def _default_fuels() -> pd.DataFrame:
-    pd = _ensure_pandas()
 
     return pd.DataFrame(
         [
@@ -1231,7 +1173,6 @@ def _default_fuels() -> pd.DataFrame:
 
 
 def _default_transmission() -> pd.DataFrame:
-    pd = _ensure_pandas()
 
     return pd.DataFrame(columns=['from_region', 'to_region', 'limit_mw'])
 
@@ -1242,8 +1183,7 @@ def _build_default_frames(
     carbon_policy_enabled: bool = True,
     banking_enabled: bool = True,
 ) -> FramesType:
-    pd = _ensure_pandas()
-    frames_cls = _ensure_frames_class()
+    frames_cls = FramesType
 
     demand_records = [
         {'year': int(year), 'region': 'default', 'demand_mwh': float(_DEFAULT_LOAD_MWH)}
@@ -1266,7 +1206,6 @@ def _ensure_years_in_demand(frames: FramesType, years: Iterable[int]) -> FramesT
     if not years:
         return frames
 
-    pd = _ensure_pandas()
     demand = frames.demand()
     if demand.empty:
         raise ValueError('Demand frame is empty; cannot infer loads for requested years')
@@ -1303,7 +1242,6 @@ def _read_uploaded_dataframe(uploaded_file: Any | None) -> pd.DataFrame | None:
     if uploaded_file is None:
         return None
 
-    pd = _ensure_pandas()
     try:
         if hasattr(uploaded_file, 'getvalue'):
             raw = uploaded_file.getvalue()
@@ -1356,7 +1294,6 @@ def _render_demand_controls(
     years: Iterable[int],
 ) -> tuple[FramesType, list[str], list[str]]:  # pragma: no cover - UI helper
     _ensure_streamlit()
-    pd = _ensure_pandas()
 
     notes: list[str] = []
     errors: list[str] = []
@@ -1491,7 +1428,6 @@ def _render_demand_controls(
 
 def _render_units_controls(frames_obj: FramesType) -> tuple[FramesType, list[str], list[str]]:  # pragma: no cover - UI helper
     _ensure_streamlit()
-    pd = _ensure_pandas()
 
     notes: list[str] = []
     errors: list[str] = []
@@ -1644,7 +1580,6 @@ def _render_units_controls(frames_obj: FramesType) -> tuple[FramesType, list[str
 
 def _render_fuels_controls(frames_obj: FramesType) -> tuple[FramesType, list[str], list[str]]:  # pragma: no cover - UI helper
     _ensure_streamlit()
-    pd = _ensure_pandas()
 
     notes: list[str] = []
     errors: list[str] = []
@@ -1739,7 +1674,6 @@ def _render_transmission_controls(
     frames_obj: FramesType,
 ) -> tuple[FramesType, list[str], list[str]]:  # pragma: no cover - UI helper
     _ensure_streamlit()
-    pd = _ensure_pandas()
 
     notes: list[str] = []
     errors: list[str] = []
@@ -1881,9 +1815,8 @@ def run_policy_simulation(
     except Exception as exc:
         return {'error': f'Invalid year selection: {exc}'}
 
+    frames_cls = FramesType
     try:
-        _ensure_pandas()
-        frames_cls = _ensure_frames_class()
         runner = _ensure_engine_runner()
     except ModuleNotFoundError as exc:
         return {'error': str(exc)}
@@ -2164,11 +2097,6 @@ def _render_results(result: dict[str, Any]) -> None:  # pragma: no cover - UI re
 
 def main() -> None:  # pragma: no cover - Streamlit entry point
     _ensure_streamlit()
-    try:
-        _ensure_pandas()
-    except ModuleNotFoundError as exc:  # pragma: no cover - dependency missing at runtime
-        _handle_missing_pandas(exc)
-        return
     st.set_page_config(page_title='BlueSky Policy Simulator', layout='wide')
     st.title('BlueSky Policy Simulator')
     st.write('Upload a run configuration and execute the annual allowance market engine.')
@@ -2298,7 +2226,10 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
         if assumption_errors:
             st.warning('Resolve the highlighted assumption issues before running the simulation.')
     else:
-        st.info('Default assumption tables are unavailable. Install pandas to edit inputs through the GUI.')
+        st.info(
+            'Default assumption tables are unavailable due to a previous error. '
+            'Resolve the issue above to edit inputs through the GUI.'
+        )
 
     execute_run = False
     run_inputs: dict[str, Any] | None = None
