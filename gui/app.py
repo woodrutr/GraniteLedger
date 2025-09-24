@@ -425,11 +425,96 @@ def _render_general_config_section(
     if start_default > end_default:
         start_default, end_default = end_default, start_default
 
-    if year_min == year_max:
+    slider_min_default = min(2025, year_min, start_default, end_default)
+    slider_max_default = max(2030, year_max, start_default, end_default)
+
+    if st is not None:
+        config_state_key = 'general_config_active_label'
+        if st.session_state.get(config_state_key) != config_label:
+            st.session_state[config_state_key] = config_label
+            for reset_key in (
+                'general_year_range_min_text',
+                'general_year_range_max_text',
+                'general_year_range_min_numeric',
+                'general_year_range_max_numeric',
+                'general_regions',
+            ):
+                st.session_state.pop(reset_key, None)
+
+        min_numeric_key = 'general_year_range_min_numeric'
+        max_numeric_key = 'general_year_range_max_numeric'
+        st.session_state.setdefault(min_numeric_key, int(slider_min_default))
+        st.session_state.setdefault(max_numeric_key, int(slider_max_default))
+        st.session_state.setdefault('general_year_range_min_text', str(st.session_state[min_numeric_key]))
+        st.session_state.setdefault('general_year_range_max_text', str(st.session_state[max_numeric_key]))
+
+        def _parse_year_input(raw_value: Any, fallback: int, *, state_key: str) -> int:
+            text = str(raw_value).strip()
+            if not text:
+                st.session_state[state_key] = str(int(fallback))
+                return int(fallback)
+            try:
+                value = int(text)
+            except (TypeError, ValueError):
+                st.session_state[state_key] = str(int(fallback))
+                return int(fallback)
+            else:
+                st.session_state[state_key] = str(value)
+                return value
+
+        slider_min_raw = st.session_state.get(
+            'general_year_range_min_text',
+            str(st.session_state[min_numeric_key]),
+        )
+        slider_max_raw = st.session_state.get(
+            'general_year_range_max_text',
+            str(st.session_state[max_numeric_key]),
+        )
+
+        slider_min_value = _parse_year_input(
+            slider_min_raw,
+            st.session_state[min_numeric_key],
+            state_key='general_year_range_min_text',
+        )
+        slider_max_value = _parse_year_input(
+            slider_max_raw,
+            st.session_state[max_numeric_key],
+            state_key='general_year_range_max_text',
+        )
+        st.session_state[min_numeric_key] = slider_min_value
+        st.session_state[max_numeric_key] = slider_max_value
+
+        if slider_min_value > slider_max_value:
+            slider_min_value, slider_max_value = slider_max_value, slider_min_value
+            st.session_state[min_numeric_key] = slider_min_value
+            st.session_state[max_numeric_key] = slider_max_value
+            st.session_state['general_year_range_min_text'] = str(slider_min_value)
+            st.session_state['general_year_range_max_text'] = str(slider_max_value)
+
+        min_col, slider_col, max_col = container.columns([1, 4, 1])
+        min_col.text_input('Start year', key='general_year_range_min_text')
+        max_col.text_input('End year', key='general_year_range_max_text')
+    else:  # pragma: no cover - streamlit unavailable
+        slider_min_value = slider_min_default
+        slider_max_value = slider_max_default
+        slider_col = container
+
+    if slider_min_value > slider_max_value:
+        slider_min_value, slider_max_value = slider_max_value, slider_min_value
+        if st is not None:
+            st.session_state[min_numeric_key] = slider_min_value
+            st.session_state[max_numeric_key] = slider_max_value
+
+    start_default = max(slider_min_value, min(slider_max_value, start_default))
+    end_default = max(slider_min_value, min(slider_max_value, end_default))
+    if start_default > end_default:
+        start_default, end_default = end_default, start_default
+
+    if slider_min_value == slider_max_value:
         start_year = int(
-            container.number_input(
+            slider_col.number_input(
                 'Simulation year',
-                value=int(year_min),
+                value=int(slider_min_value),
                 step=1,
                 format='%d',
                 key='general_year_single',
@@ -437,10 +522,10 @@ def _render_general_config_section(
         )
         end_year = start_year
     else:
-        start_year_val, end_year_val = container.slider(
+        start_year_val, end_year_val = slider_col.slider(
             'Simulation years',
-            min_value=int(year_min),
-            max_value=int(year_max),
+            min_value=int(slider_min_value),
+            max_value=int(slider_max_value),
             value=(int(start_default), int(end_default)),
             key='general_year_range',
         )
@@ -448,24 +533,62 @@ def _render_general_config_section(
         end_year = int(end_year_val)
 
     region_options = _regions_from_config(base_config)
-    region_labels = [str(region) for region in region_options]
+    default_region_values = list(range(1, 26))
+    available_region_values: list[int | str] = []
+    seen_region_labels: set[str] = set()
+
+    for region_value in (*default_region_values, *region_options):
+        label = str(region_value).strip()
+        if not label:
+            continue
+        if label in seen_region_labels:
+            continue
+        seen_region_labels.add(label)
+        if isinstance(region_value, bool):
+            available_region_values.append(int(region_value))
+        elif isinstance(region_value, (int, float)):
+            available_region_values.append(int(region_value))
+        else:
+            available_region_values.append(region_value)
+
+    region_labels = ['All'] + [str(value) for value in available_region_values]
+    default_region_labels = [
+        label
+        for label in (str(entry).strip() for entry in region_options)
+        if label
+    ]
+    default_selection = default_region_labels or ['All']
     selected_regions_raw = container.multiselect(
         'Regions',
         options=region_labels,
-        default=region_labels,
+        default=default_selection,
         key='general_regions',
     )
-    selected_regions: list[int | str] = []
-    for entry in selected_regions_raw:
-        text = str(entry).strip()
-        if not text:
-            continue
-        try:
-            selected_regions.append(int(text))
-        except (TypeError, ValueError):
-            selected_regions.append(text)
+
+    label_to_value: dict[str, int | str] = {
+        str(value): value for value in available_region_values
+    }
+    selected_regions: list[int | str]
+    if 'All' in selected_regions_raw or not selected_regions_raw:
+        selected_regions = list(available_region_values)
+    else:
+        selected_regions = []
+        for entry in selected_regions_raw:
+            if entry == 'All':
+                continue
+            value = label_to_value.get(entry)
+            if value is None:
+                text = str(entry).strip()
+                if not text:
+                    continue
+                try:
+                    value = int(text)
+                except ValueError:
+                    value = text
+            if value not in selected_regions:
+                selected_regions.append(value)
     if not selected_regions:
-        selected_regions = region_options
+        selected_regions = list(available_region_values)
 
     run_config = copy.deepcopy(base_config)
     run_config['start_year'] = start_year
