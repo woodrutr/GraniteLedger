@@ -382,10 +382,10 @@ def _regions_from_config(config: Mapping[str, Any]) -> list[int | str]:
     return regions
 
 
-def _normalize_region_labels(
-    selected_labels: Iterable[str],
-    previous_clean_selection: Iterable[str] | None,
-) -> list[str]:
+    def _normalize_region_labels(
+        selected_labels: Iterable[str],
+        previous_clean_selection: Iterable[str] | None,
+    ) -> list[str]:
     """Return the cleaned region label selection for the multiselect widget."""
 
     normalized = [str(entry) for entry in selected_labels]
@@ -399,14 +399,14 @@ def _normalize_region_labels(
 
 
 
-def _render_general_config_section(
-    container: Any,
-    *,
-    default_source: Any,
-    default_label: str,
-    default_config: Mapping[str, Any],
-) -> GeneralConfigResult:
-def render_general_config(container, default_config, default_label="default_config.toml"):
+    def _render_general_config_section(
+        container: Any,
+        *,
+        default_source: Any,
+        default_label: str,
+        default_config: Mapping[str, Any],
+    ) -> GeneralConfigResult:
+    def render_general_config(container, default_config, default_label="default_config.toml"):
     """Render general configuration controls and return the selected settings."""
 
     # --- Load Base Config ---
