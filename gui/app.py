@@ -793,14 +793,18 @@ def _render_general_config_section(
         selected_years=selected_years,
         regions=selected_regions,
     )
-
-
 # -------------------------
 # Carbon UI
 # -------------------------
 def _render_carbon_policy_section(
     container: Any,
     run_config: dict[str, Any],
+) -> None:
+    """Render the carbon policy section wrapper."""
+    # You can decide whether to call render_carbon_module_controls here
+    render_carbon_module_controls(run_config, container)
+
+
 def render_carbon_module_controls(run_config: dict[str, Any], container) -> CarbonModuleSettings:
     """Render the carbon policy module controls."""
 
