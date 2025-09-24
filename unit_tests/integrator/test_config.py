@@ -17,6 +17,7 @@ except ModuleNotFoundError:  # pragma: no cover - Python < 3.11 fallback
         ) from exc
 
 from main.definitions import PROJECT_ROOT
+from src.common.utilities import get_downloads_directory
 
 logger = getLogger(__name__)
 
@@ -119,6 +120,9 @@ def test_run_mode_combo_methods(monkeypatch):
     monkeypatch.setitem(sys.modules, 'main', main_module)
 
     app_module = importlib.import_module('app')
+    dash_app_module = importlib.import_module('gui.dash_app')
+
+    downloads_root = get_downloads_directory()
 
     recorded = []
 
@@ -145,16 +149,18 @@ def test_run_mode_combo_methods(monkeypatch):
         settings = FakeConfigRunner(args.op_mode)
         recorded.append((mode, settings.run_method))
 
-    monkeypatch.setattr(app_module, 'app_main', fake_app_main)
+    monkeypatch.setattr(dash_app_module, 'app_main', fake_app_main)
 
     message, progress = app_module.run_mode(1, 'gs-combo')
     assert recorded[-1] == ('gs-combo', 'run_gs')
-    assert message == 'gs-combo mode has finished running. See results in output/gs-combo.'
+    assert message == f'gs-combo mode has finished running. See results in {downloads_root}.'
     assert progress == 100
 
     message, progress = app_module.run_mode(2, 'unified-combo')
     assert recorded[-1] == ('unified-combo', 'run_unified')
-    assert message == 'unified-combo mode has finished running. See results in output/unified-combo.'
+    assert message == (
+        f'unified-combo mode has finished running. See results in {downloads_root}.'
+    )
     assert progress == 100
 
     sys.modules.pop('app', None)
