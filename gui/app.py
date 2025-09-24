@@ -461,146 +461,147 @@ def _render_general_config_section(
     if start_default > end_default:
         start_default, end_default = end_default, start_default
 
-# Hard clamp slider bounds to 2025–2050
-slider_min_default = 2025
-slider_max_default = 2050
+        # Hard clamp slider bounds to 2025–2050
+        slider_min_default = 2025
+        slider_max_default = 2050
 
-def _sanitize_year_range(raw_min: Any, raw_max: Any, *, fallback: tuple[int, int]) -> tuple[int, int]:
-    """Clamp and sanitize year range values to [2025, 2050]."""
-    fallback_min, fallback_max = fallback
-    candidate_min = _coerce_year(raw_min, fallback_min)
-    candidate_max = _coerce_year(raw_max, fallback_max)
-    candidate_min = max(slider_min_default, min(slider_max_default, candidate_min))
-    candidate_max = max(slider_min_default, min(slider_max_default, candidate_max))
-    if candidate_min > candidate_max:
-        candidate_min, candidate_max = candidate_max, candidate_min
-    return int(candidate_min), int(candidate_max)
+        def _sanitize_year_range(raw_min: Any, raw_max: Any, *, fallback: tuple[int, int]) -> tuple[int, int]:
+            """Clamp and sanitize year range values to [2025, 2050]."""
+            fallback_min, fallback_max = fallback
+            candidate_min = _coerce_year(raw_min, fallback_min)
+            candidate_max = _coerce_year(raw_max, fallback_max)
+            candidate_min = max(slider_min_default, min(slider_max_default, candidate_min))
+            candidate_max = max(slider_min_default, min(slider_max_default, candidate_max))
+            if candidate_min > candidate_max:
+                candidate_min, candidate_max = candidate_max, candidate_min
+            return int(candidate_min), int(candidate_max)
 
-# Initial defaults
-slider_min_value = start_default
-slider_max_value = end_default
-slider_bounds = (slider_min_default, slider_max_default)
+        # Initial defaults
+        slider_min_value = start_default
+        slider_max_value = end_default
+        slider_bounds = (slider_min_default, slider_max_default)
 
-# Session keys
-slider_key = 'general_year_range_slider'
-bounds_state_key = 'general_year_range_slider_bounds'
-min_numeric_key = 'general_year_range_min_numeric'
-max_numeric_key = 'general_year_range_max_numeric'
-start_input_key = 'general_year_range_min_text'
-end_input_key = 'general_year_range_max_text'
-sync_source_key = 'general_year_range_sync_source'
-slider_default_state = (slider_min_value, slider_max_value)
+        # Session keys
+        slider_key = 'general_year_range_slider'
+        bounds_state_key = 'general_year_range_slider_bounds'
+        min_numeric_key = 'general_year_range_min_numeric'
+        max_numeric_key = 'general_year_range_max_numeric'
+        start_input_key = 'general_year_range_min_text'
+        end_input_key = 'general_year_range_max_text'
+        sync_source_key = 'general_year_range_sync_source'
+        slider_default_state = (slider_min_value, slider_max_value)
 
-if st is not None:
-    config_state_key = 'general_config_active_label'
-    if (
-        st.session_state.get(config_state_key) != config_label
-        or st.session_state.get(bounds_state_key) != slider_bounds
-    ):
-        st.session_state[config_state_key] = config_label
-        for reset_key in (
-            start_input_key,
-            end_input_key,
-            min_numeric_key,
-            max_numeric_key,
-            'general_regions',
-            _GENERAL_REGIONS_NORMALIZED_KEY,
-            slider_key,
-            bounds_state_key,
-            sync_source_key,
-        ):
-            st.session_state.pop(reset_key, None)
+        if st is not None:
+            config_state_key = 'general_config_active_label'
+            if (
+                st.session_state.get(config_state_key) != config_label
+                or st.session_state.get(bounds_state_key) != slider_bounds
+            ):
+                st.session_state[config_state_key] = config_label
+                for reset_key in (
+                    start_input_key,
+                    end_input_key,
+                    min_numeric_key,
+                    max_numeric_key,
+                    'general_regions',
+                    _GENERAL_REGIONS_NORMALIZED_KEY,
+                    slider_key,
+                    bounds_state_key,
+                    sync_source_key,
+                ):
+                    st.session_state.pop(reset_key, None)
 
-    st.session_state.setdefault(bounds_state_key, slider_bounds)
-    st.session_state[bounds_state_key] = slider_bounds
-    st.session_state.setdefault(slider_key, slider_default_state)
-    st.session_state.setdefault(min_numeric_key, slider_default_state[0])
-    st.session_state.setdefault(max_numeric_key, slider_default_state[1])
-    st.session_state.setdefault(start_input_key, str(slider_default_state[0]))
-    st.session_state.setdefault(end_input_key, str(slider_default_state[1]))
-    st.session_state.setdefault(sync_source_key, None)
+            st.session_state.setdefault(bounds_state_key, slider_bounds)
+            st.session_state[bounds_state_key] = slider_bounds
+            st.session_state.setdefault(slider_key, slider_default_state)
+            st.session_state.setdefault(min_numeric_key, slider_default_state[0])
+            st.session_state.setdefault(max_numeric_key, slider_default_state[1])
+            st.session_state.setdefault(start_input_key, str(slider_default_state[0]))
+            st.session_state.setdefault(end_input_key, str(slider_default_state[1]))
+            st.session_state.setdefault(sync_source_key, None)
 
-    # Sync slider state
-    raw_slider_state = st.session_state.get(slider_key, slider_default_state)
-    if not (isinstance(raw_slider_state, (tuple, list)) and len(raw_slider_state) == 2):
-        raw_slider_state = slider_default_state
-    slider_state = _sanitize_year_range(raw_slider_state[0], raw_slider_state[1], fallback=slider_default_state)
-    if tuple(raw_slider_state) != slider_state:
-        st.session_state[slider_key] = slider_state
+            # Sync slider state
+            raw_slider_state = st.session_state.get(slider_key, slider_default_state)
+            if not (isinstance(raw_slider_state, (tuple, list)) and len(raw_slider_state) == 2):
+                raw_slider_state = slider_default_state
+            slider_state = _sanitize_year_range(raw_slider_state[0], raw_slider_state[1], fallback=slider_default_state)
+            if tuple(raw_slider_state) != slider_state:
+                st.session_state[slider_key] = slider_state
 
-    # Sync numeric state
-    numeric_state_raw = (
-        st.session_state.get(min_numeric_key, slider_state[0]),
-        st.session_state.get(max_numeric_key, slider_state[1]),
-    )
-    numeric_state = _sanitize_year_range(numeric_state_raw[0], numeric_state_raw[1], fallback=slider_state)
-    if numeric_state != numeric_state_raw:
-        st.session_state[min_numeric_key] = numeric_state[0]
-        st.session_state[max_numeric_key] = numeric_state[1]
-    slider_state = numeric_state
+            # Sync numeric state
+            numeric_state_raw = (
+                st.session_state.get(min_numeric_key, slider_state[0]),
+                st.session_state.get(max_numeric_key, slider_state[1]),
+            )
+            numeric_state = _sanitize_year_range(numeric_state_raw[0], numeric_state_raw[1], fallback=slider_state)
+            if numeric_state != numeric_state_raw:
+                st.session_state[min_numeric_key] = numeric_state[0]
+                st.session_state[max_numeric_key] = numeric_state[1]
+            slider_state = numeric_state
 
-    # Sync text boxes
-    start_text_value = str(slider_state[0])
-    end_text_value = str(slider_state[1])
-    st.session_state[start_input_key] = start_text_value
-    st.session_state[end_input_key] = end_text_value
+            # Sync text boxes
+            start_text_value = str(slider_state[0])
+            end_text_value = str(slider_state[1])
+            st.session_state[start_input_key] = start_text_value
+            st.session_state[end_input_key] = end_text_value
 
-    start_text_default = start_text_value
-    end_text_default = end_text_value
-else:
-    slider_state = slider_default_state
-    start_text_default = str(slider_state[0])
-    end_text_default = str(slider_state[1])
+            start_text_default = start_text_value
+            end_text_default = end_text_value
+        else:
+            slider_state = slider_default_state
+            start_text_default = str(slider_state[0])
+            end_text_default = str(slider_state[1])
 
-# Text boxes (clamped)
-if hasattr(container, 'text_input'):
-    if hasattr(container, 'columns'):
-        start_col, end_col = container.columns(2)
-    else:
-        start_col = container
-        end_col = container
-    start_text_raw = start_col.text_input('Start year', value=start_text_default, key=start_input_key if st else None)
-    end_text_raw = end_col.text_input('End year', value=end_text_default, key=end_input_key if st else None)
-else:
-    start_text_raw = start_text_default
-    end_text_raw = end_text_default
+        # Text boxes (clamped)
+        if hasattr(container, 'text_input'):
+            if hasattr(container, 'columns'):
+                start_col, end_col = container.columns(2)
+            else:
+                start_col = container
+                end_col = container
+            start_text_raw = start_col.text_input('Start year', value=start_text_default, key=start_input_key if st else None)
+            end_text_raw = end_col.text_input('End year', value=end_text_default, key=end_input_key if st else None)
+        else:
+            start_text_raw = start_text_default
+            end_text_raw = end_text_default
 
-# Clamp text input results
-start_numeric, end_numeric = _sanitize_year_range(start_text_raw, end_text_raw, fallback=slider_state)
-slider_state = (start_numeric, end_numeric)
+        # Clamp text input results
+        start_numeric, end_numeric = _sanitize_year_range(start_text_raw, end_text_raw, fallback=slider_state)
+        slider_state = (start_numeric, end_numeric)
 
-# Slider widget
-slider_kwargs: dict[str, Any] = {
-    'min_value': slider_min_default,
-    'max_value': slider_max_default,
-    'value': slider_state,
-    'step': 1,
-    'format': '%d',
-}
-if st is not None:
-    slider_kwargs['key'] = slider_key
+        # Slider widget
+        slider_kwargs: dict[str, Any] = {
+            'min_value': slider_min_default,
+            'max_value': slider_max_default,
+            'value': slider_state,
+            'step': 1,
+            'format': '%d',
+        }
+        if st is not None:
+            slider_kwargs['key'] = slider_key
 
-if hasattr(container, 'slider'):
-    slider_value = container.slider('Run years', **slider_kwargs)
-    if isinstance(slider_value, tuple):
-        slider_min_value, slider_max_value = slider_value
-    else:
-        slider_min_value = slider_value
-        slider_max_value = slider_value
-else:
-    slider_min_value, slider_max_value = slider_state
+        if hasattr(container, 'slider'):
+            slider_value = container.slider('Run years', **slider_kwargs)
+            if isinstance(slider_value, tuple):
+                slider_min_value, slider_max_value = slider_value
+            else:
+                slider_min_value = slider_value
+                slider_max_value = slider_value
+        else:
+            slider_min_value, slider_max_value = slider_state
 
-# Final sanitize
-slider_min_value, slider_max_value = _sanitize_year_range(slider_min_value, slider_max_value, fallback=slider_state)
-final_slider_state = (slider_min_value, slider_max_value)
+        # Final sanitize
+        slider_min_value, slider_max_value = _sanitize_year_range(slider_min_value, slider_max_value, fallback=slider_state)
+        final_slider_state = (slider_min_value, slider_max_value)
 
-if st is not None:
-    st.session_state[min_numeric_key] = slider_min_value
-    st.session_state[max_numeric_key] = slider_max_value
-    st.session_state[slider_key] = final_slider_state
+        if st is not None:
+            st.session_state[min_numeric_key] = slider_min_value
+            st.session_state[max_numeric_key] = slider_max_value
+            st.session_state[slider_key] = final_slider_state
 
-start_year = slider_min_value
-end_year = slider_max_value
+        start_year = slider_min_value
+        end_year = slider_max_value
+
 
     region_options = _regions_from_config(base_config)
     default_region_values = list(range(1, 26))
