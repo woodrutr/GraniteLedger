@@ -1011,6 +1011,7 @@ def _render_incentives_section(
     production_limit_col = 'Limit (MWh)'
     investment_credit_col = 'Credit ($/MW)'
     investment_limit_col = 'Limit (MW)'
+    selection_column = 'Apply credit'
 
     def _build_editor_rows(
         entries: list[dict[str, Any]],
@@ -1019,11 +1020,13 @@ def _render_incentives_section(
         limit_key: str,
         credit_label: str,
         limit_label: str,
+        selection_label: str,
     ) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         for entry in entries:
             rows.append(
                 {
+                    selection_label: True,
                     'Technology': entry['technology'],
                     'Years': str(entry['year']),
                     credit_label: entry.get(credit_key),
@@ -1033,7 +1036,15 @@ def _render_incentives_section(
         seen = {str(row.get('Technology')) for row in rows if row.get('Technology')}
         for label in technology_labels:
             if label not in seen:
-                rows.append({'Technology': label, 'Years': '', credit_label: None, limit_label: None})
+                rows.append(
+                    {
+                        selection_label: False,
+                        'Technology': label,
+                        'Years': '',
+                        credit_label: None,
+                        limit_label: None,
+                    }
+                )
         rows.sort(
             key=lambda row: (
                 str(row.get('Technology', '')).lower(),
@@ -1048,6 +1059,7 @@ def _render_incentives_section(
         limit_key='limit_mwh',
         credit_label=production_credit_col,
         limit_label=production_limit_col,
+        selection_label=selection_column,
     )
     investment_rows_default = _build_editor_rows(
         existing_investment_entries,
@@ -1055,6 +1067,7 @@ def _render_incentives_section(
         limit_key='limit_mw',
         credit_label=investment_credit_col,
         limit_label=investment_limit_col,
+        selection_label=selection_column,
     )
 
     available_years = _simulation_years_from_config(run_config)
@@ -1069,10 +1082,15 @@ def _render_incentives_section(
         limit_config_key: str,
         context_label: str,
         valid_years: set[int],
+        selection_column: str | None = None,
     ) -> tuple[list[dict[str, Any]], list[str]]:
         results: dict[tuple[int, int], dict[str, Any]] = {}
         messages: list[str] = []
         for index, row in enumerate(rows, start=1):
+            if selection_column and selection_column in row:
+                include_row = _coerce_bool_flag(row.get(selection_column), default=False)
+                if not include_row:
+                    continue
             technology_value = row.get('Technology')
             technology_label = (
                 str(technology_value).strip() if technology_value not in (None, '') else ''
@@ -1160,7 +1178,22 @@ def _render_incentives_section(
             num_rows='dynamic',
             use_container_width=True,
             key='incentives_production_editor',
+            column_order=[
+                selection_column,
+                'Technology',
+                'Years',
+                production_credit_col,
+                production_limit_col,
+            ],
             column_config={
+                selection_column: st.column_config.CheckboxColumn(
+                    'Apply credit',
+                    help=(
+                        'Select to apply production tax credits for this technology. '
+                        'Unchecked technologies default to $0 incentives across all years.'
+                    ),
+                    default=False,
+                ),
                 'Technology': st.column_config.SelectboxColumn(
                     'Technology', options=technology_labels
                 ),
@@ -1190,7 +1223,22 @@ def _render_incentives_section(
             num_rows='dynamic',
             use_container_width=True,
             key='incentives_investment_editor',
+            column_order=[
+                selection_column,
+                'Technology',
+                'Years',
+                investment_credit_col,
+                investment_limit_col,
+            ],
             column_config={
+                selection_column: st.column_config.CheckboxColumn(
+                    'Apply credit',
+                    help=(
+                        'Select to apply investment tax credits for this technology. '
+                        'Unchecked technologies default to $0 incentives across all years.'
+                    ),
+                    default=False,
+                ),
                 'Technology': st.column_config.SelectboxColumn(
                     'Technology', options=technology_labels
                 ),
@@ -1222,6 +1270,7 @@ def _render_incentives_section(
                 limit_config_key='limit_mwh',
                 context_label='Production tax credit',
                 valid_years=valid_years_set,
+                selection_column=selection_column,
             )
             investment_entries, investment_messages = _rows_to_config_entries(
                 _data_editor_records(investment_editor_value),
@@ -1231,6 +1280,7 @@ def _render_incentives_section(
                 limit_config_key='limit_mw',
                 context_label='Investment tax credit',
                 valid_years=valid_years_set,
+                selection_column=selection_column,
             )
             validation_messages.extend(production_messages)
             validation_messages.extend(investment_messages)
