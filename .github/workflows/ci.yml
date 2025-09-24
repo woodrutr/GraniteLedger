@@ -26,62 +26,156 @@ jobs:
           path: |
             ./.pip
             ./.pytest_cache
-          key: ${{ runner.os }}-pip-py312-${{ hashFiles('requirements.txt', 'pyproject.toml') }}
+          key: ${{ runner.os }}-pip-py312-${{ hashFiles('requirements.txt', 'pyproject.toml', 'environment.yml') }}
           restore-keys: |
             ${{ runner.os }}-pip-
 
+      - name: Detect Conda environment file
+        id: detect-env
+        shell: bash
+        run: |
+          if [[ -f environment.yml ]]; then
+            echo "use_conda=true" >> "$GITHUB_OUTPUT"
+            echo "env_file=environment.yml" >> "$GITHUB_OUTPUT"
+            echo "env_name=bluesky" >> "$GITHUB_OUTPUT"
+          elif [[ -f environment.yaml ]]; then
+            echo "use_conda=true" >> "$GITHUB_OUTPUT"
+            echo "env_file=environment.yaml" >> "$GITHUB_OUTPUT"
+            echo "env_name=bluesky" >> "$GITHUB_OUTPUT"
+          else
+            echo "use_conda=false" >> "$GITHUB_OUTPUT"
+            echo "env_name=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Conda
+        if: steps.detect-env.outputs.use_conda == 'true'
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          activate-environment: ${{ steps.detect-env.outputs.env_name }}
+          environment-file: ${{ steps.detect-env.outputs.env_file }}
+          auto-activate-base: false
+          python-version: 3.12
+
       - name: Set up Python
+        if: steps.detect-env.outputs.use_conda != 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
       - name: Verify dependency manifest
+        shell: python
         run: |
-          python - <<'PY'
-          import subprocess
           import sys
           from pathlib import Path
 
-          repo_files = subprocess.check_output(['git', 'ls-files'], text=True).splitlines()
-          candidates: list[Path] = []
-          for name in repo_files:
-              path = Path(name)
-              lower_name = path.name.lower()
-              if lower_name.startswith('requirements') and lower_name.endswith('.txt'):
-                  candidates.append(path)
-              elif lower_name in {'environment.yml', 'environment.yaml'}:
-                  candidates.append(path)
+          repo_root = Path('.')
+          requirements = {
+              path
+              for path in repo_root.rglob('requirements*.txt')
+              if path.name.lower().startswith('requirements')
+          }
+          expected = {Path('requirements.txt')}
 
-          allowed = {Path('requirements.txt')}
-          extras = [str(path) for path in candidates if path not in allowed]
+          missing = expected - requirements
+          extras = sorted(str(path) for path in requirements - expected)
 
-          if extras:
-              print('Unexpected dependency manifests detected:')
-              for path in extras:
-                  print(f'- {path}')
+          if missing or extras:
+              if missing:
+                  print('Missing expected requirements manifest:', ', '.join(str(path) for path in missing))
+              if extras:
+                  print('Unexpected requirements manifests detected:')
+                  for path in extras:
+                      print(f'- {path}')
               sys.exit(1)
-          PY
 
       - name: Install dependencies
+        shell: bash
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
+          if [[ "${{ steps.detect-env.outputs.use_conda }}" == "true" ]]; then
+            conda run --no-capture-output -n ${{ steps.detect-env.outputs.env_name }} python -m pip install --upgrade pip
+            conda run --no-capture-output -n ${{ steps.detect-env.outputs.env_name }} python -m pip install -r requirements.txt
+          else
+            python -m pip install --upgrade pip
+            python -m pip install -r requirements.txt
+          fi
 
       - name: Show Python diagnostics
+        shell: bash
         run: |
-          python --version
-          pip --version
+          if [[ "${{ steps.detect-env.outputs.use_conda }}" == "true" ]]; then
+            conda run --no-capture-output -n ${{ steps.detect-env.outputs.env_name }} python --version
+            conda run --no-capture-output -n ${{ steps.detect-env.outputs.env_name }} pip --version
+          else
+            python --version
+            pip --version
+          fi
 
       - name: Ruff lint
-        run: ruff check .
+        shell: bash
+        run: |
+          if [[ "${{ steps.detect-env.outputs.use_conda }}" == "true" ]]; then
+            conda run --no-capture-output -n ${{ steps.detect-env.outputs.env_name }} ruff check .
+          else
+            ruff check .
+          fi
 
       - name: Mypy
-        run: mypy --config-file pyproject.toml
+        shell: bash
+        run: |
+          if [[ "${{ steps.detect-env.outputs.use_conda }}" == "true" ]]; then
+            conda run --no-capture-output -n ${{ steps.detect-env.outputs.env_name }} mypy --config-file pyproject.toml
+          else
+            mypy --config-file pyproject.toml
+          fi
+
+      - name: Update Conda
+        if: steps.detect-env.outputs.use_conda == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          conda install -n base -c defaults conda -y
+          version_output=$(conda --version)
+          echo "$version_output"
+          CONDA_VERSION="${version_output##* }" python3 - <<'PY'
+import os
+import sys
+
+
+def normalize(raw_version: str) -> tuple[int, int, int]:
+    parts: list[int] = []
+    for piece in raw_version.split('.'):
+        digits = ''.join(ch for ch in piece if ch.isdigit())
+        if not digits:
+            break
+        parts.append(int(digits))
+    if not parts:
+        raise ValueError(f"Unable to parse version from '{raw_version}'")
+    while len(parts) < 3:
+        parts.append(0)
+    return tuple(parts[:3])
+
+
+required = (26, 3, 0)
+current = normalize(os.environ["CONDA_VERSION"])
+
+if current < required:
+    sys.stderr.write(
+        f"Conda {os.environ['CONDA_VERSION']} is less than required 26.3.0\n"
+    )
+    sys.exit(1)
+PY
 
       - name: Pytest
+        shell: bash
         env:
-          PYTHONWARNINGS: error
-        run: pytest -q --cov=engine --cov=dispatch --cov=policy --cov-report=term-missing --cov-fail-under=80
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+        run: |
+          export PYTHONWARNINGS=default
+          if [[ "${{ steps.detect-env.outputs.use_conda }}" == "true" ]]; then
+            CONDA_NO_PLUGINS=true conda run --no-capture-output -n ${{ steps.detect-env.outputs.env_name }} pytest -q --cov=engine --cov=dispatch --cov=policy --cov-report=term-missing --cov-fail-under=80 -p pytest_cov
+          else
+            pytest -q --cov=engine --cov=dispatch --cov=policy --cov-report=term-missing --cov-fail-under=80 -p pytest_cov
+          fi
 
       - name: Upload coverage report
         if: always()
@@ -90,29 +184,3 @@ jobs:
           name: coverage-report
           path: .coverage
           if-no-files-found: ignore
-
-# Option B (Conda with pinned Python 3.11) sample configuration:
-# jobs:
-#   lint-test:
-#     runs-on: ubuntu-latest
-#     steps:
-#       - uses: actions/checkout@v4
-#       - uses: conda-incubator/setup-miniconda@v3
-#         with:
-#           python-version: 3.11
-#           environment-name: bluesky-env
-#           auto-activate-base: false
-#       - name: Install Conda dependencies
-#         env:
-#           CONDA_NO_PLUGINS: true
-#         run: |
-#           conda install -n bluesky-env -y pandas pytest pytest-cov --solver=classic
-#       - name: Run checks with Conda
-#         env:
-#           PYTHONWARNINGS: error
-#         run: |
-#           conda run --no-capture-output -n bluesky-env ruff check .
-#           conda run --no-capture-output -n bluesky-env mypy --config-file pyproject.toml
-#           conda run --no-capture-output -n bluesky-env pytest -q \
-#             --cov=engine --cov=dispatch --cov=policy \
-#             --cov-report=term-missing --cov-fail-under=80
