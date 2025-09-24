@@ -460,10 +460,10 @@ def _render_general_config_section(
     end_default = max(year_min, min(year_max, end_default))
     if start_default > end_default:
         start_default, end_default = end_default, start_default
+        
+    slider_min_default = max(2025, int(min(year_min, start_default, end_default)))
+    slider_max_default = min(2050, int(max(year_max, start_default, end_default)))
 
-    slider_min_default = int(min(2025, year_min, start_default, end_default))
-    slider_max_default = int(max(2050, year_max, start_default, end_default))
-    )
 
     def _sanitize_year_range(raw_min: Any, raw_max: Any, *, fallback: tuple[int, int]) -> tuple[int, int]:
         fallback_min, fallback_max = fallback
