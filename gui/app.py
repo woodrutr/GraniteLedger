@@ -120,8 +120,9 @@ SIDEBAR_STYLE = """
 
 _download_directory_fallback_used = False
 
-
 from __future__ import annotations
+
+_download_directory_fallback_used = False
 
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -129,6 +130,7 @@ from typing import Any, Mapping, Iterable
 
 
 @dataclass
+
 class GeneralConfigResult:
     """Container for user-selected general configuration settings."""
 
