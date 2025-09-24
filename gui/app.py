@@ -3008,6 +3008,8 @@ def main() -> None:
         banking_enabled=False,
         control_period_years=None,
         price_per_ton=0.0,
+        price_schedule={},
+        errors=[],
     )
     dispatch_settings = DispatchModuleSettings(
         enabled=False,
