@@ -427,34 +427,29 @@ slider_bounds = (slider_min_default, slider_max_default)
 if slider_min_value > slider_max_value:
     slider_min_value, slider_max_value = slider_max_value, slider_min_value
 
-slider_key = 'general_year_range_slider'
-bounds_state_key = 'general_year_range_slider_bounds'
-config_state_key = 'general_config_active_label'
-start_input_key = 'general_year_range_min_text'
-end_input_key = 'general_year_range_max_text'
-
-slider_default_state = (slider_min_value, slider_max_value)
-slider_state = slider_default_state
-start_text_default = str(slider_state[0])
-end_text_default = str(slider_state[1])
-
 if st is not None:
+    config_state_key = 'general_config_active_label'
+    bounds_state_key = 'general_year_range_slider_bounds'
     if (
         st.session_state.get(config_state_key) != config_label
         or st.session_state.get(bounds_state_key) != slider_bounds
     ):
         st.session_state[config_state_key] = config_label
-        st.session_state[bounds_state_key] = slider_bounds
-        st.session_state[slider_key] = slider_default_state
-        st.session_state[start_input_key] = str(slider_default_state[0])
-        st.session_state[end_input_key] = str(slider_default_state[1])
+        # Reset stale session state keys when the active configuration
+        # changes or when the slider bounds shift.
         for reset_key in (
+            'general_year_range_min_text',
+            'general_year_range_max_text',
             'general_year_range_min_numeric',
             'general_year_range_max_numeric',
             'general_regions',
             _GENERAL_REGIONS_NORMALIZED_KEY,
+            'general_year_range_slider',
+            bounds_state_key,
         ):
             st.session_state.pop(reset_key, None)
+    st.session_state[bounds_state_key] = slider_bounds
+
 
     slider_state = st.session_state.get(slider_key, slider_default_state)
     if not isinstance(slider_state, (tuple, list)) or len(slider_state) != 2:
@@ -700,7 +695,7 @@ if st is not None:
     if st is not None:  # pragma: no branch - streamlit only when available
         st.session_state[_GENERAL_REGIONS_NORMALIZED_KEY] = list(selected_regions_raw)
 
-all_selected = 'All' in selected_regions_raw
+    all_selected = 'All' in selected_regions_raw
 
     label_to_value: dict[str, int | str] = {
         str(value): value for value in available_region_values
