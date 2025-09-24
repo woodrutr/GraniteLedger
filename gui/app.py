@@ -760,10 +760,10 @@ def _render_general_config_section(
 def _render_carbon_policy_section(
     container: Any,
     run_config: dict[str, Any],
-) -> None:
+) -> CarbonModuleSettings:
     """Render the carbon policy section wrapper."""
     # You can decide whether to call render_carbon_module_controls here
-    render_carbon_module_controls(run_config, container)
+    return render_carbon_module_controls(run_config, container)
 
 
 def render_carbon_module_controls(run_config: dict[str, Any], container) -> CarbonModuleSettings:
