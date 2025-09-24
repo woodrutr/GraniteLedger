@@ -17,6 +17,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable, TypeVar
+import sys
 
 import pandas as pd
 
@@ -45,7 +46,11 @@ try:  # pragma: no cover - optional dependency
 except ModuleNotFoundError:  # pragma: no cover - optional dependency
     _RUN_END_TO_END = None
 
-from io_loader import Frames
+try:
+    from io_loader import Frames
+except ModuleNotFoundError:  # pragma: no cover - fallback when root not on sys.path
+    sys.path.append(str(PROJECT_ROOT))
+    from io_loader import Frames
 
 FramesType = Frames
 
