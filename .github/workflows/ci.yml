@@ -128,21 +128,49 @@ jobs:
             mypy --config-file pyproject.toml
           fi
 
-      - name: Upgrade Conda
+      - name: Update Conda
         if: steps.detect-env.outputs.use_conda == 'true'
         shell: bash
-        env:
-          PYTHONWARNINGS: default
         run: |
-          conda install -n base -c conda-forge "conda>=26.3.0,<27.0.0" -y
-          conda --version
+          set -euo pipefail
+          conda install -n base -c defaults conda -y
+          version_output=$(conda --version)
+          echo "$version_output"
+          CONDA_VERSION="${version_output##* }" python3 - <<'PY'
+import os
+import sys
+
+
+def normalize(raw_version: str) -> tuple[int, int, int]:
+    parts: list[int] = []
+    for piece in raw_version.split('.'):
+        digits = ''.join(ch for ch in piece if ch.isdigit())
+        if not digits:
+            break
+        parts.append(int(digits))
+    if not parts:
+        raise ValueError(f"Unable to parse version from '{raw_version}'")
+    while len(parts) < 3:
+        parts.append(0)
+    return tuple(parts[:3])
+
+
+required = (26, 3, 0)
+current = normalize(os.environ["CONDA_VERSION"])
+
+if current < required:
+    sys.stderr.write(
+        f"Conda {os.environ['CONDA_VERSION']} is less than required 26.3.0\n"
+    )
+    sys.exit(1)
+PY
 
       - name: Pytest
         shell: bash
         env:
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
-          PYTHONWARNINGS: default
         run: |
+          export PYTHONWARNINGS=default
           if [[ "${{ steps.detect-env.outputs.use_conda }}" == "true" ]]; then
             CONDA_NO_PLUGINS=true conda run --no-capture-output -n ${{ steps.detect-env.outputs.env_name }} pytest -q --cov=engine --cov=dispatch --cov=policy --cov-report=term-missing --cov-fail-under=80 -p pytest_cov
           else
