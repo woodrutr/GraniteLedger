@@ -14,6 +14,7 @@ from dash.exceptions import PreventUpdate
 import dash_bootstrap_components as dbc
 import ast
 from collections.abc import Mapping
+import logging
 import subprocess
 from pathlib import Path
 import os
@@ -21,10 +22,49 @@ import tomli
 import tomlkit
 import sys
 
+LOGGER = logging.getLogger(__name__)
+
 # Import python modules
 from main.definitions import PROJECT_ROOT
 from main import app_main
-from src.common.utilities import get_downloads_directory
+from pathlib import Path
+import logging
+
+LOGGER = logging.getLogger(__name__)
+
+try:  # pragma: no cover - optional dependency shim
+    from src.common.utilities import get_downloads_directory as _get_downloads_directory
+except ImportError:  # pragma: no cover - compatibility fallback
+    _get_downloads_directory = None
+
+_download_directory_fallback_used = False
+
+
+def _fallback_downloads_directory(app_subdir: str = 'GraniteLedger') -> Path:
+    """Return a reasonable downloads location when utilities helper is unavailable."""
+    base_path = Path.home() / 'Downloads'
+    if app_subdir:
+        base_path = base_path / app_subdir
+    base_path.mkdir(parents=True, exist_ok=True)
+    return base_path
+
+
+def get_downloads_directory(app_subdir: str = 'GraniteLedger') -> Path:
+    """Resolve the downloads directory, falling back to the user's home folder."""
+    global _download_directory_fallback_used
+
+    if _get_downloads_directory is not None:
+        try:
+            return _get_downloads_directory(app_subdir=app_subdir)
+        except Exception:  # pragma: no cover - defensive: ensure GUI still loads
+            LOGGER.warning('Falling back to home Downloads directory; helper raised an error.')
+    if not _download_directory_fallback_used:
+        LOGGER.warning(
+            'get_downloads_directory is unavailable; using ~/Downloads for model outputs.'
+        )
+        _download_directory_fallback_used = True
+    return _fallback_downloads_directory(app_subdir)
+
 from src.models.electricity.scripts.technology_metadata import (
     get_technology_label,
     resolve_technology_key,
