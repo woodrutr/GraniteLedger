@@ -120,13 +120,7 @@ SIDEBAR_STYLE = """
 
 _download_directory_fallback_used = False
 
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Mapping, Iterable
-
-
 @dataclass
-
 class GeneralConfigResult:
     """Container for user-selected general configuration settings."""
 
@@ -368,6 +362,27 @@ class DispatchModuleSettings:
     mode: str
     capacity_expansion: bool
     reserve_margins: bool
+    errors: list[str] = field(default_factory=list)
+
+
+@dataclass
+class IncentivesModuleSettings:
+    """Record of incentives sidebar selections."""
+
+    enabled: bool
+    production_credits: list[dict[str, Any]]
+    investment_credits: list[dict[str, Any]]
+    errors: list[str] = field(default_factory=list)
+
+
+@dataclass
+class OutputsModuleSettings:
+    """Record of outputs sidebar selections."""
+
+    enabled: bool
+    directory: str
+    resolved_path: Path
+    show_csv_downloads: bool
     errors: list[str] = field(default_factory=list)
 
 
