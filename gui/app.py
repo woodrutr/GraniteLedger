@@ -90,6 +90,7 @@ DEFAULT_CONFIG_PATH = Path(PROJECT_ROOT, 'src', 'common', 'run_config.toml')
 _DEFAULT_LOAD_MWH = 1_000_000.0
 _LARGE_ALLOWANCE_SUPPLY = 1e12
 _ALL_REGION_IDENTIFIERS = tuple(range(1, 26))
+_GENERAL_REGIONS_NORMALIZED_KEY = 'general_regions_normalized_selection'
 
 _T = TypeVar('_T')
 
@@ -337,6 +338,23 @@ def _regions_from_config(config: Mapping[str, Any]) -> list[int | str]:
     return regions
 
 
+def _normalize_region_labels(
+    selected_labels: Iterable[str],
+    previous_clean_selection: Iterable[str] | None,
+) -> list[str]:
+    """Return the cleaned region label selection for the multiselect widget."""
+
+    normalized = [str(entry) for entry in selected_labels]
+    if 'All' in normalized and len(normalized) > 1:
+        non_all = [entry for entry in normalized if entry != 'All']
+        previous_tuple = tuple(str(entry) for entry in (previous_clean_selection or ()))
+        if previous_tuple == ('All',) and non_all:
+            return non_all
+        return ['All']
+    return normalized
+
+
+
 def _render_general_config_section(
     container: Any,
     *,
@@ -415,6 +433,7 @@ def _render_general_config_section(
                 'general_year_range_min_numeric',
                 'general_year_range_max_numeric',
                 'general_regions',
+                _GENERAL_REGIONS_NORMALIZED_KEY,
             ):
                 st.session_state.pop(reset_key, None)
 
@@ -472,18 +491,42 @@ def _render_general_config_section(
         if label
     ]
     default_selection = default_region_labels or ['All']
-    selected_regions_raw = container.multiselect(
-        'Regions',
-        options=region_labels,
-        default=default_selection,
-        key='general_regions',
+    if st is not None:  # pragma: no branch - streamlit only when available
+        st.session_state.setdefault(
+            _GENERAL_REGIONS_NORMALIZED_KEY, list(default_selection)
+        )
+        previous_clean_selection_raw = st.session_state.get(
+            _GENERAL_REGIONS_NORMALIZED_KEY, []
+        )
+        if isinstance(previous_clean_selection_raw, (list, tuple)):
+            previous_clean_selection = tuple(
+                str(entry) for entry in previous_clean_selection_raw
+            )
+        elif isinstance(previous_clean_selection_raw, str):
+            previous_clean_selection = (previous_clean_selection_raw,)
+        else:
+            previous_clean_selection = ()
+    else:
+        previous_clean_selection = tuple(default_selection)
+    selected_regions_raw = list(
+        container.multiselect(
+            'Regions',
+            options=region_labels,
+            default=default_selection,
+            key='general_regions',
+        )
     )
 
+    normalized_selection = _normalize_region_labels(
+        selected_regions_raw, previous_clean_selection
+    )
+    if normalized_selection != selected_regions_raw and st is not None:  # pragma: no branch - streamlit only when available
+        st.session_state['general_regions'] = normalized_selection
+    selected_regions_raw = normalized_selection
+    if st is not None:  # pragma: no branch - streamlit only when available
+        st.session_state[_GENERAL_REGIONS_NORMALIZED_KEY] = list(selected_regions_raw)
+
     all_selected = 'All' in selected_regions_raw
-    if all_selected and selected_regions_raw != ['All']:
-        if st is not None:  # pragma: no branch - streamlit only when available
-            st.session_state['general_regions'] = ['All']
-        selected_regions_raw = ['All']
 
     label_to_value: dict[str, int | str] = {
         str(value): value for value in available_region_values
