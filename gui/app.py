@@ -2837,13 +2837,13 @@ def _render_results(result: Mapping[str, Any]) -> None:  # pragma: no cover - UI
         st.caption(f'Temporary files saved to {temp_dir}')
 
 
-def _render_outputs_tab(last_result: Mapping[str, Any] | None) -> None:
-    """Render the sidebar Outputs tab with charts for the latest run."""
+def _render_outputs_panel(last_result: Mapping[str, Any] | None) -> None:
+    """Render the main outputs panel with charts for the latest run."""
 
     _ensure_streamlit()
 
     if not isinstance(last_result, Mapping) or not last_result:
-        st.caption('Run the model to populate this tab with results.')
+        st.caption('Run the model to populate this panel with results.')
         return
 
     _render_results(last_result)
@@ -2915,7 +2915,7 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
         if not isinstance(last_result_mapping, Mapping):
             last_result_mapping = None
 
-        inputs_tab, outputs_tab = st.tabs(['Inputs', 'Outputs'])
+        (inputs_tab,) = st.tabs(['Inputs'])
 
         with inputs_tab:
             general_label, general_expanded = SIDEBAR_SECTIONS[0]
@@ -2971,10 +2971,44 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
             )
             module_errors.extend(outputs_settings.errors)
 
-            run_clicked = st.button('Run Model', type='primary', use_container_width=True)
+            st.divider()
+            inputs_header = st.container()
+            inputs_header.subheader('Assumption overrides')
+            inputs_header.caption('Adjust core assumption tables or upload CSV files to override the defaults.')
+            if frames_for_run is not None:
+                demand_tab, units_tab, fuels_tab, transmission_tab = st.tabs(
+                    ['Demand', 'Units', 'Fuels', 'Transmission']
+                )
+                with demand_tab:
+                    frames_for_run, notes, errors = _render_demand_controls(
+                        frames_for_run, selected_years
+                    )
+                    assumption_notes.extend(notes)
+                    assumption_errors.extend(errors)
+                with units_tab:
+                    frames_for_run, notes, errors = _render_units_controls(frames_for_run)
+                    assumption_notes.extend(notes)
+                    assumption_errors.extend(errors)
+                with fuels_tab:
+                    frames_for_run, notes, errors = _render_fuels_controls(frames_for_run)
+                    assumption_notes.extend(notes)
+                    assumption_errors.extend(errors)
+                with transmission_tab:
+                    frames_for_run, notes, errors = _render_transmission_controls(frames_for_run)
+                    assumption_notes.extend(notes)
+                    assumption_errors.extend(errors)
 
-        with outputs_tab:
-            _render_outputs_tab(last_result_mapping)
+                if assumption_errors:
+                    st.warning(
+                        'Resolve the highlighted assumption issues before running the simulation.'
+                    )
+            else:
+                st.info(
+                    'Default assumption tables are unavailable due to a previous error. '
+                    'Resolve the issue above to edit inputs through the GUI.'
+                )
+
+            run_clicked = st.button('Run Model', type='primary', use_container_width=True)
 
     try:
         selected_years = _select_years(candidate_years, start_year_val, end_year_val)
@@ -2997,37 +3031,6 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
 
     if module_errors:
         st.warning('Resolve the module configuration issues highlighted in the sidebar before running the simulation.')
-
-    if frames_for_run is not None:
-        st.subheader('Assumption overrides')
-        st.caption('Adjust core assumption tables or upload CSV files to override the defaults.')
-        demand_tab, units_tab, fuels_tab, transmission_tab = st.tabs(
-            ['Demand', 'Units', 'Fuels', 'Transmission']
-        )
-        with demand_tab:
-            frames_for_run, notes, errors = _render_demand_controls(frames_for_run, selected_years)
-            assumption_notes.extend(notes)
-            assumption_errors.extend(errors)
-        with units_tab:
-            frames_for_run, notes, errors = _render_units_controls(frames_for_run)
-            assumption_notes.extend(notes)
-            assumption_errors.extend(errors)
-        with fuels_tab:
-            frames_for_run, notes, errors = _render_fuels_controls(frames_for_run)
-            assumption_notes.extend(notes)
-            assumption_errors.extend(errors)
-        with transmission_tab:
-            frames_for_run, notes, errors = _render_transmission_controls(frames_for_run)
-            assumption_notes.extend(notes)
-            assumption_errors.extend(errors)
-
-        if assumption_errors:
-            st.warning('Resolve the highlighted assumption issues before running the simulation.')
-    else:
-        st.info(
-            'Default assumption tables are unavailable due to a previous error. '
-            'Resolve the issue above to edit inputs through the GUI.'
-        )
 
     execute_run = False
     run_inputs: dict[str, Any] | None = None
@@ -3225,13 +3228,18 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
             st.session_state['temp_dirs'] = [str(result['temp_dir'])]
         st.session_state['last_result'] = result
 
+    outputs_container = st.container()
+    with outputs_container:
+        st.subheader('Model outputs')
+        _render_outputs_panel(result)
+
     if isinstance(result, Mapping):
         if 'error' in result:
             st.error(result['error'])
         else:
-            st.info('Open the Outputs tab to review charts and downloads from the most recent run.')
+            st.info('Review the outputs above to explore charts and downloads from the most recent run.')
     else:
-        st.info('Use the Inputs tab to configure and run the simulation.')
+        st.info('Use the inputs panel to configure and run the simulation.')
 
 
 if __name__ == '__main__':  # pragma: no cover - exercised via streamlit runtime
