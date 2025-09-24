@@ -54,6 +54,38 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when root not on sys.
 
 FramesType = Frames
 
+try:  # pragma: no cover - optional dependency shim
+    from src.common.utilities import get_downloads_directory as _get_downloads_directory
+except ImportError:  # pragma: no cover - compatibility fallback
+    _get_downloads_directory = None
+
+_download_directory_fallback_used = False
+
+
+def _fallback_downloads_directory(app_subdir: str = 'GraniteLedger') -> Path:
+    """Return a reasonable downloads location when utilities helper is unavailable."""
+
+    base_path = Path.home() / 'Downloads'
+    if app_subdir:
+        base_path = base_path / app_subdir
+    base_path.mkdir(parents=True, exist_ok=True)
+    return base_path
+
+
+def get_downloads_directory(app_subdir: str = 'GraniteLedger') -> Path:
+    """Resolve the downloads directory, falling back to the user's home folder."""
+
+    global _download_directory_fallback_used
+
+    if _get_downloads_directory is not None:
+        try:
+            return _get_downloads_directory(app_subdir=app_subdir)
+        except Exception:  # pragma: no cover - defensive: ensure GUI still loads
+            LOGGER.warning('Falling back to home Downloads directory; helper raised an error.')
+    if not _download_directory_fallback_used:
+        LOGGER.warning('get_downloads_directory is unavailable; using ~/Downloads for model outputs.')
+        _download_directory_fallback_used = True
+    return _fallback_downloads_directory(app_subdir)
 from src.models.electricity.scripts.technology_metadata import (
     TECH_ID_TO_LABEL,
     get_technology_label,
@@ -172,6 +204,7 @@ class OutputsModuleSettings:
 
     enabled: bool
     directory: str
+    resolved_path: Path
     show_csv_downloads: bool
     errors: list[str] = field(default_factory=list)
 
@@ -1094,6 +1127,8 @@ def _render_outputs_section(
     directory_default = str(defaults.get('directory') or run_config.get('output_name') or 'outputs')
     show_csv_default = bool(defaults.get('show_csv_downloads', True))
 
+    downloads_root = get_downloads_directory()
+
     enabled = container.toggle(
         'Enable output management',
         value=enabled_default,
@@ -1117,6 +1152,9 @@ def _render_outputs_section(
             disabled=not enabled,
             key='outputs_csv',
         )
+
+        resolved_directory = downloads_root if not directory_value else downloads_root / directory_value
+        panel.caption(f'Outputs will be saved to {resolved_directory}')
 
         if enabled and not directory_value:
             message = 'Specify an output directory when the outputs module is enabled.'
@@ -1148,15 +1186,18 @@ def _render_outputs_section(
         show_csv_downloads = False
 
     run_config['output_name'] = directory_value
+    resolved_directory = downloads_root if not directory_value else downloads_root / directory_value
     modules['outputs'] = {
         'enabled': bool(enabled),
         'directory': directory_value,
         'show_csv_downloads': bool(show_csv_downloads),
+        'resolved_path': str(resolved_directory),
     }
 
     return OutputsModuleSettings(
         enabled=bool(enabled),
         directory=directory_value,
+        resolved_path=resolved_directory,
         show_csv_downloads=bool(show_csv_downloads),
         errors=errors,
     )
@@ -2477,13 +2518,21 @@ def _build_run_summary(settings: Mapping[str, Any], *, config_label: str) -> lis
     outputs_enabled = True
     output_directory = settings.get('output_name', 'outputs')
     show_sidebar_downloads = False
+    resolved_output_path: Path | None = None
     if isinstance(outputs_cfg, Mapping):
         outputs_enabled = bool(outputs_cfg.get('enabled', outputs_enabled))
         output_directory = outputs_cfg.get('directory', output_directory)
         show_sidebar_downloads = bool(outputs_cfg.get('show_csv_downloads', show_sidebar_downloads))
+        resolved_entry = outputs_cfg.get('resolved_path')
+        if isinstance(resolved_entry, str):
+            resolved_output_path = Path(resolved_entry)
+
+    if resolved_output_path is None:
+        downloads_root = get_downloads_directory()
+        resolved_output_path = downloads_root if not output_directory else downloads_root / str(output_directory)
 
     summary.append(('Outputs module', _bool_label(outputs_enabled)))
-    summary.append(('Output directory', str(output_directory)))
+    summary.append(('Output directory', str(resolved_output_path)))
     if outputs_enabled:
         summary.append(('Sidebar CSV downloads', _bool_label(show_sidebar_downloads)))
 

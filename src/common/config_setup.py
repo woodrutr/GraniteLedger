@@ -33,7 +33,30 @@ SHORT_TON_TO_METRIC_TON = 0.90718474
 # Import python modules
 from main.definitions import PROJECT_ROOT
 from src.integrator.utilities import create_temporal_mapping
-from src.common.utilities import make_dir
+from src.common import utilities as _common_utilities
+
+make_dir = _common_utilities.make_dir
+
+try:  # pragma: no cover - compatibility for legacy installs
+    _get_downloads_directory = _common_utilities.get_downloads_directory
+except AttributeError:  # pragma: no cover - fallback path
+    _get_downloads_directory = None
+
+
+def _resolve_downloads_directory(app_subdir: str = 'GraniteLedger') -> Path:
+    """Return the configured downloads directory with a compatibility fallback."""
+
+    if _get_downloads_directory is not None:
+        try:
+            return _get_downloads_directory(app_subdir=app_subdir)
+        except Exception:  # pragma: no cover - defensive guard to keep config setup working
+            pass
+
+    base_path = Path.home() / 'Downloads'
+    if app_subdir:
+        base_path = base_path / app_subdir
+    base_path.mkdir(parents=True, exist_ok=True)
+    return base_path
 from src.models.electricity.scripts.technology_metadata import resolve_technology_key
 from src.models.electricity.scripts.incentives import TechnologyIncentives
 
@@ -123,7 +146,8 @@ class Config_settings:
             OUTPUT_ROOT = Path(PROJECT_ROOT, 'unit_tests', 'test_logs')
         else:
             output_folder_name = self._determine_output_folder(config)
-            OUTPUT_ROOT = Path(PROJECT_ROOT / 'output' / output_folder_name)
+            downloads_root = _resolve_downloads_directory()
+            OUTPUT_ROOT = downloads_root / output_folder_name
             OUTPUT_ROOT = self._ensure_unique_output_dir(OUTPUT_ROOT)
         self.OUTPUT_ROOT = OUTPUT_ROOT
         self.output_folder_name = OUTPUT_ROOT.name

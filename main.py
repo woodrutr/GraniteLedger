@@ -99,9 +99,7 @@ def main(settings: Config_settings | None = None):
     runner(settings)
 
     # MAIN - print the output directory once run is finished
-    path_parts = os.path.normpath(settings.OUTPUT_ROOT).split(os.sep)
-    output_name = os.path.join(path_parts[-2], path_parts[-1])
-    print(f'Results located in: {output_name}')
+    print(f'Results located in: {settings.OUTPUT_ROOT}')
 
 
 if __name__ == '__main__':

@@ -14,6 +14,7 @@ from dash.exceptions import PreventUpdate
 import dash_bootstrap_components as dbc
 import ast
 from collections.abc import Mapping
+import logging
 import subprocess
 from pathlib import Path
 import os
@@ -21,9 +22,44 @@ import tomli
 import tomlkit
 import sys
 
+LOGGER = logging.getLogger(__name__)
+
 # Import python modules
 from main.definitions import PROJECT_ROOT
 from main import app_main
+
+try:  # pragma: no cover - compatibility shim for older installations
+    from src.common.utilities import get_downloads_directory as _get_downloads_directory
+except ImportError:  # pragma: no cover - compatibility fallback
+    _get_downloads_directory = None
+
+_download_directory_fallback_used = False
+
+
+def _fallback_downloads_directory(app_subdir: str = 'GraniteLedger') -> Path:
+    """Return a downloads directory path even when utilities helper is absent."""
+
+    base_path = Path.home() / 'Downloads'
+    if app_subdir:
+        base_path = base_path / app_subdir
+    base_path.mkdir(parents=True, exist_ok=True)
+    return base_path
+
+
+def get_downloads_directory(app_subdir: str = 'GraniteLedger') -> Path:
+    """Resolve the downloads directory with a graceful fallback."""
+
+    global _download_directory_fallback_used
+
+    if _get_downloads_directory is not None:
+        try:
+            return _get_downloads_directory(app_subdir=app_subdir)
+        except Exception:  # pragma: no cover - defensive guard for runtime issues
+            LOGGER.warning('Falling back to home Downloads directory; helper raised an error.')
+    if not _download_directory_fallback_used:
+        LOGGER.warning('get_downloads_directory is unavailable; using ~/Downloads for model outputs.')
+        _download_directory_fallback_used = True
+    return _fallback_downloads_directory(app_subdir)
 from src.models.electricity.scripts.technology_metadata import (
     get_technology_label,
     resolve_technology_key,
@@ -589,8 +625,9 @@ def run_mode(n_clicks, selected_mode):
         # run selected mode
         app_main(selected_mode)
 
+        downloads_root = get_downloads_directory()
         return (
-            f"{selected_mode} mode has finished running. See results in output/{selected_mode}.",
+            f"{selected_mode} mode has finished running. See results in {downloads_root}.",
             100,
         )
     except Exception:

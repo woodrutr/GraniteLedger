@@ -1,14 +1,16 @@
-"""
-A gathering of utility functions for dealing with model interconnectivity
-"""
+"""Common utility helpers shared across the GraniteLedger codebase."""
 
 # Import packages
+from __future__ import annotations
+
 from logging import getLogger
 from pathlib import Path
 import logging
 import os
 import pandas as pd
 import argparse
+import re
+from typing import Iterable, Optional
 
 # Establish logger
 logger = getLogger(__name__)
@@ -20,6 +22,78 @@ def make_dir(dir_name):
         os.makedirs(dir_name)
     else:
         logger.info('Asked to make dir that already exists:' + str(dir_name))
+
+
+def _candidate_download_directories(home: Path) -> Iterable[str | Path]:
+    """Return potential download directory locations for the current platform."""
+
+    xdg_env = os.environ.get('XDG_DOWNLOAD_DIR')
+    if xdg_env:
+        yield xdg_env
+
+    config_home = Path(os.environ.get('XDG_CONFIG_HOME', home / '.config'))
+    user_dirs = config_home / 'user-dirs.dirs'
+    if user_dirs.exists():
+        try:
+            content = user_dirs.read_text(encoding='utf-8')
+        except OSError:
+            content = ''
+        pattern = re.compile(r'^XDG_DOWNLOAD_DIR=(?P<value>.*)$', re.MULTILINE)
+        match = pattern.search(content)
+        if match:
+            value = match.group('value').strip().strip('"')
+            if value:
+                yield value
+
+    if os.name == 'nt':
+        user_profile = os.environ.get('USERPROFILE')
+        if user_profile:
+            yield Path(user_profile) / 'Downloads'
+
+    yield home / 'Downloads'
+
+
+def get_downloads_directory(app_subdir: Optional[str] = 'GraniteLedger') -> Path:
+    """Return a writable downloads directory for model outputs.
+
+    The function inspects common environment conventions (such as the XDG
+    configuration on Linux or the USERPROFILE location on Windows) to locate a
+    suitable downloads folder. When ``app_subdir`` is provided, a directory of
+    that name is created inside the downloads folder to keep GraniteLedger
+    outputs organised.
+    """
+
+    home = Path.home()
+
+    for candidate in _candidate_download_directories(home):
+        if not candidate:
+            continue
+
+        expanded = os.path.expandvars(str(candidate))
+        base_path = Path(expanded).expanduser()
+        if not base_path.is_absolute():
+            base_path = (home / base_path).resolve()
+
+        try:
+            base_path.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            continue
+
+        if app_subdir:
+            output_root = base_path / app_subdir
+            try:
+                output_root.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                continue
+            return output_root
+
+        return base_path
+
+    fallback = home
+    if app_subdir:
+        fallback = fallback / app_subdir
+    fallback.mkdir(parents=True, exist_ok=True)
+    return fallback
 
 
 # Logger Setup

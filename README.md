@@ -400,7 +400,7 @@ This should return a description of ```main.py```, as well as the options availa
 python main.py --mode standalone
 ```
 
-By default, results are written to a folder named after the selected mode and a hash of the configuration (for example, `standalone_a1b2c3d4`). You can override this behaviour with the command-line option below or by setting `output_name` in `run_config.toml`:
+By default, results are written to your operating system's **Downloads** directory inside a `GraniteLedger` subfolder. Each run creates a folder named after the selected mode and a hash of the configuration (for example, `~/Downloads/GraniteLedger/standalone_a1b2c3d4`). You can override the folder name with the command-line option below or by setting `output_name` in `run_config.toml`:
 
 ```bash
 python main.py --mode standalone --output-name my_custom_run
@@ -410,7 +410,7 @@ If the specified directory already exists, an incremental suffix (e.g., `_01`) i
 
 If this reports an objective value, you have successfully run the model in standalone!
 
-The file [```main.py```](main.py) processes user options as directed by the configuration file [```run_config.toml```](src/common/run_config.toml) and builds/solves an instance of an integrated (multiple modules) or standalone (single module) model. Any runs initiated from the top level ```main.py``` file will initiate logging and report to output folder. The log file contains (currently very limited) updates on run progress, solver output, etc. The default logging level is INFO. That may be increased by setting the command line argument --debug when running main.py. 
+The file [```main.py```](main.py) processes user options as directed by the configuration file [```run_config.toml```](src/common/run_config.toml) and builds/solves an instance of an integrated (multiple modules) or standalone (single module) model. Any runs initiated from the top level ```main.py``` file will initiate logging and write results to the Downloads location described above. The log file contains (currently very limited) updates on run progress, solver output, etc. The default logging level is INFO. That may be increased by setting the command line argument --debug when running main.py.
 
 It is also possible to set the option for ```default_mode``` in ```run_config.toml```. Then, run ```main.py``` without specifying a mode: 
 
