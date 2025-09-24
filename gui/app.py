@@ -3032,6 +3032,10 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
     execute_run = False
     run_inputs: dict[str, Any] | None = None
     pending_run = st.session_state.get('pending_run')
+    show_confirm_modal = bool(st.session_state.get('show_confirm_modal'))
+    if isinstance(pending_run, Mapping) and not show_confirm_modal:
+        show_confirm_modal = True
+        st.session_state['show_confirm_modal'] = True
 
     if run_clicked:
         if assumption_errors or module_errors:
@@ -3058,34 +3062,51 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
                 'summary': _build_run_summary(run_inputs_payload, config_label=config_label),
             }
             pending_run = st.session_state['pending_run']
+            st.session_state['show_confirm_modal'] = True
+            show_confirm_modal = True
 
-    if isinstance(pending_run, Mapping):
-        confirmation_box = st.warning(
-            'You are about to run the model with the following configuration:'
+    if isinstance(pending_run, Mapping) and show_confirm_modal:
+        streamlit_version = getattr(st, '__version__', '0')
+        use_dialog = False
+        try:
+            major, minor, *_ = streamlit_version.split('.')
+            use_dialog = int(major) > 1 or (int(major) == 1 and int(minor) >= 31)
+        except Exception:
+            use_dialog = hasattr(st, 'dialog')
+        context_manager = (
+            st.dialog('Confirm model run')
+            if use_dialog and hasattr(st, 'dialog')
+            else st.expander('Confirm model run')
         )
-        summary_details = pending_run.get('summary', [])
-        if isinstance(summary_details, list) and summary_details:
-            summary_lines = '\n'.join(
-                f'- **{label}:** {value}' for label, value in summary_details
-            )
-            confirmation_box.markdown(summary_lines)
-        else:
-            confirmation_box.markdown('*No configuration details available.*')
-        confirmation_box.markdown('**Do you want to continue and run the model?**')
-        confirm_col, cancel_col = confirmation_box.columns(2)
-        confirm_clicked = confirm_col.button('Confirm Run', type='primary', key='confirm_run')
-        cancel_clicked = cancel_col.button('Cancel', key='cancel_run')
+        with context_manager:
+            st.markdown('You are about to run the model with the following configuration:')
+            summary_details = pending_run.get('summary', [])
+            if isinstance(summary_details, list) and summary_details:
+                summary_lines = '\n'.join(
+                    f'- **{label}:** {value}' for label, value in summary_details
+                )
+                st.markdown(summary_lines)
+            else:
+                st.markdown('*No configuration details available.*')
+            st.markdown('**Do you want to continue and run the model?**')
+            confirm_col, cancel_col = st.columns(2)
+            confirm_clicked = confirm_col.button('Confirm Run', type='primary', key='confirm_run')
+            cancel_clicked = cancel_col.button('Cancel', key='cancel_run')
 
-        if cancel_clicked:
-            st.session_state.pop('pending_run', None)
-            pending_run = None
-        elif confirm_clicked:
-            pending_params = pending_run.get('params')
-            if isinstance(pending_params, Mapping):
-                run_inputs = dict(pending_params)
-                execute_run = True
-            st.session_state.pop('pending_run', None)
-            pending_run = None
+            if cancel_clicked:
+                st.session_state.pop('pending_run', None)
+                st.session_state['show_confirm_modal'] = False
+                pending_run = None
+                show_confirm_modal = False
+            elif confirm_clicked:
+                pending_params = pending_run.get('params')
+                if isinstance(pending_params, Mapping):
+                    run_inputs = dict(pending_params)
+                    execute_run = True
+                st.session_state.pop('pending_run', None)
+                st.session_state['show_confirm_modal'] = False
+                pending_run = None
+                show_confirm_modal = False
 
     dispatch_use_network = bool(
         dispatch_settings.enabled and dispatch_settings.mode == 'network'
