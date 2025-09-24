@@ -151,6 +151,51 @@ def test_backend_disabled_toggle_propagates_flags(monkeypatch):
     _cleanup_temp_dir(result)
 
 
+def test_backend_dispatch_and_carbon_modules(monkeypatch):
+    real_runner = importlib.import_module("engine.run_loop").run_end_to_end_from_frames
+    captured: dict[str, object] = {}
+
+    def capturing_runner(frames, **kwargs):
+        policy = frames.policy().to_policy()
+        captured["carbon_enabled"] = policy.enabled
+        captured["use_network"] = kwargs.get("use_network")
+        return real_runner(frames, **kwargs)
+
+    monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: capturing_runner)
+
+    config = _baseline_config()
+    frames = _frames_for_years([2025])
+
+    module_config = {
+        "carbon_policy": {"enabled": True, "allowance_banking_enabled": True},
+        "electricity_dispatch": {
+            "enabled": True,
+            "mode": "network",
+            "capacity_expansion": True,
+            "reserve_margins": True,
+        },
+    }
+
+    result = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2025,
+        frames=frames,
+        carbon_policy_enabled=True,
+        dispatch_use_network=True,
+        module_config=module_config,
+    )
+
+    assert "error" not in result
+    assert captured.get("carbon_enabled") is True
+    assert captured.get("use_network") is True
+    dispatch_cfg = result["module_config"]["electricity_dispatch"]
+    assert dispatch_cfg["enabled"] is True
+    assert dispatch_cfg["use_network"] is True
+
+    _cleanup_temp_dir(result)
+
+
 def test_backend_banking_toggle_disables_bank(tmp_path):
     config = _baseline_config()
     frames = _frames_for_years([2025, 2026])
