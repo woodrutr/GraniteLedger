@@ -54,9 +54,6 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when root not on sys.
 
 FramesType = Frames
 
-from pathlib import Path
-import logging
-
 LOGGER = logging.getLogger(__name__)
 
 try:  # pragma: no cover - optional dependency shim
@@ -175,13 +172,219 @@ class CarbonModuleSettings:
     """Record of carbon policy sidebar selections."""
 
     enabled: bool
+    price_enabled: bool
     enable_floor: bool
     enable_ccr: bool
     ccr1_enabled: bool
     ccr2_enabled: bool
     banking_enabled: bool
     control_period_years: int | None
+    price_per_ton: float
+    price_schedule: dict[int, float] = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
+
+
+@dataclass
+class CarbonPolicyConfig:
+    """Normalized carbon allowance policy configuration for engine runs."""
+
+    enabled: bool = True
+    enable_floor: bool = True
+    enable_ccr: bool = True
+    ccr1_enabled: bool = True
+    ccr2_enabled: bool = True
+    allowance_banking_enabled: bool = True
+    control_period_years: int | None = None
+
+    @classmethod
+    def from_mapping(
+        cls,
+        mapping: Mapping[str, Any] | None,
+        *,
+        enabled: bool | None = None,
+        enable_floor: bool | None = None,
+        enable_ccr: bool | None = None,
+        ccr1_enabled: bool | None = None,
+        ccr2_enabled: bool | None = None,
+        allowance_banking_enabled: bool | None = None,
+        control_period_years: int | None = None,
+    ) -> "CarbonPolicyConfig":
+        record = dict(mapping) if isinstance(mapping, Mapping) else {}
+
+        def _coerce_bool(value: Any, default: bool) -> bool:
+            return bool(value) if value is not None else default
+
+        enabled_val = _coerce_bool(enabled, bool(record.get('enabled', True)))
+        enable_floor_val = _coerce_bool(enable_floor, bool(record.get('enable_floor', True)))
+        enable_ccr_val = _coerce_bool(enable_ccr, bool(record.get('enable_ccr', True)))
+        ccr1_val = _coerce_bool(ccr1_enabled, bool(record.get('ccr1_enabled', True)))
+        ccr2_val = _coerce_bool(ccr2_enabled, bool(record.get('ccr2_enabled', True)))
+        banking_val = _coerce_bool(
+            allowance_banking_enabled,
+            bool(record.get('allowance_banking_enabled', True)),
+        )
+
+        control_period_val = _sanitize_control_period(
+            control_period_years
+            if control_period_years is not None
+            else record.get('control_period_years')
+        )
+
+        config = cls(
+            enabled=enabled_val,
+            enable_floor=enable_floor_val,
+            enable_ccr=enable_ccr_val,
+            ccr1_enabled=ccr1_val,
+            ccr2_enabled=ccr2_val,
+            allowance_banking_enabled=banking_val,
+            control_period_years=control_period_val,
+        )
+
+        if not config.enabled:
+            config.disable_cap()
+        elif not config.enable_ccr:
+            config.ccr1_enabled = False
+            config.ccr2_enabled = False
+
+        return config
+
+    def disable_cap(self) -> None:
+        """Disable allowance trading mechanics when the cap is inactive."""
+
+        self.enabled = False
+        self.enable_floor = False
+        self.enable_ccr = False
+        self.ccr1_enabled = False
+        self.ccr2_enabled = False
+        self.allowance_banking_enabled = False
+        self.control_period_years = None
+
+    def disable_for_price(self) -> None:
+        """Disable the cap when an exogenous carbon price is active."""
+
+        self.disable_cap()
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return a serializable dictionary representation."""
+
+        return {
+            'enabled': bool(self.enabled),
+            'enable_floor': bool(self.enable_floor),
+            'enable_ccr': bool(self.enable_ccr),
+            'ccr1_enabled': bool(self.ccr1_enabled),
+            'ccr2_enabled': bool(self.ccr2_enabled),
+            'allowance_banking_enabled': bool(self.allowance_banking_enabled),
+            'control_period_years': self.control_period_years,
+        }
+
+
+@dataclass
+class CarbonPriceConfig:
+    """Normalized carbon price configuration for engine runs."""
+
+    enabled: bool = False
+    price_per_ton: float = 0.0
+    schedule: dict[int, float] = field(default_factory=dict)
+
+    @property
+    def active(self) -> bool:
+        """Return ``True`` when the price should override the cap."""
+
+        return bool(self.enabled and self.schedule)
+
+    @classmethod
+    def from_mapping(
+        cls,
+        mapping: Mapping[str, Any] | None,
+        *,
+        enabled: bool | None = None,
+        value: float | None = None,
+        schedule: Mapping[int, float] | Mapping[str, Any] | None = None,
+        years: Iterable[int] | None = None,
+    ) -> "CarbonPriceConfig":
+        record = dict(mapping) if isinstance(mapping, Mapping) else {}
+
+        enabled_val = bool(enabled) if enabled is not None else bool(record.get('enabled', False))
+        price_raw = value if value is not None else record.get('price_per_ton', record.get('price', 0.0))
+        price_value = _coerce_float(price_raw, default=0.0)
+
+        schedule_map = _normalize_price_schedule(record.get('price_schedule'))
+        if schedule is not None:
+            schedule_map.update(_normalize_price_schedule(schedule))
+
+        if not schedule_map and price_value and years:
+            schedule_map = {int(year): float(price_value) for year in years}
+        else:
+            schedule_map = {int(year): float(val) for year, val in schedule_map.items()}
+
+        config = cls(
+            enabled=bool(enabled_val),
+            price_per_ton=float(price_value),
+            schedule=schedule_map,
+        )
+
+        if not config.active:
+            config.schedule = {}
+            config.price_per_ton = 0.0
+
+        return config
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return a serializable dictionary representation."""
+
+        payload = {
+            'enabled': bool(self.enabled),
+            'price_per_ton': float(self.price_per_ton),
+        }
+        if self.schedule:
+            payload['price_schedule'] = dict(self.schedule)
+        return payload
+
+
+def _sanitize_control_period(value: Any) -> int | None:
+    """Return ``value`` coerced to a positive integer when possible."""
+
+    if value in (None, ''):
+        return None
+    try:
+        period = int(value)
+    except (TypeError, ValueError):
+        return None
+    return period if period > 0 else None
+
+
+def _normalize_price_schedule(value: Any) -> dict[int, float]:
+    """Return a normalized mapping of year to carbon price."""
+
+    schedule: dict[int, float] = {}
+    if isinstance(value, Mapping):
+        for key, raw in value.items():
+            try:
+                year = int(key)
+                price = float(raw)
+            except (TypeError, ValueError):
+                continue
+            schedule[year] = price
+    return schedule
+
+
+def _merge_module_dicts(*sections: Mapping[str, Any] | None) -> dict[str, dict[str, Any]]:
+    """Combine multiple module configuration sections into a copy."""
+
+    merged: dict[str, dict[str, Any]] = {}
+    for section in sections:
+        if not isinstance(section, Mapping):
+            continue
+        for name, settings in section.items():
+            key = str(name)
+            if isinstance(settings, Mapping):
+                existing = merged.get(key, {})
+                combined = dict(existing)
+                combined.update(settings)
+                merged[key] = combined
+            else:
+                merged[key] = {'value': settings}
+    return merged
 
 
 @dataclass
@@ -561,6 +764,7 @@ def _render_carbon_policy_section(
 
     modules = run_config.setdefault('modules', {})
     defaults = modules.get('carbon_policy', {})
+    price_defaults = modules.get('carbon_price', {})
     enabled_default = bool(defaults.get('enabled', True))
     enable_floor_default = bool(defaults.get('enable_floor', True))
     enable_ccr_default = bool(defaults.get('enable_ccr', True))
@@ -574,7 +778,43 @@ def _render_carbon_policy_section(
         control_default = 3
     control_override_default = control_default_raw is not None
 
-    enabled = container.toggle('Enable carbon cap', value=enabled_default, key='carbon_enable')
+    price_enabled_default = bool(price_defaults.get('enabled', False))
+    price_value_raw = price_defaults.get('price_per_ton', price_defaults.get('price', 0.0))
+    price_default = _coerce_float(price_value_raw, default=0.0)
+    price_schedule_default = _normalize_price_schedule(price_defaults.get('price_schedule'))
+
+    def _mark_last_changed(key: str) -> None:
+        try:
+            _ensure_streamlit()
+        except ModuleNotFoundError:  # pragma: no cover - GUI dependency missing
+            return
+        st.session_state['carbon_module_last_changed'] = key
+
+    enabled = container.toggle(
+        'Enable carbon cap',
+        value=enabled_default,
+        key='carbon_enable',
+        on_change=lambda: _mark_last_changed('cap'),
+    )
+    price_enabled = container.toggle(
+        'Enable carbon price',
+        value=price_enabled_default,
+        key='carbon_price_enable',
+        on_change=lambda: _mark_last_changed('price'),
+    )
+
+    last_changed = None
+    if st is not None:  # pragma: no cover - UI path
+        last_changed = st.session_state.get('carbon_module_last_changed')
+    if enabled and price_enabled:
+        if last_changed == 'cap':
+            price_enabled = False
+            if st is not None:  # pragma: no cover - UI path
+                st.session_state['carbon_price_enable'] = False
+        else:
+            enabled = False
+            if st is not None:  # pragma: no cover - UI path
+                st.session_state['carbon_enable'] = False
 
     with _sidebar_panel(container, enabled) as panel:
         enable_floor = panel.checkbox(
@@ -623,6 +863,17 @@ def _render_carbon_policy_section(
             disabled=not (enabled and control_override),
         )
 
+    with _sidebar_panel(container, price_enabled) as price_panel:
+        price_per_ton_value = price_panel.number_input(
+            'Carbon price ($/ton)',
+            min_value=0.0,
+            value=float(price_default if price_default >= 0.0 else 0.0),
+            step=1.0,
+            format='%0.2f',
+            key='carbon_price_value',
+            disabled=not price_enabled,
+        )
+
     control_period_years = int(control_period_value) if enabled and control_override else None
     if not enabled:
         enable_floor = False
@@ -631,6 +882,10 @@ def _render_carbon_policy_section(
         ccr2_enabled = False
         banking_enabled = False
         control_period_years = None
+
+    if not price_enabled:
+        price_per_ton_value = 0.0
+        price_schedule_default = {}
 
     modules['carbon_policy'] = {
         'enabled': bool(enabled),
@@ -642,6 +897,14 @@ def _render_carbon_policy_section(
         'control_period_years': control_period_years,
     }
 
+    price_record: dict[str, Any] = {
+        'enabled': bool(price_enabled),
+        'price_per_ton': float(price_per_ton_value),
+    }
+    if price_schedule_default:
+        price_record['price_schedule'] = dict(price_schedule_default)
+    modules['carbon_price'] = price_record
+
     errors: list[str] = []
     if enabled and not isinstance(run_config.get('allowance_market'), Mapping):
         message = 'Allowance market settings are missing from the configuration.'
@@ -650,12 +913,15 @@ def _render_carbon_policy_section(
 
     return CarbonModuleSettings(
         enabled=bool(enabled),
+        price_enabled=bool(price_enabled),
         enable_floor=bool(enable_floor),
         enable_ccr=bool(enable_ccr),
         ccr1_enabled=bool(ccr1_enabled),
         ccr2_enabled=bool(ccr2_enabled),
         banking_enabled=bool(banking_enabled),
         control_period_years=control_period_years,
+        price_per_ton=float(price_per_ton_value),
+        price_schedule=dict(price_schedule_default),
         errors=errors,
     )
 
@@ -2240,6 +2506,9 @@ def run_policy_simulation(
     ccr2_enabled: bool = True,
     allowance_banking_enabled: bool = True,
     control_period_years: int | None = None,
+    carbon_price_enabled: bool | None = None,
+    carbon_price_value: float | None = None,
+    carbon_price_schedule: Mapping[int, float] | Mapping[str, Any] | None = None,
     dispatch_use_network: bool = False,
     module_config: Mapping[str, Any] | None = None,
     frames: FramesType | Mapping[str, pd.DataFrame] | None = None,
@@ -2257,35 +2526,52 @@ def run_policy_simulation(
     except Exception as exc:  # pragma: no cover - defensive path
         return {'error': f'Unable to load configuration: {exc}'}
 
-    modules_section = config.setdefault('modules', {})
-    merged_modules: dict[str, dict[str, Any]] = {}
-    if isinstance(modules_section, Mapping):
-        for name, settings in modules_section.items():
-            if isinstance(settings, Mapping):
-                merged_modules[str(name)] = dict(settings)
+    config.setdefault('modules', {})
 
-    if isinstance(module_config, Mapping):
-        for name, settings in module_config.items():
-            if isinstance(settings, Mapping):
-                merged_modules[str(name)] = dict(settings)
-            else:
-                merged_modules[str(name)] = {'value': settings}
+    try:
+        base_years = _years_from_config(config)
+        years = _select_years(base_years, start_year, end_year)
+    except Exception as exc:
+        return {'error': f'Invalid year selection: {exc}'}
 
-    carbon_record = merged_modules.setdefault('carbon_policy', {})
-    carbon_record.update(
-        {
-            'enabled': bool(carbon_policy_enabled),
-            'enable_floor': bool(enable_floor),
-            'enable_ccr': bool(enable_ccr),
-            'ccr1_enabled': bool(ccr1_enabled) if enable_ccr else False,
-            'ccr2_enabled': bool(ccr2_enabled) if enable_ccr else False,
-            'allowance_banking_enabled': bool(allowance_banking_enabled),
-            'control_period_years': control_period_years,
-        }
+    merged_modules = _merge_module_dicts(config.get('modules'), module_config)
+
+    carbon_policy_cfg = CarbonPolicyConfig.from_mapping(
+        merged_modules.get('carbon_policy'),
+        enabled=carbon_policy_enabled,
+        enable_floor=enable_floor,
+        enable_ccr=enable_ccr,
+        ccr1_enabled=ccr1_enabled,
+        ccr2_enabled=ccr2_enabled,
+        allowance_banking_enabled=allowance_banking_enabled,
+        control_period_years=control_period_years,
     )
-    if not enable_ccr:
-        carbon_record['ccr1_enabled'] = False
-        carbon_record['ccr2_enabled'] = False
+
+    price_cfg = CarbonPriceConfig.from_mapping(
+        merged_modules.get('carbon_price'),
+        enabled=carbon_price_enabled,
+        value=carbon_price_value,
+        schedule=carbon_price_schedule,
+        years=years,
+    )
+
+    if price_cfg.active:
+        carbon_policy_cfg.disable_for_price()
+
+    carbon_policy_enabled = carbon_policy_cfg.enabled
+    enable_floor = carbon_policy_cfg.enable_floor
+    enable_ccr = carbon_policy_cfg.enable_ccr
+    ccr1_enabled = carbon_policy_cfg.ccr1_enabled
+    ccr2_enabled = carbon_policy_cfg.ccr2_enabled
+    allowance_banking_enabled = carbon_policy_cfg.allowance_banking_enabled
+    control_period_years = carbon_policy_cfg.control_period_years
+
+    price_value = float(price_cfg.price_per_ton)
+    schedule_map = dict(price_cfg.schedule)
+    price_active = price_cfg.active
+
+    merged_modules['carbon_policy'] = carbon_policy_cfg.as_dict()
+    merged_modules['carbon_price'] = price_cfg.as_dict()
 
     dispatch_record = merged_modules.setdefault('electricity_dispatch', {})
     dispatch_enabled = bool(dispatch_record.get('enabled')) or bool(dispatch_use_network)
@@ -2296,33 +2582,11 @@ def run_policy_simulation(
         'network' if current_mode == 'network' else 'single'
     )
 
-    try:
-        base_years = _years_from_config(config)
-        years = _select_years(base_years, start_year, end_year)
-    except Exception as exc:
-        return {'error': f'Invalid year selection: {exc}'}
-
     frames_cls = FramesType
     try:
         runner = _ensure_engine_runner()
     except ModuleNotFoundError as exc:
         return {'error': str(exc)}
-
-    if not carbon_policy_enabled:
-        enable_floor = False
-        enable_ccr = False
-        allowance_banking_enabled = False
-
-    carbon_record['enabled'] = bool(carbon_policy_enabled)
-    carbon_record['enable_floor'] = bool(enable_floor)
-    carbon_record['enable_ccr'] = bool(enable_ccr)
-    carbon_record['ccr1_enabled'] = bool(ccr1_enabled) if enable_ccr else False
-    carbon_record['ccr2_enabled'] = bool(ccr2_enabled) if enable_ccr else False
-    carbon_record['allowance_banking_enabled'] = bool(allowance_banking_enabled)
-    carbon_record['control_period_years'] = control_period_years
-    if not enable_ccr:
-        carbon_record['ccr1_enabled'] = False
-        carbon_record['ccr2_enabled'] = False
 
     try:
         frames_obj = (
@@ -2357,6 +2621,7 @@ def run_policy_simulation(
             enable_floor=bool(enable_floor),
             enable_ccr=bool(enable_ccr),
             use_network=bool(dispatch_use_network),
+            carbon_price_schedule=schedule_map if price_active else None,
             progress_cb=progress_cb,
         )
         temp_dir, csv_files = _write_outputs_to_temp(outputs)
@@ -2423,40 +2688,44 @@ def _build_run_summary(settings: Mapping[str, Any], *, config_label: str) -> lis
         else:
             year_display = f'{start_year} – {end_year}'
 
-    carbon_enabled = bool(settings.get('carbon_policy_enabled', True))
-    enable_floor = bool(settings.get('enable_floor', False)) if carbon_enabled else False
-    enable_ccr = bool(settings.get('enable_ccr', False)) if carbon_enabled else False
-    ccr1_enabled = bool(settings.get('ccr1_enabled', False)) if enable_ccr else False
-    ccr2_enabled = bool(settings.get('ccr2_enabled', False)) if enable_ccr else False
-    banking_enabled = (
-        bool(settings.get('allowance_banking_enabled', False)) if carbon_enabled else False
+    modules = _merge_module_dicts(settings.get('module_config'))
+
+    carbon_policy_cfg = CarbonPolicyConfig.from_mapping(
+        modules.get('carbon_policy'),
+        enabled=settings.get('carbon_policy_enabled'),
+        enable_floor=settings.get('enable_floor'),
+        enable_ccr=settings.get('enable_ccr'),
+        ccr1_enabled=settings.get('ccr1_enabled'),
+        ccr2_enabled=settings.get('ccr2_enabled'),
+        allowance_banking_enabled=settings.get('allowance_banking_enabled'),
+        control_period_years=settings.get('control_period_years'),
     )
 
-    control_period = settings.get('control_period_years') if carbon_enabled else None
+    price_cfg = CarbonPriceConfig.from_mapping(
+        modules.get('carbon_price'),
+        enabled=settings.get('carbon_price_enabled'),
+        value=settings.get('carbon_price_value'),
+        schedule=settings.get('carbon_price_schedule'),
+    )
 
-    modules = settings.get('module_config')
-    if isinstance(modules, Mapping):
-        carbon_cfg = modules.get('carbon_policy')
-        if isinstance(carbon_cfg, Mapping):
-            carbon_enabled = bool(carbon_cfg.get('enabled', carbon_enabled))
-            enable_floor = bool(carbon_cfg.get('enable_floor', enable_floor)) if carbon_enabled else False
-            enable_ccr = bool(carbon_cfg.get('enable_ccr', enable_ccr)) if carbon_enabled else False
-            ccr1_enabled = bool(carbon_cfg.get('ccr1_enabled', ccr1_enabled)) if enable_ccr else False
-            ccr2_enabled = bool(carbon_cfg.get('ccr2_enabled', ccr2_enabled)) if enable_ccr else False
-            banking_enabled = (
-                bool(carbon_cfg.get('allowance_banking_enabled', banking_enabled))
-                if carbon_enabled
-                else False
-            )
-            control_period = carbon_cfg.get('control_period_years') if carbon_enabled else control_period
+    if price_cfg.active:
+        carbon_policy_cfg.disable_for_price()
 
-        dispatch_cfg = modules.get('electricity_dispatch')
-        incentives_cfg = modules.get('incentives')
-        outputs_cfg = modules.get('outputs')
-    else:
-        dispatch_cfg = None
-        incentives_cfg = None
-        outputs_cfg = None
+    carbon_enabled = carbon_policy_cfg.enabled
+    enable_floor = carbon_policy_cfg.enable_floor
+    enable_ccr = carbon_policy_cfg.enable_ccr
+    ccr1_enabled = carbon_policy_cfg.ccr1_enabled
+    ccr2_enabled = carbon_policy_cfg.ccr2_enabled
+    banking_enabled = carbon_policy_cfg.allowance_banking_enabled
+    control_period = carbon_policy_cfg.control_period_years
+
+    price_enabled = price_cfg.enabled
+    price_value = float(price_cfg.price_per_ton)
+    price_schedule = dict(price_cfg.schedule)
+
+    dispatch_cfg = modules.get('electricity_dispatch')
+    incentives_cfg = modules.get('incentives')
+    outputs_cfg = modules.get('outputs')
     if not carbon_enabled:
         control_display = 'Not applicable'
     elif control_period is None:
@@ -2474,7 +2743,17 @@ def _build_run_summary(settings: Mapping[str, Any], *, config_label: str) -> lis
         ('CCR tranche 2', _bool_label(ccr2_enabled)),
         ('Allowance banking enabled', _bool_label(banking_enabled)),
         ('Control period length', control_display),
+        ('Carbon price enabled', _bool_label(price_enabled)),
     ]
+
+    if price_enabled:
+        if price_schedule:
+            schedule_display = ', '.join(
+                f"{year}: {value:,.2f}" for year, value in sorted(price_schedule.items())
+            )
+            summary.append(('Carbon price schedule ($/ton)', schedule_display))
+        else:
+            summary.append(('Carbon price ($/ton)', f"{price_value:,.2f}"))
 
     dispatch_enabled = False
     dispatch_network = bool(settings.get('dispatch_use_network', False))
@@ -2878,12 +3157,14 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
 
     carbon_settings = CarbonModuleSettings(
         enabled=False,
+        price_enabled=False,
         enable_floor=False,
         enable_ccr=False,
         ccr1_enabled=False,
         ccr2_enabled=False,
         banking_enabled=False,
         control_period_years=None,
+        price_per_ton=0.0,
     )
     dispatch_settings = DispatchModuleSettings(
         enabled=False,
@@ -3048,6 +3329,9 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
                 'ccr2_enabled': bool(carbon_settings.ccr2_enabled),
                 'allowance_banking_enabled': bool(carbon_settings.banking_enabled),
                 'control_period_years': carbon_settings.control_period_years,
+                'carbon_price_enabled': bool(carbon_settings.price_enabled),
+                'carbon_price_value': float(carbon_settings.price_per_ton),
+                'carbon_price_schedule': dict(carbon_settings.price_schedule),
                 'dispatch_use_network': bool(
                     dispatch_settings.enabled and dispatch_settings.mode == 'network'
                 ),
@@ -3204,6 +3488,15 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
                 ),
                 control_period_years=inputs_for_run.get(
                     'control_period_years', carbon_settings.control_period_years
+                ),
+                carbon_price_enabled=inputs_for_run.get(
+                    'carbon_price_enabled', carbon_settings.price_enabled
+                ),
+                carbon_price_value=inputs_for_run.get(
+                    'carbon_price_value', carbon_settings.price_per_ton
+                ),
+                carbon_price_schedule=inputs_for_run.get(
+                    'carbon_price_schedule', carbon_settings.price_schedule
                 ),
                 dispatch_use_network=bool(
                     inputs_for_run.get('dispatch_use_network', dispatch_use_network)
