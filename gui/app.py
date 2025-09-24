@@ -1,8 +1,6 @@
 """Streamlit interface for running BlueSky policy simulations.
 
-The interface lazily resolves heavy optional dependencies such as :mod:`pandas`
-so command-line environments without the GUI stack can still import the module
-and report clear error messages.
+The GUI assumes that core dependencies such as :mod:`pandas` are installed.
 """
 
 from __future__ import annotations
@@ -18,7 +16,9 @@ from collections.abc import Iterable, Mapping
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, TypeVar, cast
+from typing import Any, Callable, TypeVar
+
+import pandas as pd
 
 try:
     import tomllib
@@ -41,19 +41,12 @@ else:  # pragma: no cover - optional dependency
     st = None  # type: ignore[assignment]
 
 try:  # pragma: no cover - optional dependency
-    import pandas as _PANDAS_MODULE  # type: ignore[import-not-found]
-except ModuleNotFoundError:  # pragma: no cover - optional dependency
-    _PANDAS_MODULE = None
-
-try:  # pragma: no cover - optional dependency
     from engine.run_loop import run_end_to_end_from_frames as _RUN_END_TO_END
 except ModuleNotFoundError:  # pragma: no cover - optional dependency
     _RUN_END_TO_END = None
 
-try:  # pragma: no cover - optional dependency
-    from io_loader import Frames as _FRAMES_CLASS
-except ModuleNotFoundError:  # pragma: no cover - optional dependency
-    _FRAMES_CLASS = None
+from io_loader import Frames as FramesType
+import pandas as pd
 
 from src.models.electricity.scripts.technology_metadata import (
     TECH_ID_TO_LABEL,
@@ -61,53 +54,20 @@ from src.models.electricity.scripts.technology_metadata import (
     resolve_technology_key,
 )
 
-if TYPE_CHECKING:  # pragma: no cover - type-checking only
-    from io_loader import Frames as FramesType
-    import pandas as pd
-else:
-    FramesType = Any
-
-    if _PANDAS_MODULE is not None:
-        pd = cast(Any, _PANDAS_MODULE)
-    else:
-        class _PandasStub:
-            DataFrame = Any
-            Series = Any
-
-        pd = cast(Any, _PandasStub())
-
-
-PANDAS_REQUIRED_MESSAGE = (
-    'pandas is required to run the policy simulator UI. '
-    'Install it with `pip install -r requirements.txt` before launching Streamlit.'
-)
-
 STREAMLIT_REQUIRED_MESSAGE = (
     'streamlit is required to run the policy simulator UI. Install streamlit to continue.'
 )
 
-
-def _ensure_pandas():
-    """Return the pandas module or raise an informative error."""
-
-    if _PANDAS_MODULE is None:
-        raise ModuleNotFoundError(PANDAS_REQUIRED_MESSAGE)
-    return _PANDAS_MODULE
-
-
-def _ensure_frames_class() -> type[FramesType]:
-    """Return the :class:`Frames` class, validating optional dependencies."""
-
-    if _FRAMES_CLASS is None:
-        raise ModuleNotFoundError(PANDAS_REQUIRED_MESSAGE)
-    return cast('type[FramesType]', _FRAMES_CLASS)
+ENGINE_RUNNER_REQUIRED_MESSAGE = (
+    'engine.run_loop.run_end_to_end_from_frames is required to run the policy simulator UI.'
+)
 
 
 def _ensure_engine_runner():
     """Return the network runner callable used to solve the market model."""
 
     if _RUN_END_TO_END is None:
-        raise ModuleNotFoundError(PANDAS_REQUIRED_MESSAGE)
+        raise ModuleNotFoundError(ENGINE_RUNNER_REQUIRED_MESSAGE)
     return _RUN_END_TO_END
 
 
@@ -116,6 +76,7 @@ def _ensure_streamlit() -> None:
 
     if st is None:
         raise ModuleNotFoundError(STREAMLIT_REQUIRED_MESSAGE)
+
 
 LOGGER = logging.getLogger(__name__)
 
@@ -1442,7 +1403,6 @@ def _build_policy_frame(
 ) -> pd.DataFrame:
     """Construct the policy frame consumed by :class:`io_loader.Frames`."""
 
-    pd = _ensure_pandas()
     years_list = sorted(int(year) for year in years)
     if not years_list:
         raise ValueError('No years supplied for policy frame')
@@ -1561,7 +1521,6 @@ def _build_policy_frame(
 
 
 def _default_units() -> pd.DataFrame:
-    pd = _ensure_pandas()
 
     data = [
         {
@@ -1602,7 +1561,6 @@ def _default_units() -> pd.DataFrame:
 
 
 def _default_fuels() -> pd.DataFrame:
-    pd = _ensure_pandas()
 
     return pd.DataFrame(
         [
@@ -1614,7 +1572,6 @@ def _default_fuels() -> pd.DataFrame:
 
 
 def _default_transmission() -> pd.DataFrame:
-    pd = _ensure_pandas()
 
     return pd.DataFrame(columns=['from_region', 'to_region', 'limit_mw'])
 
@@ -1625,8 +1582,7 @@ def _build_default_frames(
     carbon_policy_enabled: bool = True,
     banking_enabled: bool = True,
 ) -> FramesType:
-    pd = _ensure_pandas()
-    frames_cls = _ensure_frames_class()
+    frames_cls = FramesType
 
     demand_records = [
         {'year': int(year), 'region': 'default', 'demand_mwh': float(_DEFAULT_LOAD_MWH)}
@@ -1649,7 +1605,6 @@ def _ensure_years_in_demand(frames: FramesType, years: Iterable[int]) -> FramesT
     if not years:
         return frames
 
-    pd = _ensure_pandas()
     demand = frames.demand()
     if demand.empty:
         raise ValueError('Demand frame is empty; cannot infer loads for requested years')
@@ -1686,7 +1641,6 @@ def _read_uploaded_dataframe(uploaded_file: Any | None) -> pd.DataFrame | None:
     if uploaded_file is None:
         return None
 
-    pd = _ensure_pandas()
     try:
         if hasattr(uploaded_file, 'getvalue'):
             raw = uploaded_file.getvalue()
@@ -1739,7 +1693,6 @@ def _render_demand_controls(
     years: Iterable[int],
 ) -> tuple[FramesType, list[str], list[str]]:  # pragma: no cover - UI helper
     _ensure_streamlit()
-    pd = _ensure_pandas()
 
     notes: list[str] = []
     errors: list[str] = []
@@ -1874,7 +1827,6 @@ def _render_demand_controls(
 
 def _render_units_controls(frames_obj: FramesType) -> tuple[FramesType, list[str], list[str]]:  # pragma: no cover - UI helper
     _ensure_streamlit()
-    pd = _ensure_pandas()
 
     notes: list[str] = []
     errors: list[str] = []
@@ -2027,7 +1979,6 @@ def _render_units_controls(frames_obj: FramesType) -> tuple[FramesType, list[str
 
 def _render_fuels_controls(frames_obj: FramesType) -> tuple[FramesType, list[str], list[str]]:  # pragma: no cover - UI helper
     _ensure_streamlit()
-    pd = _ensure_pandas()
 
     notes: list[str] = []
     errors: list[str] = []
@@ -2122,7 +2073,6 @@ def _render_transmission_controls(
     frames_obj: FramesType,
 ) -> tuple[FramesType, list[str], list[str]]:  # pragma: no cover - UI helper
     _ensure_streamlit()
-    pd = _ensure_pandas()
 
     notes: list[str] = []
     errors: list[str] = []
@@ -2264,9 +2214,8 @@ def run_policy_simulation(
     except Exception as exc:
         return {'error': f'Invalid year selection: {exc}'}
 
+    frames_cls = FramesType
     try:
-        _ensure_pandas()
-        frames_cls = _ensure_frames_class()
         runner = _ensure_engine_runner()
     except ModuleNotFoundError as exc:
         return {'error': str(exc)}
@@ -2580,14 +2529,6 @@ def _render_results(result: dict[str, Any]) -> None:  # pragma: no cover - UI re
 
 def main() -> None:  # pragma: no cover - Streamlit entry point
     _ensure_streamlit()
-    global _PANDAS_MODULE, pd
-    try:
-        import pandas as pandas_module  # type: ignore[import-not-found]
-    except ModuleNotFoundError as exc:  # pragma: no cover - dependency missing at runtime
-        raise ModuleNotFoundError(PANDAS_REQUIRED_MESSAGE) from exc
-    else:
-        _PANDAS_MODULE = pandas_module
-        pd = cast(Any, pandas_module)
     st.set_page_config(page_title='BlueSky Policy Simulator', layout='wide')
     st.title('BlueSky Policy Simulator')
     st.write('Upload a run configuration and execute the annual allowance market engine.')
@@ -2717,7 +2658,10 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
         if assumption_errors:
             st.warning('Resolve the highlighted assumption issues before running the simulation.')
     else:
-        st.info('Default assumption tables are unavailable. Install pandas to edit inputs through the GUI.')
+        st.info(
+            'Default assumption tables are unavailable due to a previous error. '
+            'Resolve the issue above to edit inputs through the GUI.'
+        )
 
     execute_run = False
     run_inputs: dict[str, Any] | None = None

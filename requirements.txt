@@ -2,7 +2,7 @@
 
 # Core runtime dependencies
 numpy
-pandas>=2.0
+pandas>=2.2,<3.0
 pyomo
 scipy
 streamlit>=1.25

@@ -3,7 +3,8 @@ import io
 import shutil
 
 import pytest
-import pandas as pd
+
+pd = pytest.importorskip("pandas")
 
 from tests.fixtures.dispatch_single_minimal import baseline_frames
 from gui.app import run_policy_simulation
@@ -225,17 +226,6 @@ def test_backend_returns_error_for_invalid_frames():
     )
 
     assert "error" in result
-
-
-def test_backend_reports_missing_pandas(monkeypatch):
-    config = _baseline_config()
-
-    monkeypatch.setattr("gui.app._PANDAS_MODULE", None)
-
-    result = run_policy_simulation(config, start_year=2025, end_year=2025)
-
-    assert "error" in result
-    assert "pandas" in result["error"].lower()
 
 
 def test_backend_builds_default_frames(tmp_path):
