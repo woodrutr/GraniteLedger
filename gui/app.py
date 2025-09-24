@@ -2378,119 +2378,112 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
                 except (TypeError, ValueError):
                     return default
 
-            def _update_progress(stage: str, payload: Mapping[str, object]) -> None:
-                def _as_int(value: object, default: int = 0) -> int:
-                    try:
-                        return int(value)  # type: ignore[arg-type]
-                    except (TypeError, ValueError):
-                        return default
-
-                def _as_float(value: object) -> float | None:
-                    try:
-                        if value is None:
-                            return None
-                        return float(value)  # type: ignore[arg-type]
-                    except (TypeError, ValueError):
+            def _as_float(value: object) -> float | None:
+                try:
+                    if value is None:
                         return None
+                    return float(value)  # type: ignore[arg-type]
+                except (TypeError, ValueError):
+                    return None
 
-                if stage == 'run_start':
-                    total = _as_int(payload.get('total_years'), 0)
-                    if total <= 0:
-                        total = 1
-                    progress_state['total_years'] = total
-                    progress_state['current_index'] = -1
-                    progress_state['current_year'] = None
-                    progress_bar.progress(0)
-                    progress_text.text(f'Preparing simulation for {total} year(s)...')
-                    return
+            if stage == 'run_start':
+                total = _as_int(payload.get('total_years'), 0)
+                if total <= 0:
+                    total = 1
+                progress_state['total_years'] = total
+                progress_state['current_index'] = -1
+                progress_state['current_year'] = None
+                progress_bar.progress(0)
+                progress_text.text(f'Preparing simulation for {total} year(s)...')
+                return
 
-                if stage == 'year_start':
-                    index = _as_int(payload.get('index'), 0)
-                    year_val = payload.get('year')
-                    total = max(progress_state.get('total_years', 1), 1)
-                    progress_state['current_index'] = index
-                    progress_state['current_year'] = year_val
-                    completed_fraction = max(0.0, min(1.0, index / total))
-                    progress_bar.progress(int(completed_fraction * 100))
-                    year_display = str(year_val) if year_val is not None else 'N/A'
-                    progress_text.text(f'Simulating year {year_display} ({index + 1} of {total})')
-                    return
+            if stage == 'year_start':
+                index = _as_int(payload.get('index'), 0)
+                year_val = payload.get('year')
+                total = max(progress_state.get('total_years', 1), 1)
+                progress_state['current_index'] = index
+                progress_state['current_year'] = year_val
+                completed_fraction = max(0.0, min(1.0, index / total))
+                progress_bar.progress(int(completed_fraction * 100))
+                year_display = str(year_val) if year_val is not None else 'N/A'
+                progress_text.text(f'Simulating year {year_display} ({index + 1} of {total})')
+                return
 
-                if stage == 'iteration':
-                    year_val = payload.get('year', progress_state.get('current_year'))
-                    iteration = _as_int(payload.get('iteration'), 0)
-                    price_val = _as_float(payload.get('price'))
-                    year_display = str(year_val) if year_val is not None else 'N/A'
-                    if price_val is not None:
-                        progress_text.text(
-                            f'Year {year_display}: iteration {iteration} (price ≈ {price_val:,.2f})'
-                        )
-                    else:
-                        progress_text.text(f'Year {year_display}: iteration {iteration}')
-                    return
+            if stage == 'iteration':
+                year_val = payload.get('year', progress_state.get('current_year'))
+                iteration = _as_int(payload.get('iteration'), 0)
+                price_val = _as_float(payload.get('price'))
+                year_display = str(year_val) if year_val is not None else 'N/A'
+                if price_val is not None:
+                    progress_text.text(
+                        f'Year {year_display}: iteration {iteration} (price ≈ {price_val:,.2f})'
+                    )
+                else:
+                    progress_text.text(f'Year {year_display}: iteration {iteration}')
+                return
 
-                if stage == 'year_complete':
-                    index = _as_int(payload.get('index'), progress_state.get('current_index', -1))
-                    total = max(progress_state.get('total_years', 1), 1)
-                    progress_state['current_index'] = index
-                    year_val = payload.get('year', progress_state.get('current_year'))
-                    progress_state['current_year'] = year_val
-                    completed_fraction = max(0.0, min(1.0, (index + 1) / total))
-                    progress_bar.progress(min(100, int(completed_fraction * 100)))
-                    price_val = _as_float(payload.get('price'))
-                    year_display = str(year_val) if year_val is not None else str(index + 1)
-                    if price_val is not None:
-                        progress_text.text(
-                            f'Completed year {year_display} of {total} (price {price_val:,.2f})'
-                        )
-                    else:
-                        progress_text.text(f'Completed year {year_display} of {total}')
-                    return
+            if stage == 'year_complete':
+                index = _as_int(payload.get('index'), progress_state.get('current_index', -1))
+                total = max(progress_state.get('total_years', 1), 1)
+                progress_state['current_index'] = index
+                year_val = payload.get('year', progress_state.get('current_year'))
+                progress_state['current_year'] = year_val
+                completed_fraction = max(0.0, min(1.0, (index + 1) / total))
+                progress_bar.progress(min(100, int(completed_fraction * 100)))
+                price_val = _as_float(payload.get('price'))
+                year_display = str(year_val) if year_val is not None else str(index + 1)
+                if price_val is not None:
+                    progress_text.text(
+                        f'Completed year {year_display} of {total} (price {price_val:,.2f})'
+                    )
+                else:
+                    progress_text.text(f'Completed year {year_display} of {total}')
+                return
 
-            inputs_for_run = run_inputs or {}
-            try:
-                result = run_policy_simulation(
-                    inputs_for_run.get('config_source', run_config),
-                    start_year=inputs_for_run.get('start_year', start_year_val),
-                    end_year=inputs_for_run.get('end_year', end_year_val),
-                    carbon_policy_enabled=bool(
-                        inputs_for_run.get('carbon_policy_enabled', carbon_settings.enabled)
-                    ),
-                    enable_floor=bool(
-                        inputs_for_run.get('enable_floor', carbon_settings.enable_floor)
-                    ),
-                    enable_ccr=bool(inputs_for_run.get('enable_ccr', carbon_settings.enable_ccr)),
-                    ccr1_enabled=bool(
-                        inputs_for_run.get('ccr1_enabled', carbon_settings.ccr1_enabled)
-                    ),
-                    ccr2_enabled=bool(
-                        inputs_for_run.get('ccr2_enabled', carbon_settings.ccr2_enabled)
-                    ),
-                    allowance_banking_enabled=bool(
-                        inputs_for_run.get('allowance_banking_enabled', carbon_settings.banking_enabled)
-                    ),
-                    control_period_years=inputs_for_run.get(
-                        'control_period_years', carbon_settings.control_period_years
-                    ),
-                    dispatch_use_network=bool(
-                        inputs_for_run.get('dispatch_use_network', dispatch_use_network)
-                    ),
-                    module_config=inputs_for_run.get(
-                        'module_config', run_config.get('modules', {})
-                    ),
-                    frames=frames_for_run,
-                    assumption_notes=assumption_notes,
-                    progress_cb=_update_progress,
-                )
-            except Exception as exc:  # pragma: no cover - defensive guard
-                LOGGER.exception('Policy simulation failed during execution')
-                result = {'error': str(exc)}
-            finally:
-                progress_bar.empty()
-                progress_text.empty()
-            if 'temp_dir' in result:
-                st.session_state['temp_dirs'] = [str(result['temp_dir'])]
-            st.session_state['last_result'] = result
+        inputs_for_run = run_inputs or {}
+        try:
+            result = run_policy_simulation(
+                inputs_for_run.get('config_source', run_config),
+                start_year=inputs_for_run.get('start_year', start_year_val),
+                end_year=inputs_for_run.get('end_year', end_year_val),
+                carbon_policy_enabled=bool(
+                    inputs_for_run.get('carbon_policy_enabled', carbon_settings.enabled)
+                ),
+                enable_floor=bool(
+                    inputs_for_run.get('enable_floor', carbon_settings.enable_floor)
+                ),
+                enable_ccr=bool(inputs_for_run.get('enable_ccr', carbon_settings.enable_ccr)),
+                ccr1_enabled=bool(
+                    inputs_for_run.get('ccr1_enabled', carbon_settings.ccr1_enabled)
+                ),
+                ccr2_enabled=bool(
+                    inputs_for_run.get('ccr2_enabled', carbon_settings.ccr2_enabled)
+                ),
+                allowance_banking_enabled=bool(
+                    inputs_for_run.get('allowance_banking_enabled', carbon_settings.banking_enabled)
+                ),
+                control_period_years=inputs_for_run.get(
+                    'control_period_years', carbon_settings.control_period_years
+                ),
+                dispatch_use_network=bool(
+                    inputs_for_run.get('dispatch_use_network', dispatch_use_network)
+                ),
+                module_config=inputs_for_run.get(
+                    'module_config', run_config.get('modules', {})
+                ),
+                frames=frames_for_run,
+                assumption_notes=assumption_notes,
+                progress_cb=_update_progress,
+            )
+        except Exception as exc:  # pragma: no cover - defensive guard
+            LOGGER.exception('Policy simulation failed during execution')
+            result = {'error': str(exc)}
+        finally:
+            progress_bar.empty()
+            progress_text.empty()
+        if 'temp_dir' in result:
+            st.session_state['temp_dirs'] = [str(result['temp_dir'])]
+        st.session_state['last_result'] = result
 
     if result:
         _render_results(result)
