@@ -404,20 +404,29 @@ def _render_general_config_section(
     slider_min_value = int(start_default)
     slider_max_value = int(end_default)
 
+    slider_bounds = (slider_min_default, slider_max_default)
+    if slider_min_value > slider_max_value:
+        slider_min_value, slider_max_value = slider_max_value, slider_min_value
+
     if st is not None:
         config_state_key = 'general_config_active_label'
-        if st.session_state.get(config_state_key) != config_label:
-            st.session_state[config_state_key] = config_label
-            for reset_key in (
-                'general_year_range_min_text',
-                'general_year_range_max_text',
-                'general_year_range_min_numeric',
-                'general_year_range_max_numeric',
-                'general_year_range_slider',
-                'general_regions',
-            ):
-                st.session_state.pop(reset_key, None)
+        slider_key = 'general_year_range_slider'
+        bounds_state_key = 'general_year_range_slider_bounds'
 
+        if st.session_state.get(config_state_key) != config_label or st.session_state.get(bounds_state_key) != slider_bounds:
+            st.session_state[config_state_key] = config_label
+        # Reset stale session state keys
+        for reset_key in (
+            'general_year_range_min_text',
+            'general_year_range_max_text',
+            'general_year_range_min_numeric',
+            'general_year_range_max_numeric',
+            'general_year_range_slider',
+            'general_regions',
+        ):
+            st.session_state.pop(reset_key, None)
+
+        # Ensure numeric/text defaults
         min_numeric_key = 'general_year_range_min_numeric'
         max_numeric_key = 'general_year_range_max_numeric'
         st.session_state.setdefault(min_numeric_key, int(slider_min_default))
@@ -425,6 +434,7 @@ def _render_general_config_section(
         st.session_state.setdefault('general_year_range_min_text', str(st.session_state[min_numeric_key]))
         st.session_state.setdefault('general_year_range_max_text', str(st.session_state[max_numeric_key]))
 
+        # Parse values from text inputs or fallback to numeric defaults
         slider_min_value = _coerce_year(
             st.session_state.get('general_year_range_min_text'),
             st.session_state[min_numeric_key],
@@ -433,6 +443,37 @@ def _render_general_config_section(
             st.session_state.get('general_year_range_max_text'),
             st.session_state[max_numeric_key],
         )
+
+        # Clamp within defaults
+        slider_min_value = max(slider_min_default, min(slider_max_default, int(slider_min_value)))
+        slider_max_value = max(slider_min_default, min(slider_max_default, int(slider_max_value)))
+        if slider_min_value > slider_max_value:
+            slider_min_value, slider_max_value = slider_max_value, slider_min_value
+
+        sanitized_slider_state = (slider_min_value, slider_max_value)
+        st.session_state[min_numeric_key] = slider_min_value
+        st.session_state[max_numeric_key] = slider_max_value
+        st.session_state['general_year_range_min_text'] = str(slider_min_value)
+        st.session_state['general_year_range_max_text'] = str(slider_max_value)
+
+        # Build slider kwargs
+        slider_kwargs: dict[str, Any] = {
+            'min_value': slider_min_default,
+            'max_value': slider_max_default,
+            'value': sanitized_slider_state,
+            'step': 1,
+            'format': '%d',
+            'key': 'general_year_range_slider',
+        }
+
+        slider_widgets_available = hasattr(container, 'slider')
+        if slider_widgets_available:
+            slider_value = container.slider('Run years', **slider_kwargs)
+            if isinstance(slider_value, tuple):
+                slider_min_value, slider_max_value = slider_value
+            else:  # Fallback for single-year sliders
+                slider_min_value = slider_value
+                slider_max_value = slider_value
 
         slider_min_value = int(slider_min_value)
         slider_max_value = int(slider_max_value)
@@ -505,10 +546,13 @@ def _render_general_config_section(
 
     slider_min_value = int(slider_min_value)
     slider_max_value = int(slider_max_value)
-    slider_min_value = max(int(slider_min_default), min(int(slider_max_default), slider_min_value))
-    slider_max_value = max(int(slider_min_default), min(int(slider_max_default), slider_max_value))
+    slider_min_value = max(slider_min_default, min(slider_max_default, slider_min_value))
+    slider_max_value = max(slider_min_default, min(slider_max_default, slider_max_value))
     if slider_min_value > slider_max_value:
         slider_min_value, slider_max_value = slider_max_value, slider_min_value
+
+    if st is not None:
+        st.session_state['general_year_range_slider'] = (slider_min_value, slider_max_value)
 
     start_year = slider_min_value
     end_year = slider_max_value
