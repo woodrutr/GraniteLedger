@@ -848,31 +848,41 @@ def render_carbon_module_controls(run_config: dict[str, Any], container) -> Carb
             return
         st.session_state["carbon_module_last_changed"] = key
 
+    session_enabled_default = enabled_default
+    session_price_default = price_enabled_default
+    last_changed = None
+    if st is not None:  # pragma: no cover - UI path
+        last_changed = st.session_state.get("carbon_module_last_changed")
+        session_enabled_default = bool(st.session_state.get("carbon_enable", enabled_default))
+        session_price_default = bool(
+            st.session_state.get("carbon_price_enable", price_enabled_default)
+        )
+        if session_enabled_default and session_price_default:
+            if last_changed == "cap":
+                session_price_default = False
+            else:
+                session_enabled_default = False
+            st.session_state["carbon_enable"] = session_enabled_default
+            st.session_state["carbon_price_enable"] = session_price_default
+
     enabled = container.toggle(
         "Enable carbon cap",
-        value=enabled_default,
+        value=session_enabled_default,
         key="carbon_enable",
         on_change=lambda: _mark_last_changed("cap"),
     )
     price_enabled = container.toggle(
         "Enable carbon price",
-        value=price_enabled_default,
+        value=session_price_default,
         key="carbon_price_enable",
         on_change=lambda: _mark_last_changed("price"),
     )
 
-    last_changed = None
-    if st is not None:  # pragma: no cover - UI path
-        last_changed = st.session_state.get("carbon_module_last_changed")
     if enabled and price_enabled:
         if last_changed == "cap":
             price_enabled = False
-            if st is not None:  # pragma: no cover - UI path
-                st.session_state["carbon_price_enable"] = False
         else:
             enabled = False
-            if st is not None:  # pragma: no cover - UI path
-                st.session_state["carbon_enable"] = False
 
     enable_floor = container.toggle("Enable price floor", value=enable_floor_default, key="carbon_floor")
     enable_ccr = container.toggle("Enable CCR", value=enable_ccr_default, key="carbon_ccr")
