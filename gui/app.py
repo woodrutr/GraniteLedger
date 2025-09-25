@@ -11,13 +11,14 @@ import importlib.util
 import logging
 import re
 import shutil
+import sys
 import tempfile
 from collections.abc import Iterable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Sequence, TypeVar
-import sys
+
 
 import pandas as pd
 
@@ -96,12 +97,30 @@ STREAMLIT_REQUIRED_MESSAGE = (
 ENGINE_RUNNER_REQUIRED_MESSAGE = (
     "engine.run_loop.run_end_to_end_from_frames is required to run the policy simulator UI."
 )
+
+
+def _ensure_engine_runner():
+    """Return the network runner callable used to solve the market model."""
+
+    if _RUN_END_TO_END is None:
+        raise ModuleNotFoundError(ENGINE_RUNNER_REQUIRED_MESSAGE)
+    return _RUN_END_TO_END
+
+
+def _ensure_streamlit() -> None:
+    """Raise an informative error when the GUI stack is unavailable."""
+
+    if st is None:
+        raise ModuleNotFoundError(STREAMLIT_REQUIRED_MESSAGE)
+
+
 DEFAULT_CONFIG_PATH = Path(PROJECT_ROOT, "src", "common", "run_config.toml")
 _DEFAULT_LOAD_MWH = 1_000_000.0
 _LARGE_ALLOWANCE_SUPPLY = 1e12
 _GENERAL_REGIONS_NORMALIZED_KEY = "general_regions_normalized_selection"
 _ALL_REGIONS_LABEL = "All regions"
 _T = TypeVar("_T")
+
 
 SIDEBAR_SECTIONS: list[tuple[str, bool]] = [
     ("General config", False),
@@ -1043,6 +1062,7 @@ def render_carbon_module_controls(run_config: dict[str, Any], container) -> Carb
         errors=errors,
     )
 
+
     with _sidebar_panel(container, enabled) as panel:
         enable_floor = panel.checkbox(
             "Enable minimum reserve price",
@@ -1073,6 +1093,17 @@ def render_carbon_module_controls(run_config: dict[str, Any], container) -> Carb
             value=banking_default,
             disabled=not enabled,
             key="carbon_banking",
+        )
+        bank0_value = float(
+            panel.number_input(
+                'Initial allowance bank (tons)',
+                min_value=0.0,
+                value=float(bank_default),
+                step=1000.0,
+                format='%f',
+                key='carbon_bank0',
+                disabled=not (enabled and banking_enabled),
+            )
         )
         control_override = panel.checkbox(
             "Specify control period length",
@@ -1189,13 +1220,9 @@ def render_carbon_module_controls(run_config: dict[str, Any], container) -> Carb
         "price_schedule": dict(price_schedule),
     }
 
-    price_record: dict[str, Any] = {
-        'enabled': bool(price_enabled),
-        'price_per_ton': float(price_per_ton_value),
-    }
     if price_schedule_default:
-        price_record['price_schedule'] = dict(price_schedule_default)
-    modules['carbon_price'] = price_record
+        price_record["price_schedule"] = dict(price_schedule_default)
+    modules["carbon_price"] = price_record
 
     errors: list[str] = []
     if enabled and not isinstance(run_config.get("allowance_market"), Mapping):
@@ -1217,6 +1244,7 @@ def render_carbon_module_controls(run_config: dict[str, Any], container) -> Carb
         price_schedule=dict(price_schedule),
         errors=errors,
     )
+
 
 # -------------------------
 # Dispatch UI
@@ -1712,7 +1740,7 @@ def _render_incentives_section(
             disabled=not enabled,
             hide_index=True,
             num_rows="dynamic",
-            width="stretch",  # Streamlit >= 1.38: use width instead of use_container_width
+            width="stretch",  # Streamlit >= 1.38: replaces use_container_width
             key="incentives_production_editor",
             column_order=[
                 selection_column,
@@ -1757,7 +1785,7 @@ def _render_incentives_section(
             disabled=not enabled,
             hide_index=True,
             num_rows="dynamic",
-            width="stretch",  # Streamlit >= 1.38
+            width="stretch",  # Streamlit >= 1.38: replaces use_container_width
             key="incentives_investment_editor",
             column_order=[
                 selection_column,
@@ -1795,6 +1823,7 @@ def _render_incentives_section(
                 ),
             },
         )
+
 
         validation_messages: list[str] = []
         if enabled:
@@ -2951,6 +2980,7 @@ def run_policy_simulation(
 
     config.setdefault("modules", {})
 
+
     try:
         base_years = _years_from_config(config)
         years = _select_years(base_years, start_year, end_year)
@@ -3307,6 +3337,15 @@ def run_policy_simulation(
     except ModuleNotFoundError as exc:
         return {"error": str(exc)}
 
+    bank_override = _coerce_optional_float(carbon_record.get('bank0'))
+    if bank_override is None:
+        bank_override = bank_from_config
+    if bank_override is not None:
+        allowance_section['bank0'] = float(bank_override)
+        carbon_record['bank0'] = float(bank_override)
+    elif 'bank0' in allowance_section:
+        carbon_record.pop('bank0', None)
+
     try:
         frames_obj = (
             frames_cls.coerce(
@@ -3487,7 +3526,7 @@ def _build_run_summary(settings: Mapping[str, Any], *, config_label: str) -> lis
             return None
 
     def _as_float(value: Any) -> float | None:
-        if value is None:
+        if value is None or value == "":
             return None
         try:
             return float(value)
@@ -3495,43 +3534,43 @@ def _build_run_summary(settings: Mapping[str, Any], *, config_label: str) -> lis
             return None
 
     def _bool_label(value: bool) -> str:
-        return 'Yes' if value else 'No'
+        return "Yes" if value else "No"
 
-    start_year = _as_int(settings.get('start_year'))
-    end_year = _as_int(settings.get('end_year'))
+    start_year = _as_int(settings.get("start_year"))
+    end_year = _as_int(settings.get("end_year"))
 
     if start_year is None and end_year is None:
-        year_display = 'Not specified'
+        year_display = "Not specified"
     else:
         if start_year is None:
             start_year = end_year
         if end_year is None:
             end_year = start_year
         if start_year == end_year:
-            year_display = f'{start_year}'
+            year_display = f"{start_year}"
         else:
-            year_display = f'{start_year} – {end_year}'
+            year_display = f"{start_year} – {end_year}"
 
-    carbon_enabled = bool(settings.get('carbon_policy_enabled', True))
-    enable_floor = bool(settings.get('enable_floor', False)) if carbon_enabled else False
-    enable_ccr = bool(settings.get('enable_ccr', False)) if carbon_enabled else False
-    ccr1_enabled = bool(settings.get('ccr1_enabled', False)) if enable_ccr else False
-    ccr2_enabled = bool(settings.get('ccr2_enabled', False)) if enable_ccr else False
+    carbon_enabled = bool(settings.get("carbon_policy_enabled", True))
+    enable_floor = bool(settings.get("enable_floor", False)) if carbon_enabled else False
+    enable_ccr = bool(settings.get("enable_ccr", False)) if carbon_enabled else False
+    ccr1_enabled = bool(settings.get("ccr1_enabled", False)) if enable_ccr else False
+    ccr2_enabled = bool(settings.get("ccr2_enabled", False)) if enable_ccr else False
     banking_enabled = (
-        bool(settings.get('allowance_banking_enabled', False)) if carbon_enabled else False
+        bool(settings.get("allowance_banking_enabled", False)) if carbon_enabled else False
     )
 
-    control_period = settings.get('control_period_years') if carbon_enabled else None
+    control_period = settings.get("control_period_years") if carbon_enabled else None
     if not carbon_enabled:
-        control_display = 'Not applicable'
+        control_display = "Not applicable"
     elif control_period is None:
-        control_display = 'Automatic'
+        control_display = "Automatic"
     else:
         control_display = str(control_period)
 
-    price_enabled = bool(settings.get('carbon_price_enabled', False)) if carbon_enabled else False
-    price_value = _as_float(settings.get('carbon_price_value')) if price_enabled else None
-    price_schedule_raw = settings.get('carbon_price_schedule') if price_enabled else None
+    price_enabled = bool(settings.get("carbon_price_enabled", False)) if carbon_enabled else False
+    price_value = _as_float(settings.get("carbon_price_value")) if price_enabled else None
+    price_schedule_raw = settings.get("carbon_price_schedule") if price_enabled else None
     schedule_entries: list[tuple[int, float]] = []
     if isinstance(price_schedule_raw, Mapping):
         for year_key, value in price_schedule_raw.items():
@@ -3543,38 +3582,39 @@ def _build_run_summary(settings: Mapping[str, Any], *, config_label: str) -> lis
     schedule_entries.sort(key=lambda item: item[0])
 
     if not price_enabled:
-        price_display = 'Disabled'
+        price_display = "Disabled"
     elif schedule_entries:
         first_year, first_price = schedule_entries[0]
         if len(schedule_entries) == 1:
-            price_display = f'Schedule: {first_year} → ${first_price:,.2f}/ton'
+            price_display = f"Schedule: {first_year} → ${first_price:,.2f}/ton"
         else:
             last_year, last_price = schedule_entries[-1]
             price_display = (
-                f'Schedule ({len(schedule_entries)} entries): '
-                f'{first_year} → ${first_price:,.2f}/ton, '
-                f'{last_year} → ${last_price:,.2f}/ton'
+                f"Schedule ({len(schedule_entries)} entries): "
+                f"{first_year} → ${first_price:,.2f}/ton, "
+                f"{last_year} → ${last_price:,.2f}/ton"
             )
     elif price_value is not None:
-        price_display = f'Flat ${price_value:,.2f}/ton'
+        price_display = f"Flat ${price_value:,.2f}/ton"
     else:
-        price_display = 'Enabled (no price specified)'
+        price_display = "Enabled (no price specified)"
 
-    dispatch_network = bool(settings.get('dispatch_use_network', False))
+    dispatch_network = bool(settings.get("dispatch_use_network", False))
 
     return [
-        ('Configuration', config_label),
-        ('Simulation years', year_display),
-        ('Carbon cap enabled', _bool_label(carbon_enabled)),
-        ('Minimum reserve price', _bool_label(enable_floor)),
-        ('CCR enabled', _bool_label(enable_ccr)),
-        ('CCR tranche 1', _bool_label(ccr1_enabled)),
-        ('CCR tranche 2', _bool_label(ccr2_enabled)),
-        ('Allowance banking enabled', _bool_label(banking_enabled)),
-        ('Control period length', control_display),
-        ('Carbon price', price_display),
-        ('Dispatch uses network', _bool_label(dispatch_network)),
+        ("Configuration", config_label),
+        ("Simulation years", year_display),
+        ("Carbon cap enabled", _bool_label(carbon_enabled)),
+        ("Minimum reserve price", _bool_label(enable_floor)),
+        ("CCR enabled", _bool_label(enable_ccr)),
+        ("CCR tranche 1", _bool_label(ccr1_enabled)),
+        ("CCR tranche 2", _bool_label(ccr2_enabled)),
+        ("Allowance banking enabled", _bool_label(banking_enabled)),
+        ("Control period length", control_display),
+        ("Carbon price", price_display),
+        ("Dispatch uses network", _bool_label(dispatch_network)),
     ]
+
 
 
 def _render_results(result: Mapping[str, Any]) -> None:
@@ -3795,6 +3835,7 @@ def main() -> None:
         price_schedule={},
         errors=[],
     )
+
 
     dispatch_settings = DispatchModuleSettings(
         enabled=False,
