@@ -3847,6 +3847,9 @@ def main() -> None:
         show_csv_downloads=False,
     )
     run_clicked = False
+    pending_run: Mapping[str, Any] | None = None
+    show_confirm_modal = False
+    run_in_progress = False
 
     with st.sidebar:
         st.markdown(SIDEBAR_STYLE, unsafe_allow_html=True)
