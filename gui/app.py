@@ -40,12 +40,20 @@ try:
 except ModuleNotFoundError:  # fallback for packaged app execution
     PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
-from gui.module_settings import (
-    CarbonModuleSettings,
-    DispatchModuleSettings,
-    IncentivesModuleSettings,
-    OutputsModuleSettings,
-)
+try:
+    from gui.module_settings import (
+        CarbonModuleSettings,
+        DispatchModuleSettings,
+        IncentivesModuleSettings,
+        OutputsModuleSettings,
+    )
+except ModuleNotFoundError:  # pragma: no cover - compatibility fallback
+    from module_settings import (  # type: ignore[import-not-found]
+        CarbonModuleSettings,
+        DispatchModuleSettings,
+        IncentivesModuleSettings,
+        OutputsModuleSettings,
+    )
 
 # Region metadata helpers (robust to running as a script)
 try:
@@ -876,89 +884,36 @@ def render_carbon_module_controls(
     control_override_default = control_default_raw is not None
 
     price_enabled_default = bool(price_defaults.get("enabled", False))
-    price_value_raw = price_defaults.get(
-        "price_per_ton", price_defaults.get("price", 0.0)
-    )
+    price_value_raw = price_defaults.get("price_per_ton", price_defaults.get("price", 0.0))
     price_default = _coerce_float(price_value_raw, default=0.0)
-    price_schedule_default = _normalize_price_schedule(
-        price_defaults.get("price_schedule")
-    )
+    price_schedule_default = _normalize_price_schedule(price_defaults.get("price_schedule"))
 
     # -------------------------
     # Coverage / Regions
     # -------------------------
-    coverage_labels: set[str] = set()
-
-    def _register_coverage_value(candidate: Any) -> None:
-        if candidate is None:
-            return
-        text = str(candidate).strip()
-        if not text:
-            return
-        lowered = text.lower()
-        if lowered in {"all", "all regions", _ALL_REGIONS_LABEL.lower()}:
-            return
-        resolved = canonical_region_value(candidate)
-        value: int | str
-        if isinstance(resolved, str):
-            value = resolved.strip() or "default"
-        else:
-            value = int(resolved)
-        label = canonical_region_label(value)
-        if not label:
-            return
-        coverage_labels.add(label)
-
-    # Always include the default 25-region dataset in the coverage options so the
-    # multiselect remains comprehensive even when the base configuration only
-    # lists a subset of regions.
-    for default_region in DEFAULT_REGION_METADATA:
-        _register_coverage_value(default_region)
-
+    region_labels: list[str] = []
     if region_options is not None:
         for entry in region_options:
-            _register_coverage_value(entry)
+            label = str(entry).strip() or "default"
+            if label not in region_labels:
+                region_labels.append(label)
+    if not region_labels:
+        region_labels = ["default"]
 
-    for entry in coverage_default:
-        _register_coverage_value(entry)
-
-    if coverage_labels:
-        coverage_labels_display = sorted(coverage_labels, key=str)
-    else:
-        coverage_labels_display = ["default"]
-
-    coverage_choices = [_ALL_REGIONS_LABEL] + coverage_labels_display
-
-    def _canonical_coverage_label(entry: Any) -> str:
-        if entry is None:
-            return ""
-        text = str(entry).strip()
-        if not text:
-            return ""
-        lowered = text.lower()
-        if lowered in {"all", "all regions", _ALL_REGIONS_LABEL.lower()}:
-            return _ALL_REGIONS_LABEL
-        label = canonical_region_label(entry)
-        return label
-
+    coverage_choices = [_ALL_REGIONS_LABEL] + sorted(region_labels, key=str)
     if coverage_default == ["All"]:
         coverage_default_display = [_ALL_REGIONS_LABEL]
     else:
-        default_labels = [
-            label
-            for label in (_canonical_coverage_label(entry) for entry in coverage_default)
-            if label and label in coverage_choices
-        ]
-        coverage_default_display = default_labels or [_ALL_REGIONS_LABEL]
+        coverage_default_display = [
+            label for label in coverage_default if label in coverage_choices
+        ] or [_ALL_REGIONS_LABEL]
 
     # -------------------------
     # Session State Sync
     # -------------------------
     bank_value_default = bank_default
     if st is not None:
-        bank_value_default = float(
-            st.session_state.setdefault("carbon_bank0", bank_default)
-        )
+        bank_value_default = float(st.session_state.setdefault("carbon_bank0", bank_default))
 
     def _mark_last_changed(key: str) -> None:
         try:
@@ -972,12 +927,8 @@ def render_carbon_module_controls(
     last_changed = None
     if st is not None:
         last_changed = st.session_state.get("carbon_module_last_changed")
-        session_enabled_default = bool(
-            st.session_state.get("carbon_enable", enabled_default)
-        )
-        session_price_default = bool(
-            st.session_state.get("carbon_price_enable", price_enabled_default)
-        )
+        session_enabled_default = bool(st.session_state.get("carbon_enable", enabled_default))
+        session_price_default = bool(st.session_state.get("carbon_price_enable", price_enabled_default))
         if session_enabled_default and session_price_default:
             if last_changed == "cap":
                 session_price_default = False
@@ -987,7 +938,7 @@ def render_carbon_module_controls(
             st.session_state["carbon_price_enable"] = session_price_default
 
     # -------------------------
-    # Cap vs Price mutual exclusion toggles
+    # Cap vs Price toggles (mutually exclusive)
     # -------------------------
     enabled = container.toggle(
         "Enable carbon cap",
@@ -1074,9 +1025,7 @@ def render_carbon_module_controls(
             disabled=not (enabled and control_override),
         )
         control_period_years = (
-            _sanitize_control_period(control_period_value)
-            if enabled and control_override
-            else None
+            _sanitize_control_period(control_period_value) if enabled and control_override else None
         )
 
         coverage_selection_raw = cap_panel.multiselect(
@@ -1131,6 +1080,7 @@ def render_carbon_module_controls(
         price_schedule=price_schedule,
         errors=errors,
     )
+
 
 
 # -------------------------
@@ -3964,6 +3914,7 @@ def main() -> None:
             return
         st.session_state.pop("confirm_run", None)
         st.session_state.pop("cancel_run", None)
+
     dispatch_use_network = bool(
         dispatch_settings.enabled and dispatch_settings.mode == 'network'
     )
@@ -3989,16 +3940,52 @@ def main() -> None:
         'module_config': copy.deepcopy(run_config.get('modules', {})),
     }
 
-    if isinstance(pending_run, Mapping):
-        pending_params = pending_run.get('params')
-        if not isinstance(pending_params, Mapping) or pending_params != current_run_payload:
+    def _build_summary_from_payload(payload: Mapping[str, Any]) -> list[tuple[str, Any]]:
+        summary_builder = globals().get("_build_run_summary")
+        if callable(summary_builder):
+            try:
+                return summary_builder(payload, config_label=config_label)
+            except Exception:  # pragma: no cover - defensive guard
+                LOGGER.exception("Unable to build run summary")
+        return []
+
+    if run_clicked:
+        _clear_confirmation_button_state()
+        if assumption_errors or module_errors:
+            st.error(
+                "Resolve the configuration issues above before running the simulation."
+            )
             st.session_state.pop('pending_run', None)
+            st.session_state.pop('show_confirm_modal', None)
             pending_run = None
-            st.session_state['show_confirm_modal'] = False
             show_confirm_modal = False
-            _clear_confirmation_button_state()
+        else:
+            run_inputs_payload = copy.deepcopy(current_run_payload)
+            summary_details = _build_summary_from_payload(run_inputs_payload)
+            st.session_state['pending_run'] = {
+                'params': run_inputs_payload,
+                'summary': summary_details,
+            }
+            st.session_state['show_confirm_modal'] = True
+            pending_run = st.session_state['pending_run']
+            show_confirm_modal = True
+
+    pending_run_value = st.session_state.get('pending_run')
+    pending_run = pending_run_value if isinstance(pending_run_value, Mapping) else None
+    show_confirm_modal = bool(st.session_state.get('show_confirm_modal'))
+    run_in_progress = bool(st.session_state.get('run_in_progress'))
 
     if isinstance(pending_run, Mapping) and show_confirm_modal and not run_in_progress:
+        pending_params = pending_run.get('params') if isinstance(pending_run, Mapping) else None
+        if isinstance(pending_params, Mapping) and pending_params != current_run_payload:
+            updated_payload = copy.deepcopy(current_run_payload)
+            st.session_state['pending_run'] = {
+                'params': updated_payload,
+                'summary': _build_summary_from_payload(updated_payload),
+            }
+            pending_run = st.session_state['pending_run']
+            pending_params = pending_run.get('params') if isinstance(pending_run, Mapping) else None
+
         # -------------------------
         # Confirm Run Dialog Handling
         # -------------------------
@@ -4060,6 +4047,7 @@ def main() -> None:
         if cancel_clicked:
             st.session_state.pop("pending_run", None)
             st.session_state.pop("show_confirm_modal", None)
+            st.session_state.pop("confirmed_run_params", None)
             st.session_state["run_in_progress"] = False
             _clear_confirmation_button_state()
             pending_run = None
@@ -4067,7 +4055,6 @@ def main() -> None:
             run_in_progress = False
 
         elif confirm_clicked:
-            pending_params = pending_run.get("params") if isinstance(pending_run, Mapping) else None
             if isinstance(pending_params, Mapping):
                 run_inputs = dict(pending_params)
                 st.session_state["confirmed_run_params"] = run_inputs
@@ -4081,23 +4068,23 @@ def main() -> None:
             pending_run = None
             show_confirm_modal = False
 
-    # Refresh pending run reference after any confirm/cancel handling
+    # -------------------------
+    # Pending run + confirm modal state
+    # -------------------------
     pending_run_value = st.session_state.get("pending_run")
     pending_run = pending_run_value if isinstance(pending_run_value, Mapping) else None
     show_confirm_modal = bool(st.session_state.get("show_confirm_modal"))
     run_in_progress = bool(st.session_state.get("run_in_progress"))
 
-    # Trigger showing modal if a run is pending
+    # If there’s a pending run but no modal yet, open it
     if isinstance(pending_run, Mapping) and not show_confirm_modal and not run_in_progress:
         show_confirm_modal = True
         st.session_state["show_confirm_modal"] = True
 
-    # Handle run click to build pending run payload
+    # Handle "Run Model" button click
     if run_clicked:
         if assumption_errors or module_errors:
-            st.error(
-                "Resolve the configuration issues above before running the simulation."
-            )
+            st.error("Resolve the configuration issues above before running the simulation.")
         else:
             run_inputs_payload = copy.deepcopy(current_run_payload) or {
                 "config_source": copy.deepcopy(run_config),
@@ -4124,10 +4111,8 @@ def main() -> None:
 
             summary_builder = globals().get("_build_run_summary")
             if callable(summary_builder):
-                summary_details = summary_builder(
-                    run_inputs_payload, config_label=config_label
-                )
-            else:  # defensive fallback
+                summary_details = summary_builder(run_inputs_payload, config_label=config_label)
+            else:
                 summary_details = []
 
             st.session_state["pending_run"] = {
@@ -4138,9 +4123,11 @@ def main() -> None:
             st.session_state["show_confirm_modal"] = True
             show_confirm_modal = True
 
+    # Sync dispatch toggle
     dispatch_use_network = bool(
         dispatch_settings.enabled and dispatch_settings.mode == "network"
     )
+
 
 
     if run_inputs is not None:
