@@ -130,7 +130,12 @@ def test_policy_disabled_applies_carbon_price_schedule():
     annual = outputs.annual.set_index("year")
     assert annual.loc[years[0], "p_co2"] == pytest.approx(price_value)
 
-    dispatch = solve_single(years[0], price_value, frames=frames)
+    dispatch = solve_single(
+        years[0],
+        0.0,
+        frames=frames,
+        carbon_price=price_value,
+    )
     assert annual.loc[years[0], "emissions_tons"] == pytest.approx(dispatch.emissions_tons)
 
 

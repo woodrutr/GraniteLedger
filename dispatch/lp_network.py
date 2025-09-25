@@ -46,10 +46,12 @@ class GeneratorSpec:
     emission_rate: float
     covered: bool = True
 
-    def marginal_cost(self, allowance_cost: float) -> float:
-        """Return the effective marginal cost including any allowance payments."""
+    def marginal_cost(self, allowance_cost: float, carbon_price: float = 0.0) -> float:
+        """Return the effective marginal cost including carbon policy costs."""
 
-        carbon_cost = self.emission_rate * allowance_cost if self.covered else 0.0
+        allowance = float(allowance_cost) if self.covered else 0.0
+        price_component = float(carbon_price)
+        carbon_cost = self.emission_rate * (allowance + price_component)
         return self.variable_cost + carbon_cost
 
 
@@ -293,6 +295,7 @@ def solve(
     generators: Sequence[GeneratorSpec],
     interfaces: Mapping[Tuple[str, str], float] | Iterable[Tuple[Tuple[str, str], float]],
     allowance_cost: float,
+    carbon_price: float = 0.0,
     region_coverage: Mapping[str, bool] | None = None,
     *,
     year: int | None = None,
@@ -352,7 +355,7 @@ def solve(
         lower_bounds.append(0.0)
         capacity_limit = max(0.0, float(generator.capacity))
         upper_bounds.append(capacity_limit)
-        costs.append(generator.marginal_cost(allowance_cost))
+        costs.append(generator.marginal_cost(allowance_cost, carbon_price))
         generator_refs.append(generator)
         column_index = len(matrix_columns) - 1
         generator_indices.append(column_index)
@@ -528,6 +531,7 @@ def solve_from_frames(
     frames: Frames | Mapping[str, pd.DataFrame],
     year: int,
     allowance_cost: float,
+    carbon_price: float = 0.0,
     *,
     generation_standard: GenerationStandardPolicy | None = None,
 ) -> DispatchResult:
@@ -588,6 +592,7 @@ def solve_from_frames(
         generators,
         interfaces,
         allowance_cost,
+        carbon_price,
         region_coverage=coverage_by_region,
         year=year,
         generation_standard=generation_standard,
