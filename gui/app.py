@@ -12,6 +12,8 @@ import logging
 import re
 import shutil
 import sys
+import os
+import shutil
 import tempfile
 from collections.abc import Iterable, Mapping
 from contextlib import contextmanager
@@ -99,7 +101,12 @@ else:  # pragma: no cover - optional dependency
 try:  # pragma: no cover - optional dependency
     from engine.run_loop import run_end_to_end_from_frames as _RUN_END_TO_END
 except ModuleNotFoundError:  # pragma: no cover - optional dependency
-    _RUN_END_TO_END = None
+    if str(PROJECT_ROOT) not in sys.path:
+        sys.path.append(str(PROJECT_ROOT))
+    try:  # pragma: no cover - optional dependency
+        from engine.run_loop import run_end_to_end_from_frames as _RUN_END_TO_END
+    except ModuleNotFoundError:
+        _RUN_END_TO_END = None
 
 try:
     from io_loader import Frames
@@ -114,6 +121,8 @@ logging.basicConfig(level=logging.INFO)
 
 _SESSION_RUN_TOKEN_KEY = "_app_session_run_token"
 _CURRENT_SESSION_RUN_TOKEN = str(uuid4())
+_SCRIPT_ITERATION_KEY = "_app_script_iteration"
+_ACTIVE_RUN_ITERATION_KEY = "_app_active_run_iteration"
 
 try:  # pragma: no cover - optional dependency shim
     from src.common.utilities import get_downloads_directory as _get_downloads_directory
@@ -438,7 +447,6 @@ def _trigger_streamlit_rerun() -> bool:
             return True
 
     return False
-
 
 def _bounded_percent(value: float | int) -> int:
     """Clamp a numeric percent to the inclusive range [0, 100]."""
@@ -1088,19 +1096,49 @@ def _render_general_config_section(
                 return text
         return value_to_label.get(value, region_display_label(value))
 
+    def _canonicalize_selection(entries: Iterable[Any]) -> list[str]:
+        canonical: list[str] = []
+        seen: set[str] = set()
+        for entry in entries:
+            label = _canonical_region_label_entry(entry)
+            if label and label not in seen:
+                canonical.append(label)
+                seen.add(label)
+        if not canonical:
+            canonical = list(default_selection)
+        return canonical
+
     if st is not None:
-        st.session_state.setdefault(_GENERAL_REGIONS_NORMALIZED_KEY, list(default_selection))
+        st.session_state.setdefault(
+            _GENERAL_REGIONS_NORMALIZED_KEY, list(default_selection)
+        )
         prev_raw = st.session_state.get(_GENERAL_REGIONS_NORMALIZED_KEY, [])
         if isinstance(prev_raw, (list, tuple)):
-            previous_clean_selection = tuple(
-                _canonical_region_label_entry(e) for e in prev_raw
-            )
+            previous_clean_selection = _canonicalize_selection(prev_raw)
         elif isinstance(prev_raw, str):
-            previous_clean_selection = (_canonical_region_label_entry(prev_raw),)
+            previous_clean_selection = _canonicalize_selection([prev_raw])
         else:
-            previous_clean_selection = ()
+            previous_clean_selection = list(default_selection)
+
+        existing_widget_value = st.session_state.get("general_regions")
+        if isinstance(existing_widget_value, str):
+            existing_entries: Iterable[Any] = [existing_widget_value]
+        elif isinstance(existing_widget_value, (list, tuple, set)):
+            existing_entries = existing_widget_value
+        else:
+            existing_entries = []
+
+        if existing_entries:
+            canonical_existing = _canonicalize_selection(existing_entries)
+        else:
+            canonical_existing = previous_clean_selection
+
+        if list(existing_entries) != canonical_existing:
+            st.session_state["general_regions"] = list(canonical_existing)
+
+        previous_clean_selection = canonical_existing
     else:
-        previous_clean_selection = tuple(default_selection)
+        previous_clean_selection = list(default_selection)
 
     selected_regions_raw = list(
         container.multiselect(
@@ -1120,8 +1158,6 @@ def _render_general_config_section(
         if label and label not in seen_labels:
             canonical_selection.append(label)
             seen_labels.add(label)
-    if canonical_selection != selected_regions_raw and st is not None:
-        st.session_state["general_regions"] = canonical_selection
     selected_regions_raw = canonical_selection
     if st is not None:
         st.session_state[_GENERAL_REGIONS_NORMALIZED_KEY] = list(selected_regions_raw)
@@ -2655,17 +2691,109 @@ def _ensure_years_in_demand(frames: FramesType, years: Iterable[int]) -> FramesT
     return frames.with_frame("demand", demand_updated)
 
 
+def _temporary_output_directory(prefix: str = "bluesky_gui_") -> Path:
+    """Create a writable temporary directory for engine CSV outputs.
+
+    Some execution environments (notably restricted containers) provide a
+    read-only ``/tmp``.  ``tempfile.mkdtemp`` raises :class:`PermissionError`
+    in those cases which previously caused CSV exports to silently fail.  To
+    keep the download buttons working we attempt a small set of candidate
+    locations and fall back to a project specific directory under the current
+    working directory or the user's home directory.
+    """
+
+    candidates: list[Path] = []
+
+    override = os.environ.get("GRANITELEDGER_TMPDIR")
+    if override:
+        candidates.append(Path(override).expanduser())
+
+    candidates.append(Path(tempfile.gettempdir()))
+    candidates.append(Path.cwd() / ".graniteledger" / "tmp")
+
+    home = Path.home()
+    if home:
+        candidates.append(home / ".graniteledger" / "tmp")
+
+    tried: list[tuple[Path, Exception]] = []
+    seen: set[Path] = set()
+    for base_dir in candidates:
+        if base_dir in seen:
+            continue
+        seen.add(base_dir)
+
+        try:
+            base_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            tried.append((base_dir, exc))
+            continue
+
+        try:
+            return Path(tempfile.mkdtemp(prefix=prefix, dir=str(base_dir)))
+        except OSError as exc:
+            tried.append((base_dir, exc))
+            continue
+
+    error_detail = "; ".join(f"{path}: {exc}" for path, exc in tried) or "no candidates available"
+    raise RuntimeError(f"Unable to create temporary output directory ({error_detail}).")
+
+
 def _write_outputs_to_temp(outputs) -> tuple[Path, dict[str, bytes]]:
-    temp_dir = Path(tempfile.mkdtemp(prefix="bluesky_gui_"))
+    temp_dir = _temporary_output_directory()
     # Expect outputs to expose to_csv(target_dir)
     if hasattr(outputs, "to_csv"):
-        outputs.to_csv(temp_dir)
+        try:
+            outputs.to_csv(temp_dir)
+        except Exception:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            raise
     else:
+        shutil.rmtree(temp_dir, ignore_errors=True)
         raise TypeError("Runner outputs object does not implement to_csv(Path).")
     csv_files: dict[str, bytes] = {}
     for csv_path in temp_dir.glob("*.csv"):
         csv_files[csv_path.name] = csv_path.read_bytes()
     return temp_dir, csv_files
+
+
+def _extract_output_dataframe(outputs: Any, names: Sequence[str]) -> pd.DataFrame:
+    """Return a DataFrame from ``outputs`` matching one of ``names``.
+
+    The engine historically exposed results as :class:`EngineOutputs` with
+    attributes named ``annual``, ``emissions_by_region`` and so on.  Some
+    development branches temporarily renamed these attributes which broke the
+    GUI.  This helper provides a resilient lookup that supports both the
+    canonical names and any temporary aliases.  When a name cannot be resolved
+    an empty DataFrame is returned so the UI can still render informative
+    placeholders instead of failing outright.
+    """
+
+    for name in names:
+        candidate: Any | None = None
+        if hasattr(outputs, name):
+            candidate = getattr(outputs, name)
+        elif isinstance(outputs, Mapping):
+            candidate = outputs.get(name)
+
+        if isinstance(candidate, pd.DataFrame):
+            return candidate
+        if candidate is None:
+            continue
+
+        try:
+            coerced = pd.DataFrame(candidate)
+        except Exception:  # pragma: no cover - defensive guard
+            LOGGER.warning(
+                "Unable to coerce engine output field '%s' to a DataFrame.", name
+            )
+            continue
+        else:
+            return coerced
+
+    LOGGER.warning(
+        "Engine runner outputs missing expected field(s): %s", ", ".join(names)
+    )
+    return pd.DataFrame()
 
 
 def _read_uploaded_dataframe(uploaded_file: Any | None) -> pd.DataFrame | None:
@@ -3435,6 +3563,7 @@ def run_policy_simulation(
             banking_enabled=bool(allowance_banking_enabled),
             carbon_price_schedule=carbon_price_for_frames,
         )
+        demand_years: set[int] = set(years)
     else:
         frames_obj = Frames.coerce(
             frames,
@@ -3442,6 +3571,25 @@ def run_policy_simulation(
             banking_enabled=bool(allowance_banking_enabled),
             carbon_price_schedule=carbon_price_for_frames,
         )
+        try:
+            demand_years = {int(year) for year in frames_obj.demand()["year"].unique()}
+        except Exception as exc:
+            LOGGER.exception("Unable to read demand data from supplied frames")
+            return {"error": f"Invalid demand data: {exc}"}
+
+    requested_years = {int(year) for year in years}
+    if frames is not None and demand_years and requested_years:
+        if not demand_years.intersection(requested_years):
+            sorted_requested = ", ".join(str(year) for year in sorted(requested_years))
+            sorted_available = ", ".join(str(year) for year in sorted(demand_years))
+            return {
+                "error": (
+                    "No demand data is available for the requested simulation years. "
+                    f"Demand data covers years [{sorted_available}], but the run requested "
+                    f"[{sorted_requested}]. Update the configuration or provide start_year/"
+                    "end_year values that match the demand data."
+                )
+            }
 
     try:
         frames_obj = _ensure_years_in_demand(frames_obj, years)
@@ -3619,11 +3767,24 @@ def run_policy_simulation(
         'assumption_overrides': list(assumption_notes or []),
     }
 
+    annual_df = _extract_output_dataframe(
+        outputs, ['annual', 'annual_results', 'annual_output', 'annual_outputs']
+    )
+    emissions_df = _extract_output_dataframe(
+        outputs, ['emissions_by_region', 'emissions', 'emissions_region']
+    )
+    price_df = _extract_output_dataframe(
+        outputs, ['price_by_region', 'dispatch_price_by_region', 'region_prices']
+    )
+    flows_df = _extract_output_dataframe(
+        outputs, ['flows', 'network_flows', 'flows_by_region']
+    )
+
     result: dict[str, Any] = {
-        'annual': outputs.annual,
-        'emissions_by_region': outputs.emissions_by_region,
-        'price_by_region': outputs.price_by_region,
-        'flows': outputs.flows,
+        'annual': annual_df,
+        'emissions_by_region': emissions_df,
+        'price_by_region': price_df,
+        'flows': flows_df,
         'module_config': merged_modules,
         'config': config,
         'csv_files': csv_files,
@@ -3632,6 +3793,15 @@ def run_policy_simulation(
     }
     if normalized_regions:
         result['cap_regions'] = list(normalized_regions)
+
+    optional_frames = {
+        'capacity_by_technology': ['capacity_by_technology'],
+        'generation_by_technology': ['generation_by_technology'],
+    }
+    for key, aliases in optional_frames.items():
+        frame = _extract_output_dataframe(outputs, aliases)
+        if isinstance(frame, pd.DataFrame):
+            result[key] = frame
 
     return result
 
@@ -3754,6 +3924,41 @@ def _reset_run_state_on_reload() -> None:
         st.session_state['run_in_progress'] = False
         st.session_state.pop('pending_run', None)
         st.session_state.pop('show_confirm_modal', None)
+
+
+def _advance_script_iteration() -> int:
+    """Increment and return the current Streamlit rerun iteration counter."""
+
+    try:
+        _ensure_streamlit()
+    except ModuleNotFoundError:  # pragma: no cover - GUI dependency missing
+        return 0
+
+    current = int(st.session_state.get(_SCRIPT_ITERATION_KEY, 0)) + 1
+    st.session_state[_SCRIPT_ITERATION_KEY] = current
+    return current
+
+
+def _recover_stuck_run_state(current_iteration: int) -> None:
+    """Clear stale run state flags left behind by interrupted executions."""
+
+    try:
+        _ensure_streamlit()
+    except ModuleNotFoundError:  # pragma: no cover - GUI dependency missing
+        return
+
+    if not st.session_state.get('run_in_progress'):
+        st.session_state.pop(_ACTIVE_RUN_ITERATION_KEY, None)
+        return
+
+    active_iteration = st.session_state.get(_ACTIVE_RUN_ITERATION_KEY)
+    stale_state = not isinstance(active_iteration, int) or active_iteration < current_iteration
+    if stale_state:
+        LOGGER.warning('Detected stale run_in_progress flag; resetting run state')
+        st.session_state['run_in_progress'] = False
+        st.session_state.pop('pending_run', None)
+        st.session_state.pop('show_confirm_modal', None)
+        st.session_state.pop(_ACTIVE_RUN_ITERATION_KEY, None)
 
 
 def _build_run_summary(settings: Mapping[str, Any], *, config_label: str) -> list[tuple[str, str]]:
@@ -4078,7 +4283,9 @@ def main() -> None:
     st.session_state.setdefault('last_result', None)
     st.session_state.setdefault('temp_dirs', [])
     st.session_state.setdefault('run_in_progress', False)
+    current_iteration = _advance_script_iteration()
     _reset_run_state_on_reload()
+    _recover_stuck_run_state(current_iteration)
 
     module_errors: list[str] = []
     assumption_notes: list[str] = []
@@ -4461,6 +4668,7 @@ def main() -> None:
         if cancel_clicked:
             st.session_state.pop('pending_run', None)
             st.session_state.pop('show_confirm_modal', None)
+            st.session_state.pop(_ACTIVE_RUN_ITERATION_KEY, None)
             st.session_state['run_in_progress'] = False
             _clear_confirmation_button_state()
             pending_run = None
@@ -4471,6 +4679,7 @@ def main() -> None:
             confirmed_payload = dict(pending_params)
             st.session_state['_confirmed_run_params'] = confirmed_payload
             st.session_state['run_in_progress'] = True
+            st.session_state[_ACTIVE_RUN_ITERATION_KEY] = current_iteration
             st.session_state.pop('pending_run', None)
             st.session_state.pop('show_confirm_modal', None)
             _clear_confirmation_button_state()
@@ -4496,7 +4705,7 @@ def main() -> None:
             run_inputs.get('dispatch_use_network', dispatch_use_network)
         )
 
-    result = st.session_state.get('last_result')
+    result = st.session_state.get("last_result")
 
     inputs_for_run: Mapping[str, Any] = run_inputs or {}
     run_result: Mapping[str, Any] | None = None
@@ -4504,10 +4713,11 @@ def main() -> None:
     progress_state = _ensure_progress_state()
     progress_section = st.container()
     with progress_section:
-        st.subheader('Run progress')
+        st.subheader("Run progress")
         progress_message_placeholder = st.empty()
         progress_bar_placeholder = st.empty()
         progress_log_placeholder = st.empty()
+
     _sync_progress_ui(
         progress_state,
         progress_message_placeholder,
@@ -4515,137 +4725,149 @@ def main() -> None:
         progress_log_placeholder,
     )
 
-    if execute_run:
-        frames_for_execution = inputs_for_run.get('frames', frames_for_run)
-        if frames_for_execution is None:
-            frames_for_execution = frames_for_run
 
-        assumption_notes_value = inputs_for_run.get('assumption_notes', assumption_notes)
-        assumption_notes_for_run: list[str] = []
-        if isinstance(assumption_notes_value, Iterable) and not isinstance(
-            assumption_notes_value, (str, bytes, Mapping)
-        ):
-            assumption_notes_for_run = [str(note) for note in assumption_notes_value]
-        elif assumption_notes_value not in (None, ''):
-            assumption_notes_for_run = [str(assumption_notes_value)]
+if execute_run:
+    frames_for_execution = inputs_for_run.get("frames", frames_for_run)
+    if frames_for_execution is None:
+        frames_for_execution = frames_for_run
+
+    assumption_notes_value = inputs_for_run.get("assumption_notes", assumption_notes)
+    assumption_notes_for_run: list[str] = []
+    if isinstance(assumption_notes_value, Iterable) and not isinstance(
+        assumption_notes_value, (str, bytes, Mapping)
+    ):
+        assumption_notes_for_run = [str(note) for note in assumption_notes_value]
+    elif assumption_notes_value not in (None, ""):
+        assumption_notes_for_run = [str(assumption_notes_value)]
+
+    try:
+        st.session_state["run_in_progress"] = True
+        st.session_state[_ACTIVE_RUN_ITERATION_KEY] = current_iteration
+        st.session_state.pop("show_confirm_modal", None)
+        _cleanup_session_temp_dirs()
+
+        progress_state = _reset_progress_state()
+        progress_state.stage = "initializing"
+        progress_state.message = "Initializing simulation…"
+        progress_state.percent_complete = 0
+        _record_progress_log(progress_state, progress_state.message, progress_state.stage)
+        _sync_progress_ui(
+            progress_state,
+            progress_message_placeholder,
+            progress_bar_widget,
+            progress_log_placeholder,
+        )
+
+        def _update_progress(stage: str, payload: Mapping[str, object]) -> None:
+            try:
+                message, percent = _progress_update_from_stage(
+                    stage,
+                    payload,
+                    progress_state,
+                )
+            except Exception:  # defensive guard
+                LOGGER.exception("Unable to interpret progress update for stage %s", stage)
+                return
+
+            progress_state.stage = stage
+            progress_state.message = message
+            progress_state.percent_complete = percent
+            _record_progress_log(progress_state, message, stage)
+            _sync_progress_ui(
+                progress_state,
+                progress_message_placeholder,
+                progress_bar_widget,
+                progress_log_placeholder,
+            )
 
         try:
-            st.session_state['run_in_progress'] = True
-            st.session_state.pop('show_confirm_modal', None)
-            _cleanup_session_temp_dirs()
-            progress_state = _reset_progress_state()
-            progress_state.stage = 'initializing'
-            progress_state.message = 'Initializing simulation…'
-            progress_state.percent_complete = 0
-            _record_progress_log(progress_state, progress_state.message, progress_state.stage)
-            _sync_progress_ui(
-                progress_state,
-                progress_message_placeholder,
-                progress_bar_placeholder,
-                progress_log_placeholder,
-            )
-
-            def _update_progress(stage: str, payload: Mapping[str, object]) -> None:
-                try:
-                    message, percent = _progress_update_from_stage(
-                        stage,
-                        payload,
-                        progress_state,
+            run_result = run_policy_simulation(
+                inputs_for_run.get("config_source", run_config),
+                start_year=inputs_for_run.get("start_year", start_year_val),
+                end_year=inputs_for_run.get("end_year", end_year_val),
+                carbon_policy_enabled=bool(
+                    inputs_for_run.get("carbon_policy_enabled", carbon_settings.enabled)
+                ),
+                enable_floor=bool(
+                    inputs_for_run.get("enable_floor", carbon_settings.enable_floor)
+                ),
+                enable_ccr=bool(inputs_for_run.get("enable_ccr", carbon_settings.enable_ccr)),
+                ccr1_enabled=bool(
+                    inputs_for_run.get("ccr1_enabled", carbon_settings.ccr1_enabled)
+                ),
+                ccr2_enabled=bool(
+                    inputs_for_run.get("ccr2_enabled", carbon_settings.ccr2_enabled)
+                ),
+                allowance_banking_enabled=bool(
+                    inputs_for_run.get(
+                        "allowance_banking_enabled", carbon_settings.banking_enabled
                     )
-                except Exception:  # pragma: no cover - defensive guard
-                    LOGGER.exception('Unable to interpret progress update for stage %s', stage)
-                    return
-
-                progress_state.stage = stage
-                progress_state.message = message
-                progress_state.percent_complete = percent
-                _record_progress_log(progress_state, message, stage)
-                _sync_progress_ui(
-                    progress_state,
-                    progress_message_placeholder,
-                    progress_bar_placeholder,
-                    progress_log_placeholder,
-                )
-
-            try:
-                run_result = run_policy_simulation(
-                    inputs_for_run.get('config_source', run_config),
-                    start_year=inputs_for_run.get('start_year', start_year_val),
-                    end_year=inputs_for_run.get('end_year', end_year_val),
-                    carbon_policy_enabled=bool(
-                        inputs_for_run.get('carbon_policy_enabled', carbon_settings.enabled)
-                    ),
-                    enable_floor=bool(
-                        inputs_for_run.get('enable_floor', carbon_settings.enable_floor)
-                    ),
-                    enable_ccr=bool(inputs_for_run.get('enable_ccr', carbon_settings.enable_ccr)),
-                    ccr1_enabled=bool(
-                        inputs_for_run.get('ccr1_enabled', carbon_settings.ccr1_enabled)
-                    ),
-                    ccr2_enabled=bool(
-                        inputs_for_run.get('ccr2_enabled', carbon_settings.ccr2_enabled)
-                    ),
-                    allowance_banking_enabled=bool(
-                        inputs_for_run.get('allowance_banking_enabled', carbon_settings.banking_enabled)
-                    ),
-                    initial_bank=float(
-                        inputs_for_run.get('initial_bank', carbon_settings.initial_bank)
-                    ),
-                    coverage_regions=inputs_for_run.get(
-                        'coverage_regions', carbon_settings.coverage_regions
-                    ),
-                    control_period_years=inputs_for_run.get(
-                        'control_period_years', carbon_settings.control_period_years
-                    ),
-                    cap_regions=inputs_for_run.get(
-                        'cap_regions', carbon_settings.cap_regions
-                    ),
-                    carbon_price_enabled=inputs_for_run.get(
-                        'carbon_price_enabled', carbon_settings.price_enabled
-                    ),
-                    carbon_price_value=inputs_for_run.get(
-                        'carbon_price_value', carbon_settings.price_per_ton
-                    ),
-                    carbon_price_schedule=inputs_for_run.get(
-                        'carbon_price_schedule', carbon_settings.price_schedule
-                    ),
-                    dispatch_use_network=bool(
-                        inputs_for_run.get('dispatch_use_network', dispatch_use_network)
-                    ),
-                    module_config=inputs_for_run.get(
-                        'module_config', run_config.get('modules', {})
-                    ),
-                    frames=frames_for_execution,
-                    assumption_notes=assumption_notes_for_run,
-                    progress_cb=_update_progress,
-                )
-            except Exception as exc:  # pragma: no cover - defensive guard
-                LOGGER.exception('Policy simulation failed during execution')
-                run_result = {'error': str(exc)}
-        except Exception as exc:  # pragma: no cover - defensive guard
-            LOGGER.exception('Policy simulation failed before execution could complete')
-            run_result = {'error': str(exc)}
-        finally:
-            st.session_state['run_in_progress'] = False
-            if isinstance(run_result, Mapping):
-                if 'error' in run_result:
-                    progress_state.stage = 'error'
-                    progress_state.message = f"Simulation failed: {run_result['error']}"
-                else:
-                    progress_state.stage = 'complete'
-                    progress_state.percent_complete = 100
-                    progress_state.message = 'Simulation complete. Outputs updated below.'
-            else:
-                progress_state.stage = 'error'
-                progress_state.message = 'Simulation ended before producing results.'
-
-            _record_progress_log(progress_state, progress_state.message, progress_state.stage)
-            _sync_progress_ui(
-                progress_state,
-                progress_message_placeholder,
-                progress_bar_placeholder,
-                progress_log_placeholder,
+                ),
+                initial_bank=float(
+                    inputs_for_run.get("initial_bank", carbon_settings.initial_bank)
+                ),
+                coverage_regions=inputs_for_run.get(
+                    "coverage_regions", carbon_settings.coverage_regions
+                ),
+                control_period_years=inputs_for_run.get(
+                    "control_period_years", carbon_settings.control_period_years
+                ),
+                cap_regions=inputs_for_run.get(
+                    "cap_regions", carbon_settings.cap_regions
+                ),
+                carbon_price_enabled=inputs_for_run.get(
+                    "carbon_price_enabled", carbon_settings.price_enabled
+                ),
+                carbon_price_value=inputs_for_run.get(
+                    "carbon_price_value", carbon_settings.price_per_ton
+                ),
+                carbon_price_schedule=inputs_for_run.get(
+                    "carbon_price_schedule", carbon_settings.price_schedule
+                ),
+                dispatch_use_network=bool(
+                    inputs_for_run.get("dispatch_use_network", dispatch_use_network)
+                ),
+                module_config=inputs_for_run.get(
+                    "module_config", run_config.get("modules", {})
+                ),
+                frames=frames_for_execution,
+                assumption_notes=assumption_notes_for_run,
+                progress_cb=_update_progress,
             )
+        except Exception as exc:  # defensive guard
+            LOGGER.exception("Policy simulation failed during execution")
+            run_result = {"error": str(exc)}
+
+    except Exception as exc:  # defensive guard
+        LOGGER.exception("Policy simulation failed before execution could complete")
+        run_result = {"error": str(exc)}
+
+    finally:
+        st.session_state["run_in_progress"] = False
+        st.session_state.pop(_ACTIVE_RUN_ITERATION_KEY, None)
+
+        if isinstance(run_result, Mapping):
+            if "error" in run_result:
+                progress_state.stage = "error"
+                progress_state.message = f"Simulation failed: {run_result['error']}"
+            else:
+                progress_state.stage = "complete"
+                progress_state.percent_complete = 100
+                progress_state.message = "Simulation complete. Outputs updated below."
+                # Save results for output panel
+                st.session_state["last_result"] = run_result
+        else:
+            progress_state.stage = "error"
+            progress_state.message = "Simulation ended before producing results."
+
+        _record_progress_log(progress_state, progress_state.message, progress_state.stage)
+        _sync_progress_ui(
+            progress_state,
+            progress_message_placeholder,
+            progress_bar_widget,
+            progress_log_placeholder,
+        )
+
 
         if isinstance(run_result, Mapping) and 'temp_dir' in run_result:
             st.session_state['temp_dirs'] = [str(run_result['temp_dir'])]
