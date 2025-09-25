@@ -3454,6 +3454,15 @@ def _build_run_summary(
             )
         )
 
+    capacity_toggle = params.get("dispatch_capacity_expansion")
+    if capacity_toggle is not None:
+        summary.append(
+            (
+                "Capacity expansion",
+                _enabled_label(capacity_toggle, true="Enabled", false="Disabled"),
+            )
+        )
+
     module_config = params.get("module_config")
     if isinstance(module_config, Mapping):
         enabled_modules: list[str] = []
@@ -3499,6 +3508,7 @@ def run_policy_simulation(
     carbon_price_value: float | None = None,
     carbon_price_schedule: Mapping[int, float] | Mapping[str, Any] | None = None,
     dispatch_use_network: bool = False,
+    dispatch_capacity_expansion: bool | None = None,
     module_config: Mapping[str, Any] | None = None,
     frames: FramesType | Mapping[str, pd.DataFrame] | None = None,
     assumption_notes: Iterable[str] | None = None,
@@ -3616,7 +3626,22 @@ def run_policy_simulation(
     config["modules"] = merged_modules
 
     dispatch_record = merged_modules.setdefault("electricity_dispatch", {})
+    capacity_setting = dispatch_record.get("capacity_expansion")
+    if dispatch_capacity_expansion is not None:
+        capacity_flag = bool(dispatch_capacity_expansion)
+    elif capacity_setting is not None:
+        capacity_flag = bool(capacity_setting)
+    else:
+        capacity_flag = True
+    dispatch_record["capacity_expansion"] = capacity_flag
     dispatch_record["use_network"] = bool(dispatch_use_network)
+
+    if capacity_flag:
+        config["sw_expansion"] = 1
+    else:
+        config["sw_expansion"] = 0
+        if config.get("sw_rm") not in (None, 0, False):
+            config["sw_rm"] = 0
 
     def _coerce_year_range(start: int | None, end: int | None) -> list[int]:
         if start is None and end is None:
@@ -4665,6 +4690,7 @@ def main() -> None:
             dict(carbon_settings.price_schedule) if carbon_settings.price_enabled else {}
         ),
         "dispatch_use_network": dispatch_use_network,
+        "dispatch_capacity_expansion": bool(dispatch_settings.capacity_expansion),
         "module_config": copy.deepcopy(run_config.get("modules", {})),
         "frames": frames_for_run,
         "assumption_notes": list(assumption_notes),
@@ -4709,6 +4735,10 @@ def main() -> None:
         start_year_val = int(run_inputs.get("start_year", start_year_val))
         end_year_val = int(run_inputs.get("end_year", end_year_val))
         dispatch_use_network = bool(run_inputs.get("dispatch_use_network", dispatch_use_network))
+        if "dispatch_capacity_expansion" in run_inputs:
+            dispatch_settings.capacity_expansion = bool(
+                run_inputs.get("dispatch_capacity_expansion")
+            )
 
     # Outputs/progress scaffolding (widgets filled later)
     result = st.session_state.get("last_result")
@@ -4838,6 +4868,9 @@ def main() -> None:
                     ),
                     dispatch_use_network=bool(
                         inputs_for_run.get("dispatch_use_network", dispatch_use_network)
+                    ),
+                    dispatch_capacity_expansion=inputs_for_run.get(
+                        "dispatch_capacity_expansion", dispatch_settings.capacity_expansion
                     ),
                     module_config=inputs_for_run.get(
                         "module_config", run_config.get("modules", {})

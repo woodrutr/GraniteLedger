@@ -158,6 +158,46 @@ def test_backend_policy_toggle_affects_price():
     _cleanup_temp_dir(disabled)
 
 
+def test_dispatch_capacity_toggle_updates_config():
+    config = _baseline_config()
+    frames = _frames_for_years([2025])
+    module_config = {
+        "electricity_dispatch": {"enabled": True, "capacity_expansion": True}
+    }
+
+    disabled = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2025,
+        cap_regions=[1],
+        frames=frames,
+        dispatch_capacity_expansion=False,
+        module_config=module_config,
+    )
+
+    assert "error" not in disabled
+    assert disabled["config"].get("sw_expansion") == 0
+    dispatch_cfg = disabled["module_config"]["electricity_dispatch"]
+    assert dispatch_cfg["capacity_expansion"] is False
+
+    enabled = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2025,
+        cap_regions=[1],
+        frames=frames,
+        dispatch_capacity_expansion=True,
+        module_config=module_config,
+    )
+
+    assert "error" not in enabled
+    assert enabled["config"].get("sw_expansion") == 1
+    assert enabled["module_config"]["electricity_dispatch"]["capacity_expansion"] is True
+
+    _cleanup_temp_dir(disabled)
+    _cleanup_temp_dir(enabled)
+
+
 def test_backend_handles_renamed_engine_outputs(monkeypatch):
     config = _baseline_config()
     frames = _frames_for_years([2025])
