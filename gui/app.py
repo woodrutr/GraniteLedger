@@ -987,7 +987,29 @@ def render_carbon_module_controls(
         if not coverage_default_display:
             coverage_default_display = [_ALL_REGIONS_LABEL]
 
+def build_carbon_policy_ui(
+    container,
+    run_config,
+    defaults,
+    enabled_default: bool,
+    price_defaults: dict[str, Any],
+    enable_floor_default: bool,
+    enable_ccr_default: bool,
+    ccr1_default: bool,
+    ccr2_default: bool,
+    banking_default: bool,
+    bank_default: float,
+    control_override_default: bool,
+    control_default: int,
+    coverage_choices: list[str],
+    coverage_default_display: list[str],
+    price_schedule_default: dict[int, float],
+) -> CarbonModuleSettings:
+    """Construct the Carbon Policy section of the UI and return selected settings."""
+
+    # -------------------------
     # Carbon price defaults
+    # -------------------------
     price_enabled_default = bool(price_defaults.get("enabled", False))
     price_value_raw = price_defaults.get("price_per_ton", price_defaults.get("price", 0.0))
     price_default = _coerce_float(price_value_raw, default=0.0)
@@ -1000,7 +1022,7 @@ def render_carbon_module_controls(
     def _mark_last_changed(key: str) -> None:
         try:
             _ensure_streamlit()
-        except ModuleNotFoundError:  # pragma: no cover - GUI dependency missing
+        except ModuleNotFoundError:  # pragma: no cover
             return
         st.session_state["carbon_module_last_changed"] = key
 
@@ -1010,9 +1032,7 @@ def render_carbon_module_controls(
     if st is not None:  # pragma: no cover - UI path
         last_changed = st.session_state.get("carbon_module_last_changed")
         session_enabled_default = bool(st.session_state.get("carbon_enable", enabled_default))
-        session_price_default = bool(
-            st.session_state.get("carbon_price_enable", price_enabled_default)
-        )
+        session_price_default = bool(st.session_state.get("carbon_price_enable", price_enabled_default))
         if session_enabled_default and session_price_default:
             if last_changed == "cap":
                 session_price_default = False
@@ -1021,148 +1041,149 @@ def render_carbon_module_controls(
             st.session_state["carbon_enable"] = session_enabled_default
             st.session_state["carbon_price_enable"] = session_price_default
 
-# -------------------------
-# Carbon Policy UI Section
-# -------------------------
-# Cap vs Price mutual exclusion
-enabled = container.toggle(
-    "Enable carbon cap",
-    value=session_enabled_default,
-    key="carbon_enable",
-    on_change=lambda: _mark_last_changed("cap"),
-)
-price_enabled = container.toggle(
-    "Enable carbon price",
-    value=session_price_default,
-    key="carbon_price_enable",
-    on_change=lambda: _mark_last_changed("price"),
-)
+    # -------------------------
+    # Cap vs Price mutual exclusion toggles
+    # -------------------------
+    enabled = container.toggle(
+        "Enable carbon cap",
+        value=session_enabled_default,
+        key="carbon_enable",
+        on_change=lambda: _mark_last_changed("cap"),
+    )
+    price_enabled = container.toggle(
+        "Enable carbon price",
+        value=session_price_default,
+        key="carbon_price_enable",
+        on_change=lambda: _mark_last_changed("price"),
+    )
 
-if enabled and price_enabled:
-    if last_changed == "cap":
-        price_enabled = False
-    else:
-        enabled = False
+    if enabled and price_enabled:
+        if last_changed == "cap":
+            price_enabled = False
+        else:
+            enabled = False
 
-# -------------------------
-# Carbon Cap Panel
-# -------------------------
-with _sidebar_panel(container, enabled) as cap_panel:
-    enable_floor = cap_panel.toggle(
-        "Enable price floor",
-        value=enable_floor_default,
-        key="carbon_floor",
-        disabled=not enabled,
-    )
-    enable_ccr = cap_panel.toggle(
-        "Enable CCR",
-        value=enable_ccr_default,
-        key="carbon_ccr",
-        disabled=not enabled,
-    )
-    ccr1_enabled = cap_panel.toggle(
-        "Enable CCR Tier 1",
-        value=ccr1_default,
-        key="carbon_ccr1",
-        disabled=not (enabled and enable_ccr),
-    )
-    ccr2_enabled = cap_panel.toggle(
-        "Enable CCR Tier 2",
-        value=ccr2_default,
-        key="carbon_ccr2",
-        disabled=not (enabled and enable_ccr),
-    )
-    banking_enabled = cap_panel.toggle(
-        "Enable allowance banking",
-        value=banking_default,
-        key="carbon_banking",
-        disabled=not enabled,
-    )
-    initial_bank = float(
-        cap_panel.number_input(
-            "Initial allowance bank (tons)",
-            min_value=0.0,
-            value=float(bank_value_default if bank_value_default >= 0.0 else 0.0),
-            step=1000.0,
-            format="%f",
-            key="carbon_bank0",
-            disabled=not (enabled and banking_enabled),
+    # -------------------------
+    # Carbon Cap Panel
+    # -------------------------
+    with _sidebar_panel(container, enabled) as cap_panel:
+        enable_floor = cap_panel.toggle(
+            "Enable price floor",
+            value=enable_floor_default,
+            key="carbon_floor",
+            disabled=not enabled,
         )
-    ) if banking_enabled else 0.0
+        enable_ccr = cap_panel.toggle(
+            "Enable CCR",
+            value=enable_ccr_default,
+            key="carbon_ccr",
+            disabled=not enabled,
+        )
+        ccr1_enabled = cap_panel.toggle(
+            "Enable CCR Tier 1",
+            value=ccr1_default,
+            key="carbon_ccr1",
+            disabled=not (enabled and enable_ccr),
+        )
+        ccr2_enabled = cap_panel.toggle(
+            "Enable CCR Tier 2",
+            value=ccr2_default,
+            key="carbon_ccr2",
+            disabled=not (enabled and enable_ccr),
+        )
+        banking_enabled = cap_panel.toggle(
+            "Enable allowance banking",
+            value=banking_default,
+            key="carbon_banking",
+            disabled=not enabled,
+        )
+        initial_bank = (
+            float(
+                cap_panel.number_input(
+                    "Initial allowance bank (tons)",
+                    min_value=0.0,
+                    value=float(bank_value_default if bank_value_default >= 0.0 else 0.0),
+                    step=1000.0,
+                    format="%f",
+                    key="carbon_bank0",
+                    disabled=not (enabled and banking_enabled),
+                )
+            )
+            if banking_enabled
+            else 0.0
+        )
 
-    control_override = cap_panel.toggle(
-        "Override control period",
-        value=control_override_default,
-        key="carbon_control_toggle",
-        disabled=not enabled,
-    )
-    control_period_value = cap_panel.number_input(
-        "Control period length (years)",
-        min_value=1,
-        value=int(control_default if control_default > 0 else 3),
-        step=1,
-        format="%d",
-        key="carbon_control_years",
-        disabled=not (enabled and control_override),
-    )
-    control_period_years = (
-        _sanitize_control_period(control_period_value)
-        if enabled and control_override
-        else None
+        control_override = cap_panel.toggle(
+            "Override control period",
+            value=control_override_default,
+            key="carbon_control_toggle",
+            disabled=not enabled,
+        )
+        control_period_value = cap_panel.number_input(
+            "Control period length (years)",
+            min_value=1,
+            value=int(control_default if control_default > 0 else 3),
+            step=1,
+            format="%d",
+            key="carbon_control_years",
+            disabled=not (enabled and control_override),
+        )
+        control_period_years = (
+            _sanitize_control_period(control_period_value)
+            if enabled and control_override
+            else None
+        )
+
+        coverage_selection_raw = cap_panel.multiselect(
+            "Regions covered by carbon cap",
+            options=coverage_choices,
+            default=coverage_default_display,
+            disabled=not enabled,
+            key="carbon_coverage_regions",
+            help="Select the regions subject to the cap. Choose “All regions” to apply the carbon policy across every region.",
+        )
+        coverage_regions = _normalize_coverage_selection(
+            coverage_selection_raw or coverage_default_display
+        )
+
+    # -------------------------
+    # Carbon Price Panel
+    # -------------------------
+    with _sidebar_panel(container, price_enabled) as price_panel:
+        price_per_ton_value = price_panel.number_input(
+            "Carbon price ($/ton)",
+            min_value=0.0,
+            value=float(price_default if price_default >= 0.0 else 0.0),
+            step=1.0,
+            format="%0.2f",
+            key="carbon_price_value",
+            disabled=not price_enabled,
+        )
+        price_schedule = dict(price_schedule_default) if price_enabled else {}
+
+    # -------------------------
+    # Errors and Return
+    # -------------------------
+    errors: list[str] = []
+    if enabled and price_enabled:
+        errors.append("Cannot enable both carbon cap and carbon price simultaneously.")
+
+    return CarbonModuleSettings(
+        enabled=enabled,
+        price_enabled=price_enabled,
+        enable_floor=enable_floor,
+        enable_ccr=enable_ccr,
+        ccr1_enabled=ccr1_enabled,
+        ccr2_enabled=ccr2_enabled,
+        banking_enabled=banking_enabled,
+        coverage_regions=coverage_regions,
+        control_period_years=control_period_years,
+        price_per_ton=float(price_per_ton_value),
+        initial_bank=initial_bank,
+        price_schedule=price_schedule,
+        errors=errors,
     )
 
-    coverage_selection_raw = cap_panel.multiselect(
-        "Regions covered by carbon cap",
-        options=coverage_choices,
-        default=coverage_default_display,
-        disabled=not enabled,
-        key="carbon_coverage_regions",
-        help=(
-            "Select the regions subject to the cap. Choose “All regions” to apply "
-            "the carbon policy across every region."
-        ),
-    )
-    coverage_regions = _normalize_coverage_selection(
-        coverage_selection_raw or coverage_default_display
-    )
-
-# -------------------------
-# Carbon Price Panel
-# -------------------------
-with _sidebar_panel(container, price_enabled) as price_panel:
-    price_per_ton_value = price_panel.number_input(
-        "Carbon price ($/ton)",
-        min_value=0.0,
-        value=float(price_default if price_default >= 0.0 else 0.0),
-        step=1.0,
-        format="%0.2f",
-        key="carbon_price_value",
-        disabled=not price_enabled,
-    )
-    price_schedule = dict(price_schedule_default) if price_enabled else {}
-
-# -------------------------
-# Errors and Return
-# -------------------------
-errors: list[str] = []
-if enabled and price_enabled:
-    errors.append("Cannot enable both carbon cap and carbon price simultaneously.")
-
-return CarbonModuleSettings(
-    enabled=enabled,
-    price_enabled=price_enabled,
-    enable_floor=enable_floor,
-    enable_ccr=enable_ccr,
-    ccr1_enabled=ccr1_enabled,
-    ccr2_enabled=ccr2_enabled,
-    banking_enabled=banking_enabled,
-    coverage_regions=coverage_regions,
-    control_period_years=control_period_years,
-    price_per_ton=float(price_per_ton_value),
-    initial_bank=initial_bank,
-    price_schedule=price_schedule,
-    errors=errors,
-)
 
 
 # -------------------------
