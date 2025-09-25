@@ -1016,12 +1016,59 @@ def render_carbon_module_controls(
             st.session_state["carbon_price_enable"] = session_price_default
 
     # UI toggles
+    cap_toggle_disabled = session_price_default
     enabled = container.toggle(
         "Enable carbon cap",
         value=session_enabled_default,
         key="carbon_enable",
         on_change=lambda: _mark_last_changed("cap"),
+        disabled=cap_toggle_disabled,
     )
+
+    if cap_toggle_disabled:
+        enabled = False
+
+    enable_floor = container.toggle(
+        "Enable price floor",
+        value=enable_floor_default,
+        key="carbon_floor",
+        disabled=cap_toggle_disabled,
+    )
+    enable_ccr = container.toggle(
+        "Enable CCR",
+        value=enable_ccr_default,
+        key="carbon_ccr",
+        disabled=cap_toggle_disabled,
+    )
+    ccr1_enabled = container.toggle(
+        "Enable CCR Tier 1",
+        value=ccr1_default,
+        key="carbon_ccr1",
+        disabled=cap_toggle_disabled or not enable_ccr,
+    )
+    ccr2_enabled = container.toggle(
+        "Enable CCR Tier 2",
+        value=ccr2_default,
+        key="carbon_ccr2",
+        disabled=cap_toggle_disabled or not enable_ccr,
+    )
+    banking_enabled = container.toggle(
+        "Enable allowance banking",
+        value=banking_default,
+        key="carbon_banking",
+        disabled=cap_toggle_disabled,
+    )
+
+    control_override = container.toggle(
+        "Override control period",
+        value=control_override_default,
+        key="carbon_ctrl_override",
+        disabled=cap_toggle_disabled,
+    )
+    if cap_toggle_disabled:
+        control_override = False
+    control_period_years = control_default if control_override else None
+
     price_enabled = container.toggle(
         "Enable carbon price",
         value=session_price_default,
@@ -1029,28 +1076,43 @@ def render_carbon_module_controls(
         on_change=lambda: _mark_last_changed("price"),
     )
 
-
     if enabled and price_enabled:
         if last_changed == "cap":
             price_enabled = False
         else:
             enabled = False
 
-    enable_floor = container.toggle("Enable price floor", value=enable_floor_default, key="carbon_floor")
-    enable_ccr = container.toggle("Enable CCR", value=enable_ccr_default, key="carbon_ccr")
-    ccr1_enabled = container.toggle("Enable CCR Tier 1", value=ccr1_default, key="carbon_ccr1")
-    ccr2_enabled = container.toggle("Enable CCR Tier 2", value=ccr2_default, key="carbon_ccr2")
-    banking_enabled = container.toggle("Enable allowance banking", value=banking_default, key="carbon_banking")
+    if price_enabled:
+        enabled = False
+        enable_floor = False
+        enable_ccr = False
+        ccr1_enabled = False
+        ccr2_enabled = False
+        banking_enabled = False
+        control_override = False
+        control_period_years = None
 
-    control_override = container.toggle(
-        "Override control period",
-        value=control_override_default,
-        key="carbon_ctrl_override",
-    )
-    control_period_years = control_default if control_override else None
+    if st is not None:  # pragma: no cover - UI path
+        st.session_state["carbon_enable"] = enabled
+        st.session_state["carbon_price_enable"] = price_enabled
 
-    price_per_ton = container.number_input("Carbon price ($/ton)", value=price_default, key="carbon_price_val")
-    price_schedule = price_schedule_default
+    price_value_default = price_default
+    if st is not None:  # pragma: no cover - UI path
+        price_value_default = _coerce_float(
+            st.session_state.get("carbon_price_val", price_default),
+            default=price_default,
+        )
+
+    if price_enabled:
+        price_per_ton = container.number_input(
+            "Carbon price ($/ton)",
+            value=price_value_default,
+            key="carbon_price_val",
+        )
+    else:
+        price_per_ton = 0.0
+
+    price_schedule = price_schedule_default if price_enabled else {}
 
     errors: list[str] = []
     if enabled and price_enabled:
