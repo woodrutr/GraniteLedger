@@ -3581,6 +3581,16 @@ def _render_results(result: Mapping[str, Any]) -> None:
     if not isinstance(annual, pd.DataFrame):
         annual = pd.DataFrame()
 
+    display_annual = annual.copy()
+    chart_data = pd.DataFrame()
+    if not display_annual.empty and 'year' in display_annual.columns:
+        display_annual['year'] = pd.to_numeric(display_annual['year'], errors='coerce')
+        display_annual = display_annual.dropna(subset=['year'])
+        display_annual = display_annual.sort_values('year')
+        chart_data = display_annual.set_index('year')
+    elif not display_annual.empty:
+        chart_data = display_annual
+
     emissions_df = result.get('emissions_by_region')
     if not isinstance(emissions_df, pd.DataFrame):
         emissions_df = pd.DataFrame()
@@ -3589,97 +3599,121 @@ def _render_results(result: Mapping[str, Any]) -> None:
     if not isinstance(price_df, pd.DataFrame):
         price_df = pd.DataFrame()
 
+    flows_df = result.get('flows')
+    if not isinstance(flows_df, pd.DataFrame):
+        flows_df = pd.DataFrame()
+
     st.caption('Visualisations reflect the most recent model run.')
 
-    # --- Annual results ---
-    st.subheader('Allowance market results')
-    if not annual.empty:
-        display_annual = annual.copy()
-        if 'year' in display_annual.columns:
-            display_annual['year'] = pd.to_numeric(display_annual['year'], errors='coerce')
-            display_annual = display_annual.dropna(subset=['year'])
-            display_annual = display_annual.sort_values('year')
-            chart_data = display_annual.set_index('year')
-        else:
-            chart_data = display_annual
+    price_tab, emissions_tab, bank_tab, dispatch_tab = st.tabs(
+        ['Allowance price', 'Emissions', 'Allowance bank', 'Dispatch costs']
+    )
 
-        metric_columns: list[tuple[str, str]] = [
-            ('p_co2', 'Allowance price ($/ton)'),
-            ('emissions_tons', 'Total emissions (tons)'),
-            ('bank', 'Bank balance (tons)'),
-        ]
-        cols = st.columns(len(metric_columns))
-        for column_container, (column_name, label) in zip(cols, metric_columns):
-            with column_container:
-                if column_name in chart_data.columns:
-                    st.markdown(f'**{label}**')
-                    st.line_chart(chart_data[[column_name]])
-                    st.bar_chart(chart_data[[column_name]])
+    with price_tab:
+        st.subheader('Allowance market results')
+        if display_annual.empty:
+            st.info('No annual results to display.')
+        else:
+            if 'p_co2' in chart_data.columns:
+                st.markdown('**Allowance price ($/ton)**')
+                st.line_chart(chart_data[['p_co2']])
+                st.bar_chart(chart_data[['p_co2']])
+            else:
+                st.caption('Allowance price data unavailable for this run.')
+
+            st.markdown('---')
+            st.dataframe(display_annual, width="stretch")
+
+    with emissions_tab:
+        st.subheader('Emissions overview')
+        if display_annual.empty and emissions_df.empty:
+            st.info('No emissions data available for this run.')
+        else:
+            if not chart_data.empty and 'emissions_tons' in chart_data.columns:
+                st.markdown('**Total emissions (tons)**')
+                st.line_chart(chart_data[['emissions_tons']])
+                st.bar_chart(chart_data[['emissions_tons']])
+            elif not display_annual.empty:
+                st.caption('Total emissions data unavailable for this run.')
+
+            if not emissions_df.empty:
+                display_emissions = emissions_df.copy()
+                display_emissions['year'] = pd.to_numeric(
+                    display_emissions['year'], errors='coerce'
+                )
+                display_emissions = display_emissions.dropna(subset=['year'])
+
+                if 'region' in display_emissions.columns:
+                    emissions_pivot = display_emissions.pivot_table(
+                        index='year',
+                        columns='region',
+                        values='emissions_tons',
+                        aggfunc='sum',
+                    ).sort_index()
+                    st.markdown('**Emissions by region**')
+                    st.line_chart(emissions_pivot)
+
+                    if not emissions_pivot.empty:
+                        latest_year = emissions_pivot.index.max()
+                        latest_totals = emissions_pivot.loc[latest_year].fillna(0.0)
+                        latest_df = latest_totals.to_frame(name='emissions_tons')
+                        latest_df.index.name = 'region'
+                        st.caption(f'Latest year visualised: {latest_year}')
+                        st.bar_chart(latest_df)
                 else:
-                    st.caption(f'{label} unavailable for this run.')
+                    st.caption('Regional emissions data unavailable; showing raw table below.')
+                    st.dataframe(display_emissions, width="stretch")
+            elif not display_annual.empty:
+                st.caption('No regional emissions data available for this run.')
 
-        st.markdown('---')
-        st.dataframe(display_annual, width="stretch")
-    else:
-        st.info('No annual results to display.')
-
-    # --- Regional emissions ---
-    st.subheader('Emissions by region')
-    if not emissions_df.empty:
-        display_emissions = emissions_df.copy()
-        display_emissions['year'] = pd.to_numeric(display_emissions['year'], errors='coerce')
-        display_emissions = display_emissions.dropna(subset=['year'])
-
-        if 'region' in display_emissions.columns:
-            emissions_pivot = display_emissions.pivot_table(
-                index='year',
-                columns='region',
-                values='emissions_tons',
-                aggfunc='sum',
-            ).sort_index()
-            st.line_chart(emissions_pivot)
-
-            if not emissions_pivot.empty:
-                latest_year = emissions_pivot.index.max()
-                latest_totals = emissions_pivot.loc[latest_year].fillna(0.0)
-                latest_df = latest_totals.to_frame(name='emissions_tons')
-                latest_df.index.name = 'region'
-                st.caption(f'Latest year visualised: {latest_year}')
-                st.bar_chart(latest_df)
+    with bank_tab:
+        st.subheader('Allowance bank balance')
+        if display_annual.empty:
+            st.info('No annual results to display.')
+        elif 'bank' in chart_data.columns:
+            st.markdown('**Bank balance (tons)**')
+            st.line_chart(chart_data[['bank']])
+            st.bar_chart(chart_data[['bank']])
         else:
-            st.caption('Regional emissions data unavailable; showing raw table below.')
-            st.dataframe(display_emissions, width="stretch")
-    else:
-        st.caption('No regional emissions data available for this run.')
+            st.caption('Allowance bank data unavailable for this run.')
 
-    # --- Regional prices ---
-    st.subheader('Energy prices by region')
-    if not price_df.empty:
-        display_price = price_df.copy()
-        display_price['year'] = pd.to_numeric(display_price['year'], errors='coerce')
-        display_price = display_price.dropna(subset=['year'])
-
-        if 'region' in display_price.columns:
-            price_pivot = display_price.pivot_table(
-                index='year',
-                columns='region',
-                values='price',
-                aggfunc='mean',
-            ).sort_index()
-            st.line_chart(price_pivot)
-
-            if not price_pivot.empty:
-                latest_year = price_pivot.index.max()
-                latest_totals = price_pivot.loc[latest_year].fillna(0.0)
-                latest_df = latest_totals.to_frame(name='price')
-                latest_df.index.name = 'region'
-                st.caption(f'Latest year visualised: {latest_year}')
-                st.bar_chart(latest_df)
+    with dispatch_tab:
+        st.subheader('Dispatch costs and network results')
+        if price_df.empty and flows_df.empty:
+            st.info('No dispatch outputs are available for this run.')
         else:
-            st.caption('Regional price data unavailable; showing raw table below.')
-            st.dataframe(display_price, width="stretch")
-    else:
-        st.caption('No regional price data available for this run.')
+            if not price_df.empty:
+                display_price = price_df.copy()
+                display_price['year'] = pd.to_numeric(display_price['year'], errors='coerce')
+                display_price = display_price.dropna(subset=['year'])
+
+                if 'region' in display_price.columns:
+                    price_pivot = display_price.pivot_table(
+                        index='year',
+                        columns='region',
+                        values='price',
+                        aggfunc='mean',
+                    ).sort_index()
+                    st.markdown('**Dispatch costs by region ($/MWh)**')
+                    st.line_chart(price_pivot)
+
+                    if not price_pivot.empty:
+                        latest_year = price_pivot.index.max()
+                        latest_totals = price_pivot.loc[latest_year].fillna(0.0)
+                        latest_df = latest_totals.to_frame(name='price')
+                        latest_df.index.name = 'region'
+                        st.caption(f'Latest year visualised: {latest_year}')
+                        st.bar_chart(latest_df)
+                else:
+                    st.caption('Regional dispatch cost data unavailable; showing raw table below.')
+                    st.dataframe(display_price, width="stretch")
+
+            if not flows_df.empty:
+                st.markdown('---')
+                st.markdown('**Interregional energy flows (MWh)**')
+                st.dataframe(flows_df, width="stretch")
+            elif price_df.empty:
+                st.caption('No dispatch network data available for this run.')
 
     # --- Technology sections ---
     capacity_df = _extract_result_frame(result, 'capacity_by_technology')
