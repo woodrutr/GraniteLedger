@@ -79,6 +79,18 @@ def test_emissions_decline_with_allowance_cost() -> None:
     assert all(a >= b - 1e-9 for a, b in zip(emissions, emissions[1:]))
 
 
+def test_emissions_decline_with_carbon_price() -> None:
+    """An exogenous carbon price should suppress emissions."""
+
+    prices = [0.0, 15.0, 45.0]
+    emissions: list[float] = []
+    for price in prices:
+        result = solve(2030, 0.0, frames=baseline_frames(), carbon_price=price)
+        emissions.append(result.emissions_tons)
+
+    assert all(a >= b - 1e-9 for a, b in zip(emissions, emissions[1:]))
+
+
 def test_generation_respects_capacity_limits() -> None:
     """No unit may exceed its annual energy capability."""
 

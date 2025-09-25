@@ -81,6 +81,7 @@ def _dispatch_merit_order(
     allowance_cost: float,
     *,
     allowance_covered: bool = True,
+    carbon_price: float = 0.0,
 ) -> dict:
     """Run the merit-order dispatch returning detailed information for testing."""
 
@@ -90,6 +91,7 @@ def _dispatch_merit_order(
 
     load = max(0.0, float(load_mwh))
     allowance = float(allowance_cost)
+    price_component = float(carbon_price)
 
     units = units.assign(
         cap_mwh=(units["cap_mw"] * units["availability"] * HOURS_PER_YEAR).clip(lower=0.0)
@@ -99,6 +101,7 @@ def _dispatch_merit_order(
             units["vom_per_mwh"]
             + units["hr_mmbtu_per_mwh"] * units["fuel_price_per_mmbtu"]
             + (units["ef_ton_per_mwh"] * allowance if allowance_covered else 0.0)
+            + units["ef_ton_per_mwh"] * price_component
         )
     )
 
@@ -188,7 +191,9 @@ def _aggregate_generation_by_region(
 def solve(
     year: int,
     allowance_cost: float,
+    *,
     frames: Optional[Frames | Mapping[str, pd.DataFrame]] = None,
+    carbon_price: float = 0.0,
 ) -> DispatchResult:
     """Solve the single-region dispatch problem using the provided frame data."""
 
@@ -222,6 +227,7 @@ def solve(
         float(load_value),
         allowance_cost,
         allowance_covered=allowance_covered,
+        carbon_price=carbon_price,
     )
 
     generation = dispatch["generation"]
