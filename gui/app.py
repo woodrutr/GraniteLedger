@@ -4726,175 +4726,175 @@ def main() -> None:
     )
 
 
-if execute_run:
-    frames_for_execution = inputs_for_run.get("frames", frames_for_run)
-    if frames_for_execution is None:
-        frames_for_execution = frames_for_run
-
-    assumption_notes_value = inputs_for_run.get("assumption_notes", assumption_notes)
-    assumption_notes_for_run: list[str] = []
-    if isinstance(assumption_notes_value, Iterable) and not isinstance(
-        assumption_notes_value, (str, bytes, Mapping)
-    ):
-        assumption_notes_for_run = [str(note) for note in assumption_notes_value]
-    elif assumption_notes_value not in (None, ""):
-        assumption_notes_for_run = [str(assumption_notes_value)]
-
-    try:
-        st.session_state["run_in_progress"] = True
-        st.session_state[_ACTIVE_RUN_ITERATION_KEY] = current_iteration
-        st.session_state.pop("show_confirm_modal", None)
-        _cleanup_session_temp_dirs()
-
-        progress_state = _reset_progress_state()
-        progress_state.stage = "initializing"
-        progress_state.message = "Initializing simulation…"
-        progress_state.percent_complete = 0
-        _record_progress_log(progress_state, progress_state.message, progress_state.stage)
-        _sync_progress_ui(
-            progress_state,
-            progress_message_placeholder,
-            progress_bar_widget,
-            progress_log_placeholder,
-        )
-
-        def _update_progress(stage: str, payload: Mapping[str, object]) -> None:
-            try:
-                message, percent = _progress_update_from_stage(
-                    stage,
-                    payload,
-                    progress_state,
-                )
-            except Exception:  # defensive guard
-                LOGGER.exception("Unable to interpret progress update for stage %s", stage)
-                return
-
-            progress_state.stage = stage
-            progress_state.message = message
-            progress_state.percent_complete = percent
-            _record_progress_log(progress_state, message, stage)
+    if execute_run:
+        frames_for_execution = inputs_for_run.get("frames", frames_for_run)
+        if frames_for_execution is None:
+            frames_for_execution = frames_for_run
+    
+        assumption_notes_value = inputs_for_run.get("assumption_notes", assumption_notes)
+        assumption_notes_for_run: list[str] = []
+        if isinstance(assumption_notes_value, Iterable) and not isinstance(
+            assumption_notes_value, (str, bytes, Mapping)
+        ):
+            assumption_notes_for_run = [str(note) for note in assumption_notes_value]
+        elif assumption_notes_value not in (None, ""):
+            assumption_notes_for_run = [str(assumption_notes_value)]
+    
+        try:
+            st.session_state["run_in_progress"] = True
+            st.session_state[_ACTIVE_RUN_ITERATION_KEY] = current_iteration
+            st.session_state.pop("show_confirm_modal", None)
+            _cleanup_session_temp_dirs()
+    
+            progress_state = _reset_progress_state()
+            progress_state.stage = "initializing"
+            progress_state.message = "Initializing simulation…"
+            progress_state.percent_complete = 0
+            _record_progress_log(progress_state, progress_state.message, progress_state.stage)
             _sync_progress_ui(
                 progress_state,
                 progress_message_placeholder,
                 progress_bar_widget,
                 progress_log_placeholder,
             )
-
-        try:
-            run_result = run_policy_simulation(
-                inputs_for_run.get("config_source", run_config),
-                start_year=inputs_for_run.get("start_year", start_year_val),
-                end_year=inputs_for_run.get("end_year", end_year_val),
-                carbon_policy_enabled=bool(
-                    inputs_for_run.get("carbon_policy_enabled", carbon_settings.enabled)
-                ),
-                enable_floor=bool(
-                    inputs_for_run.get("enable_floor", carbon_settings.enable_floor)
-                ),
-                enable_ccr=bool(inputs_for_run.get("enable_ccr", carbon_settings.enable_ccr)),
-                ccr1_enabled=bool(
-                    inputs_for_run.get("ccr1_enabled", carbon_settings.ccr1_enabled)
-                ),
-                ccr2_enabled=bool(
-                    inputs_for_run.get("ccr2_enabled", carbon_settings.ccr2_enabled)
-                ),
-                allowance_banking_enabled=bool(
-                    inputs_for_run.get(
-                        "allowance_banking_enabled", carbon_settings.banking_enabled
+    
+            def _update_progress(stage: str, payload: Mapping[str, object]) -> None:
+                try:
+                    message, percent = _progress_update_from_stage(
+                        stage,
+                        payload,
+                        progress_state,
                     )
-                ),
-                initial_bank=float(
-                    inputs_for_run.get("initial_bank", carbon_settings.initial_bank)
-                ),
-                coverage_regions=inputs_for_run.get(
-                    "coverage_regions", carbon_settings.coverage_regions
-                ),
-                control_period_years=inputs_for_run.get(
-                    "control_period_years", carbon_settings.control_period_years
-                ),
-                cap_regions=inputs_for_run.get(
-                    "cap_regions", carbon_settings.cap_regions
-                ),
-                carbon_price_enabled=inputs_for_run.get(
-                    "carbon_price_enabled", carbon_settings.price_enabled
-                ),
-                carbon_price_value=inputs_for_run.get(
-                    "carbon_price_value", carbon_settings.price_per_ton
-                ),
-                carbon_price_schedule=inputs_for_run.get(
-                    "carbon_price_schedule", carbon_settings.price_schedule
-                ),
-                dispatch_use_network=bool(
-                    inputs_for_run.get("dispatch_use_network", dispatch_use_network)
-                ),
-                module_config=inputs_for_run.get(
-                    "module_config", run_config.get("modules", {})
-                ),
-                frames=frames_for_execution,
-                assumption_notes=assumption_notes_for_run,
-                progress_cb=_update_progress,
-            )
+                except Exception:  # defensive guard
+                    LOGGER.exception("Unable to interpret progress update for stage %s", stage)
+                    return
+    
+                progress_state.stage = stage
+                progress_state.message = message
+                progress_state.percent_complete = percent
+                _record_progress_log(progress_state, message, stage)
+                _sync_progress_ui(
+                    progress_state,
+                    progress_message_placeholder,
+                    progress_bar_widget,
+                    progress_log_placeholder,
+                )
+    
+            try:
+                run_result = run_policy_simulation(
+                    inputs_for_run.get("config_source", run_config),
+                    start_year=inputs_for_run.get("start_year", start_year_val),
+                    end_year=inputs_for_run.get("end_year", end_year_val),
+                    carbon_policy_enabled=bool(
+                        inputs_for_run.get("carbon_policy_enabled", carbon_settings.enabled)
+                    ),
+                    enable_floor=bool(
+                        inputs_for_run.get("enable_floor", carbon_settings.enable_floor)
+                    ),
+                    enable_ccr=bool(inputs_for_run.get("enable_ccr", carbon_settings.enable_ccr)),
+                    ccr1_enabled=bool(
+                        inputs_for_run.get("ccr1_enabled", carbon_settings.ccr1_enabled)
+                    ),
+                    ccr2_enabled=bool(
+                        inputs_for_run.get("ccr2_enabled", carbon_settings.ccr2_enabled)
+                    ),
+                    allowance_banking_enabled=bool(
+                        inputs_for_run.get(
+                            "allowance_banking_enabled", carbon_settings.banking_enabled
+                        )
+                    ),
+                    initial_bank=float(
+                        inputs_for_run.get("initial_bank", carbon_settings.initial_bank)
+                    ),
+                    coverage_regions=inputs_for_run.get(
+                        "coverage_regions", carbon_settings.coverage_regions
+                    ),
+                    control_period_years=inputs_for_run.get(
+                        "control_period_years", carbon_settings.control_period_years
+                    ),
+                    cap_regions=inputs_for_run.get(
+                        "cap_regions", carbon_settings.cap_regions
+                    ),
+                    carbon_price_enabled=inputs_for_run.get(
+                        "carbon_price_enabled", carbon_settings.price_enabled
+                    ),
+                    carbon_price_value=inputs_for_run.get(
+                        "carbon_price_value", carbon_settings.price_per_ton
+                    ),
+                    carbon_price_schedule=inputs_for_run.get(
+                        "carbon_price_schedule", carbon_settings.price_schedule
+                    ),
+                    dispatch_use_network=bool(
+                        inputs_for_run.get("dispatch_use_network", dispatch_use_network)
+                    ),
+                    module_config=inputs_for_run.get(
+                        "module_config", run_config.get("modules", {})
+                    ),
+                    frames=frames_for_execution,
+                    assumption_notes=assumption_notes_for_run,
+                    progress_cb=_update_progress,
+                )
+            except Exception as exc:  # defensive guard
+                LOGGER.exception("Policy simulation failed during execution")
+                run_result = {"error": str(exc)}
+    
         except Exception as exc:  # defensive guard
-            LOGGER.exception("Policy simulation failed during execution")
+            LOGGER.exception("Policy simulation failed before execution could complete")
             run_result = {"error": str(exc)}
-
-    except Exception as exc:  # defensive guard
-        LOGGER.exception("Policy simulation failed before execution could complete")
-        run_result = {"error": str(exc)}
-
-    finally:
-        st.session_state["run_in_progress"] = False
-        st.session_state.pop(_ACTIVE_RUN_ITERATION_KEY, None)
-
-        if isinstance(run_result, Mapping):
-            if "error" in run_result:
-                progress_state.stage = "error"
-                progress_state.message = f"Simulation failed: {run_result['error']}"
+    
+        finally:
+            st.session_state["run_in_progress"] = False
+            st.session_state.pop(_ACTIVE_RUN_ITERATION_KEY, None)
+    
+            if isinstance(run_result, Mapping):
+                if "error" in run_result:
+                    progress_state.stage = "error"
+                    progress_state.message = f"Simulation failed: {run_result['error']}"
+                else:
+                    progress_state.stage = "complete"
+                    progress_state.percent_complete = 100
+                    progress_state.message = "Simulation complete. Outputs updated below."
+                    # Save results for output panel
+                    st.session_state["last_result"] = run_result
             else:
-                progress_state.stage = "complete"
-                progress_state.percent_complete = 100
-                progress_state.message = "Simulation complete. Outputs updated below."
-                # Save results for output panel
-                st.session_state["last_result"] = run_result
+                progress_state.stage = "error"
+                progress_state.message = "Simulation ended before producing results."
+    
+            _record_progress_log(progress_state, progress_state.message, progress_state.stage)
+            _sync_progress_ui(
+                progress_state,
+                progress_message_placeholder,
+                progress_bar_widget,
+                progress_log_placeholder,
+            )
+    
+    
+            if isinstance(run_result, Mapping) and 'temp_dir' in run_result:
+                st.session_state['temp_dirs'] = [str(run_result['temp_dir'])]
+    
+            if run_result is not None:
+                st.session_state['last_result'] = run_result
+                # Ensure any pending confirmation state is cleared after completion
+                st.session_state.pop('pending_run', None)
+                st.session_state.pop('show_confirm_modal', None)
+                result = run_result
+    
+        outputs_container = st.container()
+        with outputs_container:
+            st.subheader('Model outputs')
+            if st.session_state.get('run_in_progress'):
+                st.info('Simulation in progress... progress updates appear above.')
+            else:
+                _render_outputs_panel(result)
+    
+        if isinstance(result, Mapping):
+            if 'error' in result:
+                st.error(result['error'])
+            else:
+                st.info('Review the outputs above to explore charts and downloads from the most recent run.')
         else:
-            progress_state.stage = "error"
-            progress_state.message = "Simulation ended before producing results."
-
-        _record_progress_log(progress_state, progress_state.message, progress_state.stage)
-        _sync_progress_ui(
-            progress_state,
-            progress_message_placeholder,
-            progress_bar_widget,
-            progress_log_placeholder,
-        )
-
-
-        if isinstance(run_result, Mapping) and 'temp_dir' in run_result:
-            st.session_state['temp_dirs'] = [str(run_result['temp_dir'])]
-
-        if run_result is not None:
-            st.session_state['last_result'] = run_result
-            # Ensure any pending confirmation state is cleared after completion
-            st.session_state.pop('pending_run', None)
-            st.session_state.pop('show_confirm_modal', None)
-            result = run_result
-
-    outputs_container = st.container()
-    with outputs_container:
-        st.subheader('Model outputs')
-        if st.session_state.get('run_in_progress'):
-            st.info('Simulation in progress... progress updates appear above.')
-        else:
-            _render_outputs_panel(result)
-
-    if isinstance(result, Mapping):
-        if 'error' in result:
-            st.error(result['error'])
-        else:
-            st.info('Review the outputs above to explore charts and downloads from the most recent run.')
-    else:
-        st.info('Use the inputs panel to configure and run the simulation.')
-
-
+            st.info('Use the inputs panel to configure and run the simulation.')
+    
+    
 if __name__ == '__main__':  # pragma: no cover - exercised via streamlit runtime
     main()
