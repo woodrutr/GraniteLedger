@@ -99,7 +99,12 @@ else:  # pragma: no cover - optional dependency
 try:  # pragma: no cover - optional dependency
     from engine.run_loop import run_end_to_end_from_frames as _RUN_END_TO_END
 except ModuleNotFoundError:  # pragma: no cover - optional dependency
-    _RUN_END_TO_END = None
+    if str(PROJECT_ROOT) not in sys.path:
+        sys.path.append(str(PROJECT_ROOT))
+    try:  # pragma: no cover - optional dependency
+        from engine.run_loop import run_end_to_end_from_frames as _RUN_END_TO_END
+    except ModuleNotFoundError:
+        _RUN_END_TO_END = None
 
 try:
     from io_loader import Frames
