@@ -675,6 +675,14 @@ def _normalize_coverage_selection(selection: Any) -> list[str]:
     return normalized
 
 
+def _mark_last_changed(source: str) -> None:
+    """Persist which carbon control (cap vs price) the user toggled most recently."""
+
+    if st is None:
+        return
+    st.session_state["carbon_module_last_changed"] = source
+
+
 # General Config UI
 # -------------------------
 def _render_general_config_section(
@@ -876,9 +884,63 @@ def _render_general_config_section(
         selected_years=selected_years,
         regions=selected_regions,
     )
-    # -------------------------
-    # Defaults
-    # -------------------------
+
+
+def _render_carbon_policy_section(
+    container: Any,
+    run_config: dict[str, Any],
+    *,
+    region_options: Iterable[Any] | None = None,
+) -> CarbonModuleSettings:
+    modules = run_config.setdefault("modules", {})
+    defaults_raw = modules.get("carbon_policy", {})
+    price_defaults_raw = modules.get("carbon_price", {})
+
+    defaults = dict(defaults_raw) if isinstance(defaults_raw, Mapping) else {}
+    price_defaults = (
+        dict(price_defaults_raw) if isinstance(price_defaults_raw, Mapping) else {}
+    )
+
+    coverage_default = _normalize_coverage_selection(
+        defaults.get("coverage_regions", ["All"])
+    )
+
+    coverage_value_map: dict[str, Any] = {
+        "All": "All",
+        _ALL_REGIONS_LABEL: "All",
+    }
+    region_labels: list[str] = []
+    region_iterable = region_options or []
+    for entry in region_iterable:
+        if entry in (None, ""):
+            continue
+        canonical_value = canonical_region_value(entry)
+        canonical_label = canonical_region_label(entry)
+        display_label = region_display_label(entry)
+        for key in {
+            canonical_label,
+            display_label,
+            str(entry).strip(),
+            str(canonical_value) if canonical_value is not None else "",
+        }:
+            if key:
+                coverage_value_map.setdefault(key, canonical_value)
+        if display_label and display_label not in region_labels:
+            region_labels.append(display_label)
+
+    if not region_labels:
+        region_labels = ["default"]
+
+    coverage_choices = [_ALL_REGIONS_LABEL] + sorted(region_labels, key=str)
+    if coverage_default == ["All"]:
+        coverage_default_display = [_ALL_REGIONS_LABEL]
+    else:
+        coverage_default_display = [
+            label for label in coverage_default if label in coverage_choices
+        ]
+        if not coverage_default_display:
+            coverage_default_display = [_ALL_REGIONS_LABEL]
+
     enabled_default = bool(defaults.get("enabled", True))
     enable_floor_default = bool(defaults.get("enable_floor", True))
     enable_ccr_default = bool(defaults.get("enable_ccr", True))
@@ -886,10 +948,6 @@ def _render_general_config_section(
     ccr2_default = bool(defaults.get("ccr2_enabled", True))
     banking_default = bool(defaults.get("allowance_banking_enabled", True))
     bank_default = _coerce_float(defaults.get("bank0", 0.0), default=0.0)
-
-    coverage_default = _normalize_coverage_selection(
-        defaults.get("coverage_regions", ["All"])
-    )
 
     control_default_raw = defaults.get("control_period_years")
     try:
@@ -907,34 +965,17 @@ def _render_general_config_section(
         price_defaults.get("price_schedule")
     )
 
-    # -------------------------
-    # Coverage / Regions
-    # -------------------------
-    region_labels: list[str] = []
-    if region_options is not None:
-        for entry in region_options:
-            label = str(entry).strip() or "default"
-            if label not in region_labels:
-                region_labels.append(label)
-    if not region_labels:
-        region_labels = ["default"]
-
-    coverage_choices = [_ALL_REGIONS_LABEL] + sorted(region_labels, key=str)
-    if coverage_default == ["All"]:
-        coverage_default_display = [_ALL_REGIONS_LABEL]
-    else:
-        coverage_default_display = [
-            label for label in coverage_default if label in coverage_choices
-        ] or [_ALL_REGIONS_LABEL]
-
-
     session_enabled_default = enabled_default
     session_price_default = price_enabled_default
     last_changed = None
     if st is not None:
         last_changed = st.session_state.get("carbon_module_last_changed")
-        session_enabled_default = bool(st.session_state.get("carbon_enable", enabled_default))
-        session_price_default = bool(st.session_state.get("carbon_price_enable", price_enabled_default))
+        session_enabled_default = bool(
+            st.session_state.get("carbon_enable", enabled_default)
+        )
+        session_price_default = bool(
+            st.session_state.get("carbon_price_enable", price_enabled_default)
+        )
         if session_enabled_default and session_price_default:
             if last_changed == "cap":
                 session_price_default = False
@@ -943,9 +984,6 @@ def _render_general_config_section(
             st.session_state["carbon_enable"] = session_enabled_default
             st.session_state["carbon_price_enable"] = session_price_default
 
-    # -------------------------
-    # Cap vs Price toggles (mutually exclusive)
-    # -------------------------
     enabled = container.toggle(
         "Enable carbon cap",
         value=session_enabled_default,
@@ -965,9 +1003,6 @@ def _render_general_config_section(
         else:
             enabled = False
 
-    # -------------------------
-    # Carbon Cap Panel
-    # -------------------------
     with _sidebar_panel(container, enabled) as cap_panel:
         enable_floor = cap_panel.toggle(
             "Enable price floor",
@@ -1004,7 +1039,9 @@ def _render_general_config_section(
                 cap_panel.number_input(
                     "Initial allowance bank (tons)",
                     min_value=0.0,
-                    value=float(bank_value_default if bank_value_default >= 0.0 else 0.0),
+                    value=float(
+                        bank_default if bank_default >= 0.0 else 0.0
+                    ),
                     step=1000.0,
                     format="%f",
                     key="carbon_bank0",
@@ -1031,7 +1068,9 @@ def _render_general_config_section(
             disabled=not (enabled and control_override),
         )
         control_period_years = (
-            _sanitize_control_period(control_period_value) if enabled and control_override else None
+            _sanitize_control_period(control_period_value)
+            if enabled and control_override
+            else None
         )
 
         coverage_selection = cap_panel.multiselect(
@@ -1049,9 +1088,6 @@ def _render_general_config_section(
             coverage_selection or coverage_default_display
         )
 
-    # -------------------------
-    # Carbon Price Panel
-    # -------------------------
     with _sidebar_panel(container, price_enabled) as price_panel:
         price_per_ton = price_panel.number_input(
             "Carbon price ($/ton)",
@@ -1064,18 +1100,20 @@ def _render_general_config_section(
         )
         price_schedule = price_schedule_default.copy() if price_enabled else {}
 
-    # -------------------------
-    # Errors and Return
-    # -------------------------
     errors: list[str] = []
     if enabled and price_enabled:
-        errors.append("Cannot enable both carbon cap and carbon price simultaneously.")
+        errors.append(
+            "Cannot enable both carbon cap and carbon price simultaneously."
+        )
 
     cap_region_values: list[Any] = []
     if coverage_regions != ["All"]:
         for label in coverage_regions:
             resolved = coverage_value_map.get(label, label)
-            if isinstance(resolved, str) and resolved.lower() in {"all", "all regions"}:
+            if isinstance(resolved, str) and resolved.lower() in {
+                "all",
+                "all regions",
+            }:
                 cap_region_values = []
                 break
             try:
@@ -1140,7 +1178,6 @@ def _render_general_config_section(
         price_schedule=price_schedule,
         errors=errors,
     )
-
 
 
 # -------------------------
