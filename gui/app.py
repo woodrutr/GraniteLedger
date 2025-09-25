@@ -2654,6 +2654,46 @@ def _write_outputs_to_temp(outputs) -> tuple[Path, dict[str, bytes]]:
     return temp_dir, csv_files
 
 
+def _extract_output_dataframe(outputs: Any, names: Sequence[str]) -> pd.DataFrame:
+    """Return a DataFrame from ``outputs`` matching one of ``names``.
+
+    The engine historically exposed results as :class:`EngineOutputs` with
+    attributes named ``annual``, ``emissions_by_region`` and so on.  Some
+    development branches temporarily renamed these attributes which broke the
+    GUI.  This helper provides a resilient lookup that supports both the
+    canonical names and any temporary aliases.  When a name cannot be resolved
+    an empty DataFrame is returned so the UI can still render informative
+    placeholders instead of failing outright.
+    """
+
+    for name in names:
+        candidate: Any | None = None
+        if hasattr(outputs, name):
+            candidate = getattr(outputs, name)
+        elif isinstance(outputs, Mapping):
+            candidate = outputs.get(name)
+
+        if isinstance(candidate, pd.DataFrame):
+            return candidate
+        if candidate is None:
+            continue
+
+        try:
+            coerced = pd.DataFrame(candidate)
+        except Exception:  # pragma: no cover - defensive guard
+            LOGGER.warning(
+                "Unable to coerce engine output field '%s' to a DataFrame.", name
+            )
+            continue
+        else:
+            return coerced
+
+    LOGGER.warning(
+        "Engine runner outputs missing expected field(s): %s", ", ".join(names)
+    )
+    return pd.DataFrame()
+
+
 def _read_uploaded_dataframe(uploaded_file: Any | None) -> pd.DataFrame | None:
     if uploaded_file is None:
         return None
@@ -3605,11 +3645,24 @@ def run_policy_simulation(
         'assumption_overrides': list(assumption_notes or []),
     }
 
+    annual_df = _extract_output_dataframe(
+        outputs, ['annual', 'annual_results', 'annual_output', 'annual_outputs']
+    )
+    emissions_df = _extract_output_dataframe(
+        outputs, ['emissions_by_region', 'emissions', 'emissions_region']
+    )
+    price_df = _extract_output_dataframe(
+        outputs, ['price_by_region', 'dispatch_price_by_region', 'region_prices']
+    )
+    flows_df = _extract_output_dataframe(
+        outputs, ['flows', 'network_flows', 'flows_by_region']
+    )
+
     result: dict[str, Any] = {
-        'annual': outputs.annual,
-        'emissions_by_region': outputs.emissions_by_region,
-        'price_by_region': outputs.price_by_region,
-        'flows': outputs.flows,
+        'annual': annual_df,
+        'emissions_by_region': emissions_df,
+        'price_by_region': price_df,
+        'flows': flows_df,
         'module_config': merged_modules,
         'config': config,
         'csv_files': csv_files,
@@ -3618,6 +3671,15 @@ def run_policy_simulation(
     }
     if normalized_regions:
         result['cap_regions'] = list(normalized_regions)
+
+    optional_frames = {
+        'capacity_by_technology': ['capacity_by_technology'],
+        'generation_by_technology': ['generation_by_technology'],
+    }
+    for key, aliases in optional_frames.items():
+        frame = _extract_output_dataframe(outputs, aliases)
+        if isinstance(frame, pd.DataFrame):
+            result[key] = frame
 
     return result
 
