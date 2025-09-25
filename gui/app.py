@@ -94,6 +94,7 @@ DEFAULT_CONFIG_PATH = Path(PROJECT_ROOT, "src", "common", "run_config.toml")
 _DEFAULT_LOAD_MWH = 1_000_000.0
 _LARGE_ALLOWANCE_SUPPLY = 1e12
 _GENERAL_REGIONS_NORMALIZED_KEY = "general_regions_normalized_selection"
+_ALL_REGIONS_LABEL = "All regions"
 _T = TypeVar("_T")
 
 SIDEBAR_SECTIONS: list[tuple[str, bool]] = [
@@ -328,6 +329,34 @@ def _normalize_region_labels(
     return normalized
 
 
+def _normalize_coverage_selection(selection: Any) -> list[str]:
+    """Return a normalised list of coverage region labels."""
+
+    if isinstance(selection, Mapping):
+        iterable: Iterable[Any] = selection.values()
+    elif isinstance(selection, (str, bytes)) or not isinstance(selection, Iterable):
+        iterable = [selection]
+    else:
+        iterable = selection
+
+    normalized: list[str] = []
+    for entry in iterable:
+        if entry is None:
+            continue
+        text = str(entry).strip()
+        if not text:
+            continue
+        lowered = text.lower()
+        if lowered in {"all", "all regions"}:
+            return ["All"]
+        if text not in normalized:
+            normalized.append(text)
+
+    if not normalized:
+        return ["All"]
+    return normalized
+
+
 # -------------------------
 # Dataclasses
 # -------------------------
@@ -351,6 +380,7 @@ class CarbonModuleSettings:
     ccr1_enabled: bool
     ccr2_enabled: bool
     banking_enabled: bool
+    coverage_regions: list[str]
     control_period_years: int | None
     errors: list[str] = field(default_factory=list)
 
@@ -541,6 +571,7 @@ def _render_general_config_section(
 def _render_carbon_policy_section(
     container: Any,
     run_config: dict[str, Any],
+    region_options: Iterable[int | str] | None = None,
 ) -> CarbonModuleSettings:
     modules = run_config.setdefault("modules", {})
     defaults = modules.get("carbon_policy", {})
@@ -550,6 +581,9 @@ def _render_carbon_policy_section(
     ccr1_default = bool(defaults.get("ccr1_enabled", True))
     ccr2_default = bool(defaults.get("ccr2_enabled", True))
     banking_default = bool(defaults.get("allowance_banking_enabled", True))
+    coverage_default = _normalize_coverage_selection(
+        defaults.get("coverage_regions", ["All"])
+    )
     control_default_raw = defaults.get("control_period_years")
     try:
         control_default = int(control_default_raw)
@@ -557,8 +591,30 @@ def _render_carbon_policy_section(
         control_default = 3
     control_override_default = control_default_raw is not None
 
+    region_labels: list[str] = []
+    if region_options is not None:
+        for entry in region_options:
+            label = str(entry).strip()
+            if not label:
+                label = "default"
+            if label not in region_labels:
+                region_labels.append(label)
+    if not region_labels:
+        region_labels = ["default"]
+
+    coverage_choices = [_ALL_REGIONS_LABEL] + sorted(region_labels, key=str)
+    if coverage_default == ["All"]:
+        coverage_default_display = [_ALL_REGIONS_LABEL]
+    else:
+        coverage_default_display = [
+            label for label in coverage_default if label in coverage_choices
+        ]
+        if not coverage_default_display:
+            coverage_default_display = [_ALL_REGIONS_LABEL]
+
     enabled = container.toggle("Enable carbon cap", value=enabled_default, key="carbon_enable")
 
+    coverage_selection_raw: list[str] | None = None
     with _sidebar_panel(container, enabled) as panel:
         enable_floor = panel.checkbox(
             "Enable minimum reserve price",
@@ -605,8 +661,21 @@ def _render_carbon_policy_section(
             key="carbon_control_years",
             disabled=not (enabled and control_override),
         )
+        coverage_selection_raw = panel.multiselect(
+            "Regions covered by carbon cap",
+            options=coverage_choices,
+            default=coverage_default_display,
+            disabled=not enabled,
+            key="carbon_coverage_regions",
+            help=(
+                "Select the regions subject to the cap. Choose “All regions” to apply "
+                "the carbon policy across every region."
+            ),
+        )
 
     control_period_years = int(control_period_value) if enabled and control_override else None
+    coverage_selection = coverage_selection_raw or coverage_default_display
+    coverage_regions = _normalize_coverage_selection(coverage_selection)
     if not enabled:
         enable_floor = False
         enable_ccr = False
@@ -622,6 +691,7 @@ def _render_carbon_policy_section(
         "ccr1_enabled": bool(ccr1_enabled),
         "ccr2_enabled": bool(ccr2_enabled),
         "allowance_banking_enabled": bool(banking_enabled),
+        "coverage_regions": coverage_regions,
         "control_period_years": control_period_years,
     }
 
@@ -638,6 +708,7 @@ def _render_carbon_policy_section(
         ccr1_enabled=bool(ccr1_enabled),
         ccr2_enabled=bool(ccr2_enabled),
         banking_enabled=bool(banking_enabled),
+        coverage_regions=coverage_regions,
         control_period_years=control_period_years,
         errors=errors,
     )
@@ -1582,6 +1653,66 @@ def _build_policy_frame(
     return pd.DataFrame(records)
 
 
+def _available_regions_from_frames(frames: FramesType) -> list[str]:
+    """Return an ordered list of region labels present in ``frames``."""
+
+    regions: list[str] = []
+
+    try:
+        demand = frames.demand()
+        if not demand.empty and 'region' in demand.columns:
+            for value in demand['region']:
+                label = str(value)
+                if label not in regions:
+                    regions.append(label)
+    except Exception:  # pragma: no cover - defensive guard
+        pass
+
+    try:
+        units = frames.units()
+        if not units.empty and 'region' in units.columns:
+            for value in units['region']:
+                label = str(value)
+                if label not in regions:
+                    regions.append(label)
+    except Exception:  # pragma: no cover - defensive guard
+        pass
+
+    if not regions:
+        regions = ['default']
+
+    return regions
+
+
+def _build_coverage_frame(
+    frames: FramesType,
+    coverage_regions: Iterable[str] | None,
+) -> pd.DataFrame | None:
+    """Construct a coverage table aligning regions with enabled status."""
+
+    if coverage_regions is None:
+        return None
+
+    normalized = _normalize_coverage_selection(coverage_regions)
+    cover_all = normalized == ["All"]
+
+    regions = _available_regions_from_frames(frames)
+    ordered = list(dict.fromkeys(regions))
+    for label in normalized:
+        if label != "All" and label not in ordered:
+            ordered.append(label)
+
+    records = [
+        {
+            'region': region,
+            'covered': True if cover_all else region in normalized,
+        }
+        for region in ordered
+    ]
+
+    return pd.DataFrame(records)
+
+
 def _default_units() -> pd.DataFrame:
     data = [
         {
@@ -2201,6 +2332,7 @@ def run_policy_simulation(
     ccr1_enabled: bool = True,
     ccr2_enabled: bool = True,
     allowance_banking_enabled: bool = True,
+    coverage_regions: Iterable[str] | None = None,
     control_period_years: int | None = None,
     dispatch_use_network: bool = False,
     module_config: Mapping[str, Any] | None = None,
@@ -2227,18 +2359,123 @@ def run_policy_simulation(
             else:
                 merged_modules[str(name)] = {"value": settings}
 
+    normalized_coverage = _normalize_coverage_selection(
+        coverage_regions
+        if coverage_regions is not None
+        else merged_modules.get("carbon_policy", {}).get("coverage_regions", ["All"])
+    )
+
+    policy_enabled = bool(carbon_policy_enabled)
+    floor_flag = bool(enable_floor and policy_enabled)
+    ccr_flag = bool(enable_ccr and policy_enabled)
+    banking_flag = bool(allowance_banking_enabled and policy_enabled)
+
     carbon_record = merged_modules.setdefault("carbon_policy", {})
     carbon_record.update(
         {
-            "enabled": bool(carbon_policy_enabled),
-            "enable_floor": bool(enable_floor),
-            "enable_ccr": bool(enable_ccr),
-            "ccr1_enabled": bool(ccr1_enabled) if enable_ccr else False,
-            "ccr2_enabled": bool(ccr2_enabled) if enable_ccr else False,
-            "allowance_banking_enabled": bool(allowance_banking_enabled),
-            "control_period_years": control_period_years,
+            "enabled": policy_enabled,
+            "enable_floor": floor_flag,
+            "enable_ccr": ccr_flag,
+            "ccr1_enabled": bool(ccr1_enabled) if ccr_flag else False,
+            "ccr2_enabled": bool(ccr2_enabled) if ccr_flag else False,
+            "allowance_banking_enabled": banking_flag,
+            "coverage_regions": normalized_coverage,
+            "control_period_years": control_period_years if policy_enabled else None,
         }
     )
+
+    dispatch_record = merged_modules.setdefault("electricity_dispatch", {})
+    dispatch_record["use_network"] = bool(dispatch_use_network)
+    mode_value = dispatch_record.get("mode")
+    if mode_value not in {"single", "network"}:
+        dispatch_record["mode"] = "network" if dispatch_record["use_network"] else "single"
+    elif dispatch_record["use_network"]:
+        dispatch_record["mode"] = "network"
+
+    modules_section.update(merged_modules)
+
+    base_years = _years_from_config(config)
+    try:
+        years = _select_years(base_years, start_year, end_year)
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+    years = [int(year) for year in years]
+
+    policy_frame = _build_policy_frame(
+        config,
+        years,
+        policy_enabled,
+        ccr1_enabled=bool(ccr1_enabled) if ccr_flag else False,
+        ccr2_enabled=bool(ccr2_enabled) if ccr_flag else False,
+        control_period_years=control_period_years if policy_enabled else None,
+        banking_enabled=banking_flag,
+    )
+
+    try:
+        if frames is None:
+            frames_obj = _build_default_frames(
+                years,
+                carbon_policy_enabled=policy_enabled,
+                banking_enabled=banking_flag,
+            )
+        else:
+            frames_obj = FramesType.coerce(
+                frames,
+                carbon_policy_enabled=policy_enabled,
+                banking_enabled=banking_flag,
+            )
+            frames_obj = _ensure_years_in_demand(frames_obj, years)
+    except Exception as exc:
+        LOGGER.exception("Failed to prepare model inputs", exc_info=True)
+        return {"error": f"Invalid model inputs: {exc}"}
+
+    frames_obj = frames_obj.with_frame("policy", policy_frame)
+
+    coverage_frame = _build_coverage_frame(frames_obj, normalized_coverage)
+    if coverage_frame is not None:
+        frames_obj = frames_obj.with_frame("coverage", coverage_frame)
+
+    try:
+        runner = _ensure_engine_runner()
+    except ModuleNotFoundError as exc:  # pragma: no cover - defensive guard
+        return {"error": str(exc)}
+
+    try:
+        outputs = runner(
+            frames_obj,
+            years=years,
+            enable_floor=floor_flag,
+            enable_ccr=ccr_flag,
+            use_network=bool(dispatch_use_network),
+            progress_cb=progress_cb,
+        )
+    except Exception as exc:  # pragma: no cover - defensive guard
+        LOGGER.exception("Policy simulation failed during execution")
+        return {"error": str(exc)}
+
+    try:
+        temp_dir, csv_files = _write_outputs_to_temp(outputs)
+    except Exception as exc:  # pragma: no cover - defensive guard
+        LOGGER.warning("Unable to cache CSV outputs: %s", exc)
+        temp_dir = None
+        csv_files = {}
+
+    notes_list = [str(note) for note in assumption_notes] if assumption_notes else []
+
+    result: dict[str, Any] = {
+        "annual": outputs.annual,
+        "emissions_by_region": outputs.emissions_by_region,
+        "price_by_region": outputs.price_by_region,
+        "flows": outputs.flows,
+        "module_config": copy.deepcopy(merged_modules),
+        "temp_dir": temp_dir,
+        "csv_files": csv_files,
+        "assumption_notes": notes_list,
+        "years": years,
+    }
+
+    return result
 
 def _extract_result_frame(
     result: Mapping[str, Any],
@@ -2543,6 +2780,7 @@ def main() -> None:
         ccr1_enabled=False,
         ccr2_enabled=False,
         banking_enabled=False,
+        coverage_regions=["All"],
         control_period_years=None,
     )
     dispatch_settings = DispatchModuleSettings(
@@ -2595,7 +2833,11 @@ def main() -> None:
 
             carbon_label, carbon_expanded = SIDEBAR_SECTIONS[1]
             carbon_expander = st.expander(carbon_label, expanded=carbon_expanded)
-            carbon_settings = _render_carbon_policy_section(carbon_expander, run_config)
+            carbon_settings = _render_carbon_policy_section(
+                carbon_expander,
+                run_config,
+                region_options=general_result.regions,
+            )
             module_errors.extend(carbon_settings.errors)
 
             try:
@@ -2759,6 +3001,7 @@ def main() -> None:
                 'ccr1_enabled': bool(carbon_settings.ccr1_enabled),
                 'ccr2_enabled': bool(carbon_settings.ccr2_enabled),
                 'allowance_banking_enabled': bool(carbon_settings.banking_enabled),
+                'coverage_regions': list(carbon_settings.coverage_regions),
                 'control_period_years': carbon_settings.control_period_years,
                 'dispatch_use_network': bool(
                     dispatch_settings.enabled and dispatch_settings.mode == 'network'
@@ -2886,6 +3129,9 @@ def main() -> None:
                 ),
                 allowance_banking_enabled=bool(
                     inputs_for_run.get('allowance_banking_enabled', carbon_settings.banking_enabled)
+                ),
+                coverage_regions=inputs_for_run.get(
+                    'coverage_regions', carbon_settings.coverage_regions
                 ),
                 control_period_years=inputs_for_run.get(
                     'control_period_years', carbon_settings.control_period_years
