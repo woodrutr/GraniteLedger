@@ -15,12 +15,16 @@ import sys
 import tempfile
 from collections.abc import Iterable, Mapping
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, TypeVar
+from typing import Any, Callable, Sequence, TypeVar
+
 
 import pandas as pd
 
+# -------------------------
+# Optional imports / shims
+# -------------------------
 try:
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover - Python < 3.11 fallback
@@ -28,7 +32,7 @@ except ModuleNotFoundError:  # pragma: no cover - Python < 3.11 fallback
         import tomli as tomllib  # type: ignore[import-not-found]
     except ModuleNotFoundError as exc:  # pragma: no cover - dependency missing
         raise ModuleNotFoundError(
-            'Python 3.11+ or the tomli package is required to read TOML configuration files.'
+            "Python 3.11+ or the tomli package is required to read TOML configuration files."
         ) from exc
 
 try:
@@ -36,7 +40,13 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - fallback for packaged app execution
     PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
-if importlib.util.find_spec('streamlit') is not None:  # pragma: no cover - optional dependency
+from gui.region_metadata import (
+    canonical_region_value,
+    region_alias_map,
+    region_display_label,
+)
+
+if importlib.util.find_spec("streamlit") is not None:  # pragma: no cover - optional dependency
     import streamlit as st  # type: ignore[import-not-found]
 else:  # pragma: no cover - optional dependency
     st = None  # type: ignore[assignment]
@@ -55,52 +65,37 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when root not on sys.
 FramesType = Frames
 
 LOGGER = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
 try:  # pragma: no cover - optional dependency shim
     from src.common.utilities import get_downloads_directory as _get_downloads_directory
 except ImportError:  # pragma: no cover - compatibility fallback
     _get_downloads_directory = None
 
-_download_directory_fallback_used = False
-
-
-def _fallback_downloads_directory(app_subdir: str = 'GraniteLedger') -> Path:
-    """Return a reasonable downloads location when utilities helper is unavailable."""
-    base_path = Path.home() / 'Downloads'
-    if app_subdir:
-        base_path = base_path / app_subdir
-    base_path.mkdir(parents=True, exist_ok=True)
-    return base_path
-
-
-def get_downloads_directory(app_subdir: str = 'GraniteLedger') -> Path:
-    """Resolve the downloads directory, falling back to the user's home folder."""
-    global _download_directory_fallback_used
-
-    if _get_downloads_directory is not None:
+# Tech metadata
+try:
+    from src.models.electricity.scripts.technology_metadata import (
+        TECH_ID_TO_LABEL,
+        get_technology_label,
+        resolve_technology_key,
+    )
+except ModuleNotFoundError:
+    TECH_ID_TO_LABEL = {}
+    def get_technology_label(x: Any) -> str: return str(x)
+    def resolve_technology_key(x: Any) -> int | None:
         try:
-            return _get_downloads_directory(app_subdir=app_subdir)
-        except Exception:  # pragma: no cover - defensive: ensure GUI still loads
-            LOGGER.warning('Falling back to home Downloads directory; helper raised an error.')
-    if not _download_directory_fallback_used:
-        LOGGER.warning(
-            'get_downloads_directory is unavailable; using ~/Downloads for model outputs.'
-        )
-        _download_directory_fallback_used = True
-    return _fallback_downloads_directory(app_subdir)
+            return int(x)
+        except Exception:
+            return None
 
-from src.models.electricity.scripts.technology_metadata import (
-    TECH_ID_TO_LABEL,
-    get_technology_label,
-    resolve_technology_key,
-)
-
+# -------------------------
+# Constants
+# -------------------------
 STREAMLIT_REQUIRED_MESSAGE = (
-    'streamlit is required to run the policy simulator UI. Install streamlit to continue.'
+    "streamlit is required to run the policy simulator UI. Install streamlit to continue."
 )
-
 ENGINE_RUNNER_REQUIRED_MESSAGE = (
-    'engine.run_loop.run_end_to_end_from_frames is required to run the policy simulator UI.'
+    "engine.run_loop.run_end_to_end_from_frames is required to run the policy simulator UI."
 )
 
 
@@ -119,21 +114,20 @@ def _ensure_streamlit() -> None:
         raise ModuleNotFoundError(STREAMLIT_REQUIRED_MESSAGE)
 
 
-DEFAULT_CONFIG_PATH = Path(PROJECT_ROOT, 'src', 'common', 'run_config.toml')
+DEFAULT_CONFIG_PATH = Path(PROJECT_ROOT, "src", "common", "run_config.toml")
 _DEFAULT_LOAD_MWH = 1_000_000.0
 _LARGE_ALLOWANCE_SUPPLY = 1e12
-_ALL_REGION_IDENTIFIERS = tuple(range(1, 26))
-_GENERAL_REGIONS_NORMALIZED_KEY = 'general_regions_normalized_selection'
-
-_T = TypeVar('_T')
+_GENERAL_REGIONS_NORMALIZED_KEY = "general_regions_normalized_selection"
+_ALL_REGIONS_LABEL = "All regions"
+_T = TypeVar("_T")
 
 
 SIDEBAR_SECTIONS: list[tuple[str, bool]] = [
-    ('General config', False),
-    ('Carbon policy', False),
-    ('Electricity dispatch', False),
-    ('Incentives / credits', False),
-    ('Outputs', False),
+    ("General config", False),
+    ("Carbon policy", False),
+    ("Electricity dispatch", False),
+    ("Incentives / credits", False),
+    ("Outputs", False),
 ]
 
 SIDEBAR_STYLE = """
@@ -150,6 +144,7 @@ SIDEBAR_STYLE = """
 </style>
 """
 
+_download_directory_fallback_used = False
 
 @dataclass
 class GeneralConfigResult:
@@ -170,14 +165,221 @@ class CarbonModuleSettings:
     """Record of carbon policy sidebar selections."""
 
     enabled: bool
+    price_enabled: bool
     enable_floor: bool
     enable_ccr: bool
     ccr1_enabled: bool
     ccr2_enabled: bool
     banking_enabled: bool
+    coverage_regions: list[str]
     control_period_years: int | None
-    initial_bank: float
+    price_per_ton: float
+    cap_regions: list[Any] = field(default_factory=list)
+    price_schedule: dict[int, float] = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
+
+
+@dataclass
+class CarbonPolicyConfig:
+    """Normalized carbon allowance policy configuration for engine runs."""
+
+    enabled: bool = True
+    enable_floor: bool = True
+    enable_ccr: bool = True
+    ccr1_enabled: bool = True
+    ccr2_enabled: bool = True
+    allowance_banking_enabled: bool = True
+    control_period_years: int | None = None
+
+    @classmethod
+    def from_mapping(
+        cls,
+        mapping: Mapping[str, Any] | None,
+        *,
+        enabled: bool | None = None,
+        enable_floor: bool | None = None,
+        enable_ccr: bool | None = None,
+        ccr1_enabled: bool | None = None,
+        ccr2_enabled: bool | None = None,
+        allowance_banking_enabled: bool | None = None,
+        control_period_years: int | None = None,
+    ) -> "CarbonPolicyConfig":
+        record = dict(mapping) if isinstance(mapping, Mapping) else {}
+
+        def _coerce_bool(value: Any, default: bool) -> bool:
+            return bool(value) if value is not None else default
+
+        enabled_val = _coerce_bool(enabled, bool(record.get('enabled', True)))
+        enable_floor_val = _coerce_bool(enable_floor, bool(record.get('enable_floor', True)))
+        enable_ccr_val = _coerce_bool(enable_ccr, bool(record.get('enable_ccr', True)))
+        ccr1_val = _coerce_bool(ccr1_enabled, bool(record.get('ccr1_enabled', True)))
+        ccr2_val = _coerce_bool(ccr2_enabled, bool(record.get('ccr2_enabled', True)))
+        banking_val = _coerce_bool(
+            allowance_banking_enabled,
+            bool(record.get('allowance_banking_enabled', True)),
+        )
+
+        control_period_val = _sanitize_control_period(
+            control_period_years
+            if control_period_years is not None
+            else record.get('control_period_years')
+        )
+
+        config = cls(
+            enabled=enabled_val,
+            enable_floor=enable_floor_val,
+            enable_ccr=enable_ccr_val,
+            ccr1_enabled=ccr1_val,
+            ccr2_enabled=ccr2_val,
+            allowance_banking_enabled=banking_val,
+            control_period_years=control_period_val,
+        )
+
+        if not config.enabled:
+            config.disable_cap()
+        elif not config.enable_ccr:
+            config.ccr1_enabled = False
+            config.ccr2_enabled = False
+
+        return config
+
+    def disable_cap(self) -> None:
+        """Disable allowance trading mechanics when the cap is inactive."""
+
+        self.enabled = False
+        self.enable_floor = False
+        self.enable_ccr = False
+        self.ccr1_enabled = False
+        self.ccr2_enabled = False
+        self.allowance_banking_enabled = False
+        self.control_period_years = None
+
+    def disable_for_price(self) -> None:
+        """Disable the cap when an exogenous carbon price is active."""
+
+        self.disable_cap()
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return a serializable dictionary representation."""
+
+        return {
+            'enabled': bool(self.enabled),
+            'enable_floor': bool(self.enable_floor),
+            'enable_ccr': bool(self.enable_ccr),
+            'ccr1_enabled': bool(self.ccr1_enabled),
+            'ccr2_enabled': bool(self.ccr2_enabled),
+            'allowance_banking_enabled': bool(self.allowance_banking_enabled),
+            'control_period_years': self.control_period_years,
+        }
+
+
+@dataclass
+class CarbonPriceConfig:
+    """Normalized carbon price configuration for engine runs."""
+
+    enabled: bool = False
+    price_per_ton: float = 0.0
+    schedule: dict[int, float] = field(default_factory=dict)
+
+    @property
+    def active(self) -> bool:
+        """Return ``True`` when the price should override the cap."""
+
+        return bool(self.enabled and self.schedule)
+
+    @classmethod
+    def from_mapping(
+        cls,
+        mapping: Mapping[str, Any] | None,
+        *,
+        enabled: bool | None = None,
+        value: float | None = None,
+        schedule: Mapping[int, float] | Mapping[str, Any] | None = None,
+        years: Iterable[int] | None = None,
+    ) -> "CarbonPriceConfig":
+        record = dict(mapping) if isinstance(mapping, Mapping) else {}
+
+        enabled_val = bool(enabled) if enabled is not None else bool(record.get('enabled', False))
+        price_raw = value if value is not None else record.get('price_per_ton', record.get('price', 0.0))
+        price_value = _coerce_float(price_raw, default=0.0)
+
+        schedule_map = _normalize_price_schedule(record.get('price_schedule'))
+        if schedule is not None:
+            schedule_map.update(_normalize_price_schedule(schedule))
+
+        if not schedule_map and price_value and years:
+            schedule_map = {int(year): float(price_value) for year in years}
+        else:
+            schedule_map = {int(year): float(val) for year, val in schedule_map.items()}
+
+        config = cls(
+            enabled=bool(enabled_val),
+            price_per_ton=float(price_value),
+            schedule=schedule_map,
+        )
+
+        if not config.active:
+            config.schedule = {}
+            config.price_per_ton = 0.0
+
+        return config
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return a serializable dictionary representation."""
+
+        payload = {
+            'enabled': bool(self.enabled),
+            'price_per_ton': float(self.price_per_ton),
+        }
+        if self.schedule:
+            payload['price_schedule'] = dict(self.schedule)
+        return payload
+
+
+def _sanitize_control_period(value: Any) -> int | None:
+    """Return ``value`` coerced to a positive integer when possible."""
+
+    if value in (None, ''):
+        return None
+    try:
+        period = int(value)
+    except (TypeError, ValueError):
+        return None
+    return period if period > 0 else None
+
+
+def _normalize_price_schedule(value: Any) -> dict[int, float]:
+    """Return a normalized mapping of year to carbon price."""
+
+    schedule: dict[int, float] = {}
+    if isinstance(value, Mapping):
+        for key, raw in value.items():
+            try:
+                year = int(key)
+                price = float(raw)
+            except (TypeError, ValueError):
+                continue
+            schedule[year] = price
+    return schedule
+
+
+def _merge_module_dicts(*sections: Mapping[str, Any] | None) -> dict[str, dict[str, Any]]:
+    """Combine multiple module configuration sections into a copy."""
+
+    merged: dict[str, dict[str, Any]] = {}
+    for section in sections:
+        if not isinstance(section, Mapping):
+            continue
+        for name, settings in section.items():
+            key = str(name)
+            if isinstance(settings, Mapping):
+                existing = merged.get(key, {})
+                combined = dict(existing)
+                combined.update(settings)
+                merged[key] = combined
+            else:
+                merged[key] = {'value': settings}
+    return merged
 
 
 @dataclass
@@ -193,7 +395,7 @@ class DispatchModuleSettings:
 
 @dataclass
 class IncentivesModuleSettings:
-    """Record of incentive and credit selections."""
+    """Record of incentives sidebar selections."""
 
     enabled: bool
     production_credits: list[dict[str, Any]]
@@ -203,7 +405,7 @@ class IncentivesModuleSettings:
 
 @dataclass
 class OutputsModuleSettings:
-    """Record of output management selections."""
+    """Record of outputs sidebar selections."""
 
     enabled: bool
     directory: str
@@ -212,59 +414,101 @@ class OutputsModuleSettings:
     errors: list[str] = field(default_factory=list)
 
 
+# -------------------------
+# Utilities
+# -------------------------
+def _fallback_downloads_directory(app_subdir: str = "GraniteLedger") -> Path:
+    base_path = Path.home() / "Downloads"
+    if app_subdir:
+        base_path = base_path / app_subdir
+    base_path.mkdir(parents=True, exist_ok=True)
+    return base_path
+
+
+def _coerce_float(value: Any, default: float = 0.0) -> float:
+    """Coerce value to float or return default."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def get_downloads_directory(app_subdir: str = "GraniteLedger") -> Path:
+    global _download_directory_fallback_used
+    if _get_downloads_directory is not None:
+        try:
+            return _get_downloads_directory(app_subdir=app_subdir)
+        except Exception:  # pragma: no cover - defensive
+            LOGGER.warning("Falling back to home Downloads directory; helper raised an error.")
+    if not _download_directory_fallback_used:
+        LOGGER.warning(
+            "get_downloads_directory is unavailable; using ~/Downloads for model outputs."
+        )
+        _download_directory_fallback_used = True
+    return _fallback_downloads_directory(app_subdir)
+
+
+def _ensure_engine_runner():
+    if _RUN_END_TO_END is None:
+        raise ModuleNotFoundError(ENGINE_RUNNER_REQUIRED_MESSAGE)
+    return _RUN_END_TO_END
+
+
+def _ensure_streamlit() -> None:
+    if st is None:
+        raise ModuleNotFoundError(STREAMLIT_REQUIRED_MESSAGE)
+
+
 @contextmanager
 def _sidebar_panel(container: Any, enabled: bool):
-    """Render a styled sidebar panel with optional greyed-out state."""
+    """Render a styled sidebar panel with optional greyed-out state.
 
-    class_name = 'sidebar-module disabled' if not enabled else 'sidebar-module'
-    container.markdown(f"<div class=\"{class_name}\">", unsafe_allow_html=True)
+    NOTE: We do NOT `with container:` here. The caller already has the right Streamlit container.
+    """
+    class_name = "sidebar-module disabled" if not enabled else "sidebar-module"
+    container.markdown(f'<div class="{class_name}">', unsafe_allow_html=True)
     try:
-        with container:
-            yield container
+        yield container
     finally:
-        container.markdown('</div>', unsafe_allow_html=True)
+        container.markdown("</div>", unsafe_allow_html=True)
 
 
 def _load_config_data(config_source: Any | None = None) -> dict[str, Any]:
-    """Return configuration data as a dictionary."""
-
     if config_source is None:
-        with open(DEFAULT_CONFIG_PATH, 'rb') as src:
+        with open(DEFAULT_CONFIG_PATH, "rb") as src:
             return tomllib.load(src)
 
     if isinstance(config_source, Mapping):
         return dict(config_source)
 
     if isinstance(config_source, (bytes, bytearray)):
-        return tomllib.loads(config_source.decode('utf-8'))
+        return tomllib.loads(config_source.decode("utf-8"))
 
     if isinstance(config_source, (str, Path)):
         path_candidate = Path(config_source)
         if path_candidate.exists():
-            with open(path_candidate, 'rb') as src:
+            with open(path_candidate, "rb") as src:
                 return tomllib.load(src)
         return tomllib.loads(str(config_source))
 
-    if hasattr(config_source, 'read'):
+    if hasattr(config_source, "read"):
         data = config_source.read()
         if isinstance(data, bytes):
-            return tomllib.loads(data.decode('utf-8'))
+            return tomllib.loads(data.decode("utf-8"))
         return tomllib.loads(str(data))
 
-    raise TypeError(f'Unsupported config source type: {type(config_source)!r}')
+    raise TypeError(f"Unsupported config source type: {type(config_source)!r}")
 
 
 def _years_from_config(config: Mapping[str, Any]) -> list[int]:
-    """Extract candidate years from the configuration mapping."""
-
     years: set[int] = set()
-    raw_years = config.get('years')
+    raw_years = config.get("years")
 
     if isinstance(raw_years, (list, tuple, set)):
         for entry in raw_years:
-            if isinstance(entry, Mapping) and 'year' in entry:
+            if isinstance(entry, Mapping) and "year" in entry:
                 try:
-                    years.add(int(entry['year']))
+                    years.add(int(entry["year"]))
                 except (TypeError, ValueError):
                     continue
             else:
@@ -272,15 +516,15 @@ def _years_from_config(config: Mapping[str, Any]) -> list[int]:
                     years.add(int(entry))
                 except (TypeError, ValueError):
                     continue
-    elif raw_years not in (None, ''):
+    elif raw_years not in (None, ""):
         try:
             years.add(int(raw_years))
         except (TypeError, ValueError):
             pass
 
     if not years:
-        start = config.get('start_year')
-        end = config.get('end_year')
+        start = config.get("start_year")
+        end = config.get("end_year")
         try:
             if start is not None and end is not None:
                 start_val = int(start)
@@ -302,8 +546,6 @@ def _select_years(
     start_year: int | None,
     end_year: int | None,
 ) -> list[int]:
-    """Return a sorted list of simulation years respecting bounds."""
-
     years = sorted({int(year) for year in base_years}) if base_years else []
 
     def _ensure_int(value: int | None) -> int | None:
@@ -315,7 +557,7 @@ def _select_years(
     end = _ensure_int(end_year)
 
     if start is not None and end is not None and end < start:
-        raise ValueError('end_year must be greater than or equal to start_year')
+        raise ValueError("end_year must be greater than or equal to start_year")
 
     if start is not None and end is not None:
         selected = [year for year in years if start <= year <= end]
@@ -335,29 +577,21 @@ def _select_years(
         years = selected or [end]
 
     if not years:
-        raise ValueError('No simulation years specified')
+        raise ValueError("No simulation years specified")
 
     return sorted({int(year) for year in years})
 
 
 def _regions_from_config(config: Mapping[str, Any]) -> list[int | str]:
-    """Extract region identifiers from the configuration mapping."""
-
-    raw_regions = config.get('regions')
+    raw_regions = config.get("regions")
     regions: list[int | str] = []
 
     def _normalise(entry: Any) -> int | str:
-        if isinstance(entry, bool):
-            return int(entry)
-        if isinstance(entry, (int, float)):
-            return int(entry)
-        text = str(entry).strip()
-        if not text:
-            return 'default'
-        try:
-            return int(text)
-        except (TypeError, ValueError):
-            return text
+        resolved = canonical_region_value(entry)
+        if isinstance(resolved, str):
+            text = resolved.strip()
+            return text or "default"
+        return resolved
 
     if isinstance(raw_regions, Mapping):
         iterable: Iterable[Any] = raw_regions.values()
@@ -369,7 +603,7 @@ def _regions_from_config(config: Mapping[str, Any]) -> list[int | str]:
             normalised = _normalise(entry)
             if normalised not in regions:
                 regions.append(normalised)
-    elif iterable not in (None, ''):
+    elif iterable not in (None, ""):
         regions.append(_normalise(iterable))
 
     if not regions:
@@ -383,12 +617,83 @@ def _normalize_region_labels(
     previous_clean_selection: Iterable[str] | None,
 ) -> list[str]:
     normalized = [str(entry) for entry in selected_labels]
-    if 'All' in normalized and len(normalized) > 1:
-        non_all = [e for e in normalized if e != 'All']
+    if "All" in normalized and len(normalized) > 1:
+        non_all = [e for e in normalized if e != "All"]
         prev = tuple(str(e) for e in (previous_clean_selection or ()))
-        return non_all if prev == ('All',) and non_all else ['All']
+        return non_all if prev == ("All",) and non_all else ["All"]
     return normalized
-      
+
+
+def _normalize_coverage_selection(selection: Any) -> list[str]:
+    """Return a normalised list of coverage region labels."""
+
+    if isinstance(selection, Mapping):
+        iterable: Iterable[Any] = selection.values()
+    elif isinstance(selection, (str, bytes)) or not isinstance(selection, Iterable):
+        iterable = [selection]
+    else:
+        iterable = selection
+
+    normalized: list[str] = []
+    for entry in iterable:
+        if entry is None:
+            continue
+        text = str(entry).strip()
+        if not text:
+            continue
+        lowered = text.lower()
+        if lowered in {"all", "all regions"}:
+            return ["All"]
+        if text not in normalized:
+            normalized.append(text)
+
+    if not normalized:
+        return ["All"]
+    return normalized
+
+
+# -------------------------
+# Dataclasses
+# -------------------------
+@dataclass
+class GeneralConfigResult:
+    config_label: str
+    config_source: Any
+    run_config: dict[str, Any]
+    candidate_years: list[int]
+    start_year: int
+    end_year: int
+    selected_years: list[int]
+    regions: list[int | str]
+
+
+@dataclass
+class DispatchModuleSettings:
+    enabled: bool
+    mode: str
+    capacity_expansion: bool
+    reserve_margins: bool
+    errors: list[str] = field(default_factory=list)
+
+
+@dataclass
+class IncentivesModuleSettings:
+    enabled: bool
+    production_credits: list[dict[str, Any]]
+    investment_credits: list[dict[str, Any]]
+    errors: list[str] = field(default_factory=list)
+
+
+@dataclass
+class OutputsModuleSettings:
+    enabled: bool
+    directory: str
+    resolved_path: Path
+    show_csv_downloads: bool
+    errors: list[str] = field(default_factory=list)
+
+# General Config UI
+# -------------------------
 def _render_general_config_section(
     container: Any,
     *,
@@ -396,9 +701,6 @@ def _render_general_config_section(
     default_label: str,
     default_config: Mapping[str, Any],
 ) -> GeneralConfigResult:
-    """Render general configuration controls and return the selected settings."""
-
-    # --- Load Base Config ---
     try:
         base_config = copy.deepcopy(dict(default_config))
     except Exception:
@@ -422,7 +724,6 @@ def _render_general_config_section(
 
     container.caption(f"Using configuration: {config_label}")
 
-    # --- Determine Year Bounds ---
     candidate_years = _years_from_config(base_config)
     if candidate_years:
         year_min = min(candidate_years)
@@ -439,14 +740,11 @@ def _render_general_config_section(
         except (TypeError, ValueError):
             return int(fallback)
 
-    start_default = _coerce_year(base_config.get("start_year", year_min), year_min)
-    end_default = _coerce_year(base_config.get("end_year", year_max), year_max)
-    start_default = max(year_min, min(year_max, start_default))
-    end_default = max(year_min, min(year_max, end_default))
+    start_default = max(year_min, min(year_max, _coerce_year(base_config.get("start_year", year_min), year_min)))
+    end_default = max(year_min, min(year_max, _coerce_year(base_config.get("end_year", year_max), year_max)))
     if start_default > end_default:
         start_default, end_default = end_default, start_default
 
-    # --- Slider for Year Range (clamped 2025–2050) ---
     slider_min_default = 2025
     slider_max_default = 2050
     slider_min_value, slider_max_value = container.slider(
@@ -458,32 +756,68 @@ def _render_general_config_section(
         key="general_year_slider",
     )
 
-    # --- Final Output Years ---
     start_year = slider_min_value
     end_year = slider_max_value
-    run_years = list(range(start_year, end_year + 1))
 
-    # --- Regions ---
     region_options = _regions_from_config(base_config)
     default_region_values = list(range(1, 26))
+    alias_to_value = region_alias_map()
     available_region_values: list[int | str] = []
-    seen: set[str] = set()
-    for rv in (*default_region_values, *region_options):
-        label = str(rv).strip()
-        if label and label not in seen:
-            seen.add(label)
-            available_region_values.append(int(rv) if isinstance(rv, (bool, int, float)) else rv)
+    value_to_label: dict[int | str, str] = {}
+    label_to_value: dict[str, int | str] = {}
+    seen_values: set[int | str] = set()
 
-    region_labels = ["All"] + [str(v) for v in available_region_values]
+    def _register_region_value(value: int | str) -> None:
+        if value in seen_values:
+            return
+        seen_values.add(value)
+        label = region_display_label(value)
+        available_region_values.append(value)
+        value_to_label[value] = label
+        label_to_value[label] = value
+        alias_to_value.setdefault(label.lower(), value)
+        alias_to_value.setdefault(str(value).strip().lower(), value)
+        if isinstance(value, (bool, int)):
+            alias_to_value.setdefault(f"region {int(value)}".lower(), value)
+
+    for candidate in (*default_region_values, *region_options):
+        resolved = canonical_region_value(candidate)
+        if isinstance(resolved, str):
+            text = resolved.strip()
+            if text:
+                _register_region_value(text)
+        else:
+            _register_region_value(int(resolved))
+
+    region_labels = ["All"] + [value_to_label[v] for v in available_region_values]
     default_selection = ["All"]
+
+    def _canonical_region_label_entry(entry: Any) -> str:
+        text = str(entry).strip()
+        if not text:
+            return text
+        if text == "All":
+            return "All"
+        if text in label_to_value:
+            return text
+        lookup_key = text.lower()
+        value = alias_to_value.get(lookup_key)
+        if value is None:
+            try:
+                value = int(text)
+            except ValueError:
+                return text
+        return value_to_label.get(value, region_display_label(value))
 
     if st is not None:
         st.session_state.setdefault(_GENERAL_REGIONS_NORMALIZED_KEY, list(default_selection))
         prev_raw = st.session_state.get(_GENERAL_REGIONS_NORMALIZED_KEY, [])
         if isinstance(prev_raw, (list, tuple)):
-            previous_clean_selection = tuple(str(e) for e in prev_raw)
+            previous_clean_selection = tuple(
+                _canonical_region_label_entry(e) for e in prev_raw
+            )
         elif isinstance(prev_raw, str):
-            previous_clean_selection = (prev_raw,)
+            previous_clean_selection = (_canonical_region_label_entry(prev_raw),)
         else:
             previous_clean_selection = ()
     else:
@@ -497,15 +831,23 @@ def _render_general_config_section(
             key="general_regions",
         )
     )
-    normalized_selection = _normalize_region_labels(selected_regions_raw, previous_clean_selection)
-    if normalized_selection != selected_regions_raw and st is not None:
-        st.session_state["general_regions"] = normalized_selection
-    selected_regions_raw = normalized_selection
+    normalized_selection = _normalize_region_labels(
+        selected_regions_raw, previous_clean_selection
+    )
+    canonical_selection: list[str] = []
+    seen_labels: set[str] = set()
+    for entry in normalized_selection:
+        label = _canonical_region_label_entry(entry)
+        if label and label not in seen_labels:
+            canonical_selection.append(label)
+            seen_labels.add(label)
+    if canonical_selection != selected_regions_raw and st is not None:
+        st.session_state["general_regions"] = canonical_selection
+    selected_regions_raw = canonical_selection
     if st is not None:
         st.session_state[_GENERAL_REGIONS_NORMALIZED_KEY] = list(selected_regions_raw)
 
     all_selected = "All" in selected_regions_raw
-    label_to_value = {str(v): v for v in available_region_values}
     if all_selected or not selected_regions_raw:
         selected_regions = list(available_region_values)
     else:
@@ -515,10 +857,13 @@ def _render_general_config_section(
                 continue
             value = label_to_value.get(entry)
             if value is None:
-                try:
-                    value = int(str(entry).strip())
-                except ValueError:
-                    value = str(entry).strip()
+                normalized = str(entry).strip().lower()
+                value = alias_to_value.get(normalized)
+                if value is None:
+                    try:
+                        value = int(str(entry).strip())
+                    except ValueError:
+                        value = str(entry).strip()
             if value not in selected_regions:
                 selected_regions.append(value)
     if not selected_regions:
@@ -548,74 +893,206 @@ def _render_general_config_section(
         selected_years=selected_years,
         regions=selected_regions,
     )
-
+# -------------------------
+# Carbon UI
+# -------------------------
 def _render_carbon_policy_section(
     container: Any,
     run_config: dict[str, Any],
+    region_options: Iterable[int | str] | None = None,
 ) -> CarbonModuleSettings:
+    """Render the carbon policy section wrapper."""
+    # You can decide whether to call render_carbon_module_controls here
+    return render_carbon_module_controls(run_config, container)
+
+
+def render_carbon_module_controls(run_config: dict[str, Any], container) -> CarbonModuleSettings:
     """Render the carbon policy module controls."""
 
-    modules = run_config.setdefault('modules', {})
-    defaults = modules.get('carbon_policy', {})
-    enabled_default = bool(defaults.get('enabled', True))
-    enable_floor_default = bool(defaults.get('enable_floor', True))
-    enable_ccr_default = bool(defaults.get('enable_ccr', True))
-    ccr1_default = bool(defaults.get('ccr1_enabled', True))
-    ccr2_default = bool(defaults.get('ccr2_enabled', True))
-    banking_default = bool(defaults.get('allowance_banking_enabled', True))
-    control_default_raw = defaults.get('control_period_years')
+    modules = run_config.setdefault("modules", {})
+    defaults = modules.get("carbon_policy", {})
+    price_defaults = modules.get("carbon_price", {})
+
+    enabled_default = bool(defaults.get("enabled", True))
+    enable_floor_default = bool(defaults.get("enable_floor", True))
+    enable_ccr_default = bool(defaults.get("enable_ccr", True))
+    ccr1_default = bool(defaults.get("ccr1_enabled", True))
+    ccr2_default = bool(defaults.get("ccr2_enabled", True))
+    banking_default = bool(defaults.get("allowance_banking_enabled", True))
+    coverage_default = _normalize_coverage_selection(
+        defaults.get("coverage_regions", ["All"])
+    )
+    control_default_raw = defaults.get("control_period_years")
     try:
         control_default = int(control_default_raw)
     except (TypeError, ValueError):
         control_default = 3
     control_override_default = control_default_raw is not None
+    region_labels: list[str] = []
+    if region_options is not None:
+        for entry in region_options:
+            label = str(entry).strip()
+            if not label:
+                label = "default"
+            if label not in region_labels:
+                region_labels.append(label)
+    if not region_labels:
+        region_labels = ["default"]
 
-    allowance_cfg_raw = run_config.get('allowance_market')
-    if isinstance(allowance_cfg_raw, Mapping):
-        if isinstance(allowance_cfg_raw, dict):
-            allowance_cfg = allowance_cfg_raw
-        else:
-            allowance_cfg = dict(allowance_cfg_raw)
-            run_config['allowance_market'] = allowance_cfg
+    coverage_choices = [_ALL_REGIONS_LABEL] + sorted(region_labels, key=str)
+    if coverage_default == ["All"]:
+        coverage_default_display = [_ALL_REGIONS_LABEL]
     else:
-        allowance_cfg = {}
-        run_config['allowance_market'] = allowance_cfg
-    bank_default = _coerce_float(allowance_cfg.get('bank0'), default=0.0)
-    bank_default = max(0.0, float(bank_default))
-    bank0_value = float(bank_default)
+        coverage_default_display = [
+            label for label in coverage_default if label in coverage_choices
+        ]
+        if not coverage_default_display:
+            coverage_default_display = [_ALL_REGIONS_LABEL]
 
-    enabled = container.toggle('Enable carbon cap', value=enabled_default, key='carbon_enable')
+    price_enabled_default = bool(price_defaults.get("enabled", False))
+    price_value_raw = price_defaults.get("price_per_ton", price_defaults.get("price", 0.0))
+    price_default = _coerce_float(price_value_raw, default=0.0)
+    price_schedule_default = _normalize_price_schedule(price_defaults.get("price_schedule"))
+
+    # Normalize region labels
+    region_labels: list[str] = []
+    if region_options is not None:
+        for entry in region_options:
+            label = str(entry).strip()
+            if not label:
+                label = "default"
+            if label not in region_labels:
+                region_labels.append(label)
+    if not region_labels:
+        region_labels = ["default"]
+
+    coverage_choices = [_ALL_REGIONS_LABEL] + sorted(region_labels, key=str)
+    if coverage_default == ["All"]:
+        coverage_default_display = [_ALL_REGIONS_LABEL]
+    else:
+        coverage_default_display = [
+            label for label in coverage_default if label in coverage_choices
+        ]
+        if not coverage_default_display:
+            coverage_default_display = [_ALL_REGIONS_LABEL]
+
+    # Carbon price defaults
+    price_enabled_default = bool(price_defaults.get("enabled", False))
+    price_value_raw = price_defaults.get("price_per_ton", price_defaults.get("price", 0.0))
+    price_default = _coerce_float(price_value_raw, default=0.0)
+    price_schedule_default = _normalize_price_schedule(price_defaults.get("price_schedule"))
+
+    def _mark_last_changed(key: str) -> None:
+        try:
+            _ensure_streamlit()
+        except ModuleNotFoundError:  # pragma: no cover - GUI dependency missing
+            return
+        st.session_state["carbon_module_last_changed"] = key
+
+    session_enabled_default = enabled_default
+    session_price_default = price_enabled_default
+    last_changed = None
+    if st is not None:  # pragma: no cover - UI path
+        last_changed = st.session_state.get("carbon_module_last_changed")
+        session_enabled_default = bool(st.session_state.get("carbon_enable", enabled_default))
+        session_price_default = bool(
+            st.session_state.get("carbon_price_enable", price_enabled_default)
+        )
+        if session_enabled_default and session_price_default:
+            if last_changed == "cap":
+                session_price_default = False
+            else:
+                session_enabled_default = False
+            st.session_state["carbon_enable"] = session_enabled_default
+            st.session_state["carbon_price_enable"] = session_price_default
+
+    # UI toggles
+    enabled = container.toggle(
+        "Enable carbon cap",
+        value=session_enabled_default,
+        key="carbon_enable",
+        on_change=lambda: _mark_last_changed("cap"),
+    )
+    price_enabled = container.toggle(
+        "Enable carbon price",
+        value=session_price_default,
+        key="carbon_price_enable",
+        on_change=lambda: _mark_last_changed("price"),
+    )
+
+
+    if enabled and price_enabled:
+        if last_changed == "cap":
+            price_enabled = False
+        else:
+            enabled = False
+
+    enable_floor = container.toggle("Enable price floor", value=enable_floor_default, key="carbon_floor")
+    enable_ccr = container.toggle("Enable CCR", value=enable_ccr_default, key="carbon_ccr")
+    ccr1_enabled = container.toggle("Enable CCR Tier 1", value=ccr1_default, key="carbon_ccr1")
+    ccr2_enabled = container.toggle("Enable CCR Tier 2", value=ccr2_default, key="carbon_ccr2")
+    banking_enabled = container.toggle("Enable allowance banking", value=banking_default, key="carbon_banking")
+
+    control_override = container.toggle(
+        "Override control period",
+        value=control_override_default,
+        key="carbon_ctrl_override",
+    )
+    control_period_years = control_default if control_override else None
+
+    price_per_ton = container.number_input("Carbon price ($/ton)", value=price_default, key="carbon_price_val")
+    price_schedule = price_schedule_default
+
+    errors: list[str] = []
+    if enabled and price_enabled:
+        errors.append("Cannot enable both carbon cap and carbon price simultaneously.")
+
+    return CarbonModuleSettings(
+        enabled=enabled,
+        price_enabled=price_enabled,
+        enable_floor=enable_floor,
+        enable_ccr=enable_ccr,
+        ccr1_enabled=ccr1_enabled,
+        ccr2_enabled=ccr2_enabled,
+        banking_enabled=banking_enabled,
+        coverage_regions=coverage_default_display,
+        control_period_years=control_period_years,
+        price_per_ton=price_per_ton,
+        price_schedule=price_schedule,
+        errors=errors,
+    )
+
 
     with _sidebar_panel(container, enabled) as panel:
         enable_floor = panel.checkbox(
-            'Enable minimum reserve price',
+            "Enable minimum reserve price",
             value=enable_floor_default,
             disabled=not enabled,
-            key='carbon_floor',
+            key="carbon_floor",
         )
         enable_ccr = panel.checkbox(
-            'Enable CCR',
+            "Enable CCR",
             value=enable_ccr_default,
             disabled=not enabled,
-            key='carbon_ccr',
+            key="carbon_ccr",
         )
         ccr1_enabled = panel.checkbox(
-            'Enable CCR tranche 1',
+            "Enable CCR tranche 1",
             value=ccr1_default,
             disabled=not (enabled and enable_ccr),
-            key='carbon_ccr1',
+            key="carbon_ccr1",
         )
         ccr2_enabled = panel.checkbox(
-            'Enable CCR tranche 2',
+            "Enable CCR tranche 2",
             value=ccr2_default,
             disabled=not (enabled and enable_ccr),
-            key='carbon_ccr2',
+            key="carbon_ccr2",
         )
         banking_enabled = panel.checkbox(
-            'Enable allowance banking',
+            "Enable allowance banking",
             value=banking_default,
             disabled=not enabled,
-            key='carbon_banking',
+            key="carbon_banking",
         )
         bank0_value = float(
             panel.number_input(
@@ -629,22 +1106,90 @@ def _render_carbon_policy_section(
             )
         )
         control_override = panel.checkbox(
-            'Specify control period length',
+            "Specify control period length",
             value=control_override_default,
             disabled=not enabled,
-            key='carbon_control_toggle',
+            key="carbon_control_toggle",
         )
         control_period_value = panel.number_input(
-            'Control period length (years)',
+            "Control period length (years)",
             min_value=1,
             value=int(control_default if control_default > 0 else 3),
             step=1,
-            format='%d',
-            key='carbon_control_years',
+            format="%d",
+            key="carbon_control_years",
             disabled=not (enabled and control_override),
         )
+        coverage_selection_raw = panel.multiselect(
+            "Regions covered by carbon cap",
+            options=coverage_choices,
+            default=coverage_default_display,
+            disabled=not enabled,
+            key="carbon_coverage_regions",
+            help=(
+                "Select the regions subject to the cap. Choose “All regions” to apply "
+                "the carbon policy across every region."
+            ),
+        )
+
+    with _sidebar_panel(container, price_enabled) as price_panel:
+        price_per_ton_value = price_panel.number_input(
+            'Carbon price ($/ton)',
+            min_value=0.0,
+            value=float(price_default if price_default >= 0.0 else 0.0),
+            step=1.0,
+            format='%0.2f',
+            key='carbon_price_value',
+            disabled=not price_enabled,
+        )
+
+        raw_region_values = run_config.get("regions", [])
+        available_region_values = [
+            value for value in raw_region_values if value not in (None, "")
+        ]
+        region_option_map = {str(value): value for value in available_region_values}
+        default_region_candidates = defaults.get("regions")
+        if isinstance(default_region_candidates, Mapping):
+            default_region_candidates = list(default_region_candidates.values())
+        if isinstance(default_region_candidates, (str, bytes)):
+            default_region_candidates = [default_region_candidates]
+        if not isinstance(default_region_candidates, Iterable) or isinstance(
+            default_region_candidates, (bytes, str)
+        ):
+            default_region_candidates = []
+        normalized_defaults = {
+            str(candidate)
+            for candidate in default_region_candidates
+            if candidate not in (None, "")
+        }
+        if not normalized_defaults and available_region_values:
+            normalized_defaults = {str(value) for value in available_region_values}
+
+        region_options = list(region_option_map)
+        if region_options:
+            default_labels = [
+                label for label in region_options if label in normalized_defaults
+            ]
+            selected_region_labels = panel.multiselect(
+                "Cap-covered regions",
+                options=region_options,
+                default=default_labels,
+                disabled=not enabled,
+                key="carbon_regions",
+            )
+        else:
+            selected_region_labels = []
+        selected_cap_regions = [
+            region_option_map[label]
+            for label in selected_region_labels
+            if label in region_option_map
+        ]
+        if enabled and not selected_cap_regions:
+            selected_cap_regions = list(available_region_values)
 
     control_period_years = int(control_period_value) if enabled and control_override else None
+    coverage_selection = coverage_selection_raw or coverage_default_display
+    coverage_regions = _normalize_coverage_selection(coverage_selection)
     if not enabled:
         enable_floor = False
         enable_ccr = False
@@ -653,58 +1198,75 @@ def _render_carbon_policy_section(
         banking_enabled = False
         control_period_years = None
 
-    modules['carbon_policy'] = {
-        'enabled': bool(enabled),
-        'enable_floor': bool(enable_floor),
-        'enable_ccr': bool(enable_ccr),
-        'ccr1_enabled': bool(ccr1_enabled),
-        'ccr2_enabled': bool(ccr2_enabled),
-        'allowance_banking_enabled': bool(banking_enabled),
-        'control_period_years': control_period_years,
-        'bank0': float(bank0_value),
+    if not price_enabled:
+        price_per_ton = 0.0
+        price_schedule = {}
+
+    modules["carbon_policy"] = {
+        "enabled": bool(enabled),
+        "enable_floor": bool(enable_floor),
+        "enable_ccr": bool(enable_ccr),
+        "ccr1_enabled": bool(ccr1_enabled),
+        "ccr2_enabled": bool(ccr2_enabled),
+        "allowance_banking_enabled": bool(banking_enabled),
+        "coverage_regions": coverage_regions,
+        "control_period_years": control_period_years,
+        "regions": list(selected_cap_regions),
     }
 
-    allowance_cfg['bank0'] = float(bank0_value)
+    modules["carbon_price"] = {
+        "enabled": bool(price_enabled),
+        "price_per_ton": float(price_per_ton),
+        "price_schedule": dict(price_schedule),
+    }
+
+    if price_schedule_default:
+        price_record["price_schedule"] = dict(price_schedule_default)
+    modules["carbon_price"] = price_record
 
     errors: list[str] = []
-    if enabled and not isinstance(run_config.get('allowance_market'), Mapping):
-        message = 'Allowance market settings are missing from the configuration.'
+    if enabled and not isinstance(run_config.get("allowance_market"), Mapping):
+        message = "Allowance market settings are missing from the configuration."
         container.error(message)
         errors.append(message)
 
     return CarbonModuleSettings(
-        enabled=bool(enabled),
-        enable_floor=bool(enable_floor),
-        enable_ccr=bool(enable_ccr),
-        ccr1_enabled=bool(ccr1_enabled),
-        ccr2_enabled=bool(ccr2_enabled),
-        banking_enabled=bool(banking_enabled),
+        enabled=enabled,
+        price_enabled=price_enabled,
+        enable_floor=enable_floor,
+        enable_ccr=enable_ccr,
+        ccr1_enabled=ccr1_enabled,
+        ccr2_enabled=ccr2_enabled,
+        banking_enabled=banking_enabled,
+        coverage_regions=coverage_default_display,
         control_period_years=control_period_years,
-        initial_bank=float(bank0_value),
+        price_per_ton=float(price_per_ton),
+        price_schedule=dict(price_schedule),
         errors=errors,
     )
 
 
+# -------------------------
+# Dispatch UI
+# -------------------------
 def _render_dispatch_section(
     container: Any,
     run_config: dict[str, Any],
     frames: FramesType | None,
 ) -> DispatchModuleSettings:
-    """Render the electricity dispatch controls."""
-
-    modules = run_config.setdefault('modules', {})
-    defaults = modules.get('electricity_dispatch', {})
-    enabled_default = bool(defaults.get('enabled', False))
-    mode_default = str(defaults.get('mode', 'single')).lower()
-    if mode_default not in {'single', 'network'}:
-        mode_default = 'single'
-    capacity_default = bool(defaults.get('capacity_expansion', True))
-    reserve_default = bool(defaults.get('reserve_margins', True))
+    modules = run_config.setdefault("modules", {})
+    defaults = modules.get("electricity_dispatch", {})
+    enabled_default = bool(defaults.get("enabled", False))
+    mode_default = str(defaults.get("mode", "single")).lower()
+    if mode_default not in {"single", "network"}:
+        mode_default = "single"
+    capacity_default = bool(defaults.get("capacity_expansion", True))
+    reserve_default = bool(defaults.get("reserve_margins", True))
 
     enabled = container.toggle(
-        'Enable electricity dispatch',
+        "Enable electricity dispatch",
         value=enabled_default,
-        key='dispatch_enable',
+        key="dispatch_enable",
     )
 
     mode_value = mode_default
@@ -712,34 +1274,34 @@ def _render_dispatch_section(
     reserve_margins = reserve_default
     errors: list[str] = []
 
-    mode_options = {'single': 'Single region', 'network': 'Networked'}
+    mode_options = {"single": "Single region", "network": "Networked"}
 
     with _sidebar_panel(container, enabled) as panel:
-        mode_label = mode_options.get(mode_default, mode_options['single'])
+        mode_label = mode_options.get(mode_default, mode_options["single"])
         mode_selection = panel.selectbox(
-            'Dispatch topology',
+            "Dispatch topology",
             options=list(mode_options.values()),
             index=list(mode_options.values()).index(mode_label),
             disabled=not enabled,
-            key='dispatch_mode',
+            key="dispatch_mode",
         )
-        mode_value = 'network' if mode_selection == mode_options['network'] else 'single'
+        mode_value = "network" if mode_selection == mode_options["network"] else "single"
         capacity_expansion = panel.checkbox(
-            'Enable capacity expansion',
+            "Enable capacity expansion",
             value=capacity_default,
             disabled=not enabled,
-            key='dispatch_capacity',
+            key="dispatch_capacity",
         )
         reserve_margins = panel.checkbox(
-            'Enforce reserve margins',
+            "Enforce reserve margins",
             value=reserve_default,
             disabled=not enabled,
-            key='dispatch_reserve',
+            key="dispatch_reserve",
         )
 
         if enabled:
             if frames is None:
-                message = 'Dispatch requires demand and unit data, but no frames are available.'
+                message = "Dispatch requires demand and unit data, but no frames are available."
                 panel.error(message)
                 errors.append(message)
             else:
@@ -747,12 +1309,12 @@ def _render_dispatch_section(
                     demand_df = frames.demand()
                     units_df = frames.units()
                 except Exception as exc:
-                    message = f'Dispatch data unavailable: {exc}'
+                    message = f"Dispatch data unavailable: {exc}"
                     panel.error(message)
                     errors.append(message)
                 else:
                     if demand_df.empty or units_df.empty:
-                        message = 'Dispatch requires non-empty demand and unit tables.'
+                        message = "Dispatch requires non-empty demand and unit tables."
                         panel.error(message)
                         errors.append(message)
         else:
@@ -761,22 +1323,181 @@ def _render_dispatch_section(
             reserve_margins = False
 
     if not enabled:
-        mode_value = mode_value or 'single'
+        mode_value = mode_value or "single"
 
-    modules['electricity_dispatch'] = {
-        'enabled': bool(enabled),
-        'mode': mode_value or 'single',
-        'capacity_expansion': bool(capacity_expansion),
-        'reserve_margins': bool(reserve_margins),
+    modules["electricity_dispatch"] = {
+        "enabled": bool(enabled),
+        "mode": mode_value or "single",
+        "capacity_expansion": bool(capacity_expansion),
+        "reserve_margins": bool(reserve_margins),
     }
 
     return DispatchModuleSettings(
         enabled=bool(enabled),
-        mode=mode_value or 'single',
+        mode=mode_value or "single",
         capacity_expansion=bool(capacity_expansion),
         reserve_margins=bool(reserve_margins),
         errors=errors,
     )
+
+
+# -------------------------
+# Incentives UI
+# -------------------------
+def _coerce_optional_float(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        value = text
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _coerce_bool_flag(value: Any, default: bool = True) -> bool:
+    if value in (None, ""):
+        return bool(default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        if value in (0, 1):
+            return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "t", "yes", "y", "1", "on"}:
+            return True
+        if normalized in {"false", "f", "no", "n", "0", "off"}:
+            return False
+    return bool(default)
+
+
+def _parse_years_field(
+    value: Any,
+    *,
+    valid_years: set[int] | None = None,
+) -> tuple[list[int], list[str], list[int]]:
+    if value in (None, ""):
+        return [], [], []
+
+    text = str(value).strip()
+    if not text:
+        return [], [], []
+
+    normalized = text.translate({ord(char): None for char in "[]{}()"})
+    tokens = [token for token in re.split(r"[;,\s]+", normalized) if token]
+
+    parsed_years: list[int] = []
+    invalid_tokens: list[str] = []
+    out_of_range: list[int] = []
+
+    valid_set = {int(year) for year in valid_years} if valid_years else set()
+
+    for token in tokens:
+        token_str = token.strip()
+        if not token_str:
+            continue
+
+        if "-" in token_str:
+            start_text, end_text = token_str.split("-", 1)
+            try:
+                start_year = int(start_text.strip())
+                end_year = int(end_text.strip())
+            except (TypeError, ValueError):
+                invalid_tokens.append(token_str)
+                continue
+
+            step = 1 if end_year >= start_year else -1
+            for year in range(start_year, end_year + step, step):
+                if valid_set and year not in valid_set:
+                    out_of_range.append(year)
+                else:
+                    parsed_years.append(year)
+            continue
+
+        try:
+            year_int = int(token_str)
+        except (TypeError, ValueError):
+            invalid_tokens.append(token_str)
+            continue
+
+        if valid_set and year_int not in valid_set:
+            out_of_range.append(year_int)
+        else:
+            parsed_years.append(year_int)
+
+    parsed_years = sorted({int(year) for year in parsed_years})
+    out_of_range = sorted({int(year) for year in out_of_range if year not in parsed_years})
+
+    return parsed_years, invalid_tokens, out_of_range
+
+
+def _data_editor_records(value: Any) -> list[dict[str, Any]]:
+    if value is None:
+        return []
+
+    if hasattr(value, "to_dict"):
+        try:
+            records = value.to_dict("records")  # type: ignore[call-arg]
+        except Exception:
+            records = None
+        if isinstance(records, list):
+            return [dict(entry) for entry in records if isinstance(entry, Mapping)]
+
+    if isinstance(value, Mapping):
+        return [dict(value)]
+
+    if isinstance(value, Iterable) and not isinstance(value, (str, bytes)):
+        records: list[dict[str, Any]] = []
+        for entry in value:
+            if isinstance(entry, Mapping):
+                records.append(dict(entry))
+        if records:
+            return records
+
+    return []
+
+
+def _simulation_years_from_config(config: Mapping[str, Any]) -> list[int]:
+    try:
+        base_years = _years_from_config(config)
+    except Exception:
+        base_years = []
+
+    start_raw = config.get("start_year")
+    end_raw = config.get("end_year")
+
+    def _to_int(value: Any) -> int | None:
+        if value in (None, ""):
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    start_year = _to_int(start_raw)
+    end_year = _to_int(end_raw)
+
+    years: list[int] = []
+
+    if base_years:
+        try:
+            years = _select_years(base_years, start_year, end_year)
+        except Exception:
+            years = [int(year) for year in base_years]
+    else:
+        if start_year is not None and end_year is not None:
+            step = 1 if end_year >= start_year else -1
+            years = list(range(start_year, end_year + step, step))
+        elif start_year is not None:
+            years = [start_year]
+        elif end_year is not None:
+            years = [end_year]
+
+    return sorted({int(year) for year in years})
 
 
 def _render_incentives_section(
@@ -784,23 +1505,21 @@ def _render_incentives_section(
     run_config: dict[str, Any],
     frames: FramesType | None,
 ) -> IncentivesModuleSettings:
-    """Render incentive and credit controls."""
+    modules = run_config.setdefault("modules", {})
+    defaults = modules.get("incentives", {})
+    enabled_default = bool(defaults.get("enabled", False))
 
-    modules = run_config.setdefault('modules', {})
-    defaults = modules.get('incentives', {})
-    enabled_default = bool(defaults.get('enabled', False))
-
-    incentives_cfg = run_config.get('electricity_incentives')
+    incentives_cfg = run_config.get("electricity_incentives")
     production_source: Any | None = None
     investment_source: Any | None = None
     if isinstance(incentives_cfg, Mapping):
-        enabled_default = bool(incentives_cfg.get('enabled', enabled_default))
-        production_source = incentives_cfg.get('production')
-        investment_source = incentives_cfg.get('investment')
+        enabled_default = bool(incentives_cfg.get("enabled", enabled_default))
+        production_source = incentives_cfg.get("production")
+        investment_source = incentives_cfg.get("investment")
     if production_source is None and isinstance(defaults, Mapping):
-        production_source = defaults.get('production')
+        production_source = defaults.get("production")
     if investment_source is None and isinstance(defaults, Mapping):
-        investment_source = defaults.get('investment')
+        investment_source = defaults.get("investment")
 
     def _normalise_config_entries(
         source: Any, *, credit_key: str, limit_key: str
@@ -815,11 +1534,11 @@ def _render_incentives_section(
         for entry in iterable:
             if not isinstance(entry, Mapping):
                 continue
-            tech_id = resolve_technology_key(entry.get('technology'))
+            tech_id = resolve_technology_key(entry.get("technology"))
             if tech_id is None:
                 continue
             try:
-                year_int = int(entry.get('year'))
+                year_int = int(entry.get("year"))
             except (TypeError, ValueError):
                 continue
             credit_val = _coerce_optional_float(entry.get(credit_key))
@@ -827,37 +1546,39 @@ def _render_incentives_section(
                 continue
             limit_val = _coerce_optional_float(entry.get(limit_key))
             record: dict[str, Any] = {
-                'technology': get_technology_label(tech_id),
-                'year': year_int,
+                "technology": get_technology_label(tech_id),
+                "year": year_int,
                 credit_key: float(credit_val),
             }
             if limit_val is not None:
                 record[limit_key] = float(limit_val)
             entries.append(record)
-        entries.sort(key=lambda item: (str(item['technology']).lower(), int(item['year'])))
+        entries.sort(key=lambda item: (str(item["technology"]).lower(), int(item["year"])))
         return entries
 
     existing_production_entries = _normalise_config_entries(
-        production_source, credit_key='credit_per_mwh', limit_key='limit_mwh'
+        production_source, credit_key="credit_per_mwh", limit_key="limit_mwh"
     )
     existing_investment_entries = _normalise_config_entries(
-        investment_source, credit_key='credit_per_mw', limit_key='limit_mw'
+        investment_source, credit_key="credit_per_mw", limit_key="limit_mw"
     )
 
     technology_options: set[str] = {
-        get_technology_label(tech_id) for tech_id in sorted(TECH_ID_TO_LABEL)
+        get_technology_label(tech_id) for tech_id in sorted(TECH_ID_TO_LABEL or {})
     }
     for entry in (*existing_production_entries, *existing_investment_entries):
-        label = str(entry.get('technology', '')).strip()
+        label = str(entry.get("technology", "")).strip()
         if label:
             technology_options.add(label)
+    if not technology_options:
+        technology_options = {"Coal", "Gas", "Wind", "Solar"}
     technology_labels = sorted(technology_options)
 
-    production_credit_col = 'Credit ($/MWh)'
-    production_limit_col = 'Limit (MWh)'
-    investment_credit_col = 'Credit ($/MW)'
-    investment_limit_col = 'Limit (MW)'
-    selection_column = 'Apply credit'
+    production_credit_col = "Credit ($/MWh)"
+    production_limit_col = "Limit (MWh)"
+    investment_credit_col = "Credit ($/MW)"
+    investment_limit_col = "Limit (MW)"
+    selection_column = "Apply credit"
 
     def _build_editor_rows(
         entries: list[dict[str, Any]],
@@ -873,44 +1594,44 @@ def _render_incentives_section(
             rows.append(
                 {
                     selection_label: True,
-                    'Technology': entry['technology'],
-                    'Years': str(entry['year']),
+                    "Technology": entry["technology"],
+                    "Years": str(entry["year"]),
                     credit_label: entry.get(credit_key),
                     limit_label: entry.get(limit_key),
                 }
             )
-        seen = {str(row.get('Technology')) for row in rows if row.get('Technology')}
+        seen = {str(row.get("Technology")) for row in rows if row.get("Technology")}
         for label in technology_labels:
             if label not in seen:
                 rows.append(
                     {
                         selection_label: False,
-                        'Technology': label,
-                        'Years': '',
+                        "Technology": label,
+                        "Years": "",
                         credit_label: None,
                         limit_label: None,
                     }
                 )
         rows.sort(
             key=lambda row: (
-                str(row.get('Technology', '')).lower(),
-                str(row.get('Years', '')).lower(),
+                str(row.get("Technology", "")).lower(),
+                str(row.get("Years", "")).lower(),
             )
         )
         return rows
 
     production_rows_default = _build_editor_rows(
         existing_production_entries,
-        credit_key='credit_per_mwh',
-        limit_key='limit_mwh',
+        credit_key="credit_per_mwh",
+        limit_key="limit_mwh",
         credit_label=production_credit_col,
         limit_label=production_limit_col,
         selection_label=selection_column,
     )
     investment_rows_default = _build_editor_rows(
         existing_investment_entries,
-        credit_key='credit_per_mw',
-        limit_key='limit_mw',
+        credit_key="credit_per_mw",
+        limit_key="limit_mw",
         credit_label=investment_credit_col,
         limit_label=investment_limit_col,
         selection_label=selection_column,
@@ -937,53 +1658,49 @@ def _render_incentives_section(
                 include_row = _coerce_bool_flag(row.get(selection_column), default=False)
                 if not include_row:
                     continue
-            technology_value = row.get('Technology')
+            technology_value = row.get("Technology")
             technology_label = (
-                str(technology_value).strip() if technology_value not in (None, '') else ''
+                str(technology_value).strip() if technology_value not in (None, "") else ""
             )
             if not technology_label:
                 continue
             tech_id = resolve_technology_key(technology_label)
             if tech_id is None:
-                messages.append(
-                    f'{context_label} row {index}: Unknown technology "{technology_label}".'
-                )
+                messages.append(f'{context_label} row {index}: Unknown technology "{technology_label}".')
                 continue
-            years_value = row.get('Years')
+            years_value = row.get("Years")
             years, invalid_tokens, out_of_range = _parse_years_field(
                 years_value, valid_years=valid_years
             )
             if invalid_tokens:
-                tokens_display = ', '.join(
+                tokens_display = ", ".join(
                     sorted({token.strip() for token in invalid_tokens if token.strip()})
                 )
                 if tokens_display:
                     messages.append(
-                        f'{context_label} row {index}: Unable to parse year value(s): {tokens_display}.'
+                        f"{context_label} row {index}: Unable to parse year value(s): {tokens_display}."
                     )
             if out_of_range:
-                years_display = ', '.join(str(year) for year in out_of_range)
+                years_display = ", ".join(str(year) for year in out_of_range)
                 messages.append(
-                    f'{context_label} row {index}: Year(s) {years_display} fall outside the selected simulation years.'
+                    f"{context_label} row {index}: Year(s) {years_display} fall outside the selected simulation years."
                 )
             if not years:
-                years_text = str(years_value).strip() if isinstance(years_value, str) else ''
+                years_text = str(years_value).strip() if isinstance(years_value, str) else ""
                 credit_candidate = _coerce_optional_float(row.get(credit_column))
                 if years_text or credit_candidate is not None:
-                    messages.append(
-                        f'{context_label} row {index}: Specify one or more valid years.'
-                    )
+                    messages.append(f"{context_label} row {index}: Specify one or more valid years.")
                 continue
             credit_value = _coerce_optional_float(row.get(credit_column))
             if credit_value is None:
-                messages.append(f'{context_label} row {index}: Provide a credit value.')
+                messages.append(f"{context_label} row {index}: Provide a credit value.")
                 continue
             limit_value = _coerce_optional_float(row.get(limit_column))
             label = get_technology_label(tech_id)
             for year in years:
                 entry = {
-                    'technology': label,
-                    'year': int(year),
+                    "technology": label,
+                    "year": int(year),
                     credit_config_key: float(credit_value),
                 }
                 if limit_value is not None:
@@ -991,14 +1708,14 @@ def _render_incentives_section(
                 results[(tech_id, int(year))] = entry
         ordered = sorted(
             results.values(),
-            key=lambda item: (str(item['technology']).lower(), int(item['year'])),
+            key=lambda item: (str(item["technology"]).lower(), int(item["year"])),
         )
         return ordered, messages
 
     enabled = container.toggle(
-        'Enable incentives and credits',
+        "Enable incentives and credits",
         value=enabled_default,
-        key='incentives_enable',
+        key="incentives_enable",
     )
 
     errors: list[str] = []
@@ -1023,7 +1740,7 @@ def _render_incentives_section(
             disabled=not enabled,
             hide_index=True,
             num_rows="dynamic",
-            width="stretch",  # was use_container_width=True
+            width="stretch",  # Streamlit >= 1.38: replaces use_container_width
             key="incentives_production_editor",
             column_order=[
                 selection_column,
@@ -1068,7 +1785,7 @@ def _render_incentives_section(
             disabled=not enabled,
             hide_index=True,
             num_rows="dynamic",
-            width="stretch",  # was use_container_width=True
+            width="stretch",  # Streamlit >= 1.38: replaces use_container_width
             key="incentives_investment_editor",
             column_order=[
                 selection_column,
@@ -1106,6 +1823,7 @@ def _render_incentives_section(
                 ),
             },
         )
+
 
         validation_messages: list[str] = []
         if enabled:
@@ -1170,25 +1888,27 @@ def _render_incentives_section(
         errors=errors,
     )
 
+
+# -------------------------
+# Outputs UI
+# -------------------------
 def _render_outputs_section(
     container: Any,
     run_config: dict[str, Any],
     last_result: Mapping[str, Any] | None,
 ) -> OutputsModuleSettings:
-    """Render output directory and download controls."""
-
-    modules = run_config.setdefault('modules', {})
-    defaults = modules.get('outputs', {})
-    enabled_default = bool(defaults.get('enabled', True))
-    directory_default = str(defaults.get('directory') or run_config.get('output_name') or 'outputs')
-    show_csv_default = bool(defaults.get('show_csv_downloads', True))
+    modules = run_config.setdefault("modules", {})
+    defaults = modules.get("outputs", {})
+    enabled_default = bool(defaults.get("enabled", True))
+    directory_default = str(defaults.get("directory") or run_config.get("output_name") or "outputs")
+    show_csv_default = bool(defaults.get("show_csv_downloads", True))
 
     downloads_root = get_downloads_directory()
 
     enabled = container.toggle(
-        'Enable output management',
+        "Enable output management",
         value=enabled_default,
-        key='outputs_enable',
+        key="outputs_enable",
     )
 
     directory_value = directory_default
@@ -1197,66 +1917,102 @@ def _render_outputs_section(
 
     with _sidebar_panel(container, enabled) as panel:
         directory_value = panel.text_input(
-            'Output directory name',
+            "Output directory name",
             value=directory_default,
             disabled=not enabled,
-            key='outputs_directory',
+            key="outputs_directory",
         ).strip()
         show_csv_downloads = panel.checkbox(
-            'Show CSV downloads from last run',
+            "Show CSV downloads from last run",
             value=show_csv_default,
             disabled=not enabled,
-            key='outputs_csv',
+            key="outputs_csv",
         )
 
         resolved_directory = downloads_root if not directory_value else downloads_root / directory_value
-        panel.caption(f'Outputs will be saved to {resolved_directory}')
+        panel.caption(f"Outputs will be saved to {resolved_directory}")
 
         if enabled and not directory_value:
-            message = 'Specify an output directory when the outputs module is enabled.'
+            message = "Specify an output directory when the outputs module is enabled."
             panel.error(message)
             errors.append(message)
 
         csv_files: Mapping[str, Any] | None = None
         if enabled and show_csv_downloads:
             if isinstance(last_result, Mapping):
-                csv_files = last_result.get('csv_files')  # type: ignore[assignment]
+                csv_files = last_result.get("csv_files")  # type: ignore[assignment]
             if csv_files:
-                panel.caption('Download CSV outputs from the most recent run.')
+                panel.caption("Download CSV outputs from the most recent run.")
                 for filename, content in sorted(csv_files.items()):
                     panel.download_button(
-                        label=f'Download {filename}',
+                        label=f"Download {filename}",
                         data=content,
                         file_name=filename,
-                        mime='text/csv',
-                        key=f'outputs_download_{filename}',
+                        mime="text/csv",
+                        key=f"outputs_download_{filename}",
                     )
             else:
-                panel.info('No CSV outputs are available yet.')
+                panel.info("No CSV outputs are available yet.")
         elif enabled:
-            panel.caption('CSV downloads will be available after the next run.')
+            panel.caption("CSV downloads will be available after the next run.")
 
     if not directory_value:
-        directory_value = directory_default or 'outputs'
+        directory_value = directory_default or "outputs"
     if not enabled:
         show_csv_downloads = False
 
-    run_config['output_name'] = directory_value
+    run_config["output_name"] = directory_value
     resolved_directory = downloads_root if not directory_value else downloads_root / directory_value
-    modules['outputs'] = {
-        'enabled': bool(enabled),
-        'directory': directory_value,
-        'show_csv_downloads': bool(show_csv_downloads),
-        'resolved_path': str(resolved_directory),
+    modules["outputs"] = {
+        "enabled": bool(enabled),
+        "directory": directory_value,
+        "show_csv_downloads": bool(show_csv_downloads),
+        "resolved_path": str(resolved_directory),  # config serialization
     }
 
     return OutputsModuleSettings(
         enabled=bool(enabled),
         directory=directory_value,
-        resolved_path=resolved_directory,
+        resolved_path=resolved_directory,  # keep as Path in memory
         show_csv_downloads=bool(show_csv_downloads),
         errors=errors,
     )
+
+
+# -------------------------
+# Frames + runner helpers
+# -------------------------
+def _coerce_float(value: Any, default: float = 0.0) -> float:
+    try:
+        if isinstance(value, str):
+            return float(value.strip())
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _coerce_str(value: Any, default: str = "default") -> str:
+    if value in (None, ""):
+        return default
+    return str(value)
+
+
+def _coerce_year_set(value: Any, fallback: Iterable[int]) -> set[int]:
+    years: set[int] = set()
+    if isinstance(value, Iterable) and not isinstance(value, (str, bytes, Mapping)):
+        for entry in value:
+            try:
+                years.add(int(entry))
+            except (TypeError, ValueError):
+                continue
+    elif value not in (None, ""):
+        try:
+            years.add(int(value))
+        except (TypeError, ValueError):
+            pass
+    if not years:
+        years = {int(year) for year in fallback}
+    return years
 
 
 def _coerce_year_value_map(
@@ -1266,8 +2022,6 @@ def _coerce_year_value_map(
     cast: Callable[[Any], _T],
     default: _T,
 ) -> dict[int, _T]:
-    """Normalise TOML year/value structures into a mapping."""
-
     values: dict[int, _T] = {}
 
     if isinstance(entry, Mapping):
@@ -1275,8 +2029,8 @@ def _coerce_year_value_map(
     elif isinstance(entry, Iterable) and not isinstance(entry, (str, bytes)):
         iterator = []
         for item in entry:
-            if isinstance(item, Mapping) and 'year' in item:
-                iterator.append((item.get('year'), item.get('value', item.get('amount'))))
+            if isinstance(item, Mapping) and "year" in item:
+                iterator.append((item.get("year"), item.get("value", item.get("amount"))))
             elif isinstance(item, (list, tuple)) and len(item) == 2:
                 iterator.append((item[0], item[1]))
     elif entry is not None:
@@ -1305,204 +2059,6 @@ def _coerce_year_value_map(
     return result
 
 
-def _simulation_years_from_config(config: Mapping[str, Any]) -> list[int]:
-    """Return an ordered list of simulation years inferred from ``config``."""
-
-    try:
-        base_years = _years_from_config(config)
-    except Exception:
-        base_years = []
-
-    start_raw = config.get('start_year')
-    end_raw = config.get('end_year')
-
-    def _to_int(value: Any) -> int | None:
-        if value in (None, ''):
-            return None
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return None
-
-    start_year = _to_int(start_raw)
-    end_year = _to_int(end_raw)
-
-    years: list[int] = []
-
-    if base_years:
-        try:
-            years = _select_years(base_years, start_year, end_year)
-        except Exception:
-            years = [int(year) for year in base_years]
-    else:
-        if start_year is not None and end_year is not None:
-            step = 1 if end_year >= start_year else -1
-            years = list(range(start_year, end_year + step, step))
-        elif start_year is not None:
-            years = [start_year]
-        elif end_year is not None:
-            years = [end_year]
-
-    return sorted({int(year) for year in years})
-
-
-def _coerce_float(value: Any, default: float = 0.0) -> float:
-    try:
-        if isinstance(value, str):
-            return float(value.strip())
-        return float(value)
-    except (TypeError, ValueError):
-        return float(default)
-
-
-def _coerce_optional_float(value: Any) -> float | None:
-    """Return ``value`` coerced to ``float`` when possible."""
-
-    if value in (None, ''):
-        return None
-    if isinstance(value, str):
-        text = value.strip()
-        if not text:
-            return None
-        value = text
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _coerce_bool_flag(value: Any, default: bool = True) -> bool:
-    if value in (None, ""):
-        return bool(default)
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        if value in (0, 1):
-            return bool(value)
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"true", "t", "yes", "y", "1", "on"}:
-            return True
-        if normalized in {"false", "f", "no", "n", "0", "off"}:
-            return False
-    return bool(default)
-
-
-def _coerce_str(value: Any, default: str = 'default') -> str:
-    if value in (None, ''):
-        return default
-    return str(value)
-
-
-def _coerce_year_set(value: Any, fallback: Iterable[int]) -> set[int]:
-    years: set[int] = set()
-    if isinstance(value, Iterable) and not isinstance(value, (str, bytes, Mapping)):
-        for entry in value:
-            try:
-                years.add(int(entry))
-            except (TypeError, ValueError):
-                continue
-    elif value not in (None, ''):
-        try:
-            years.add(int(value))
-        except (TypeError, ValueError):
-            pass
-
-    if not years:
-        years = {int(year) for year in fallback}
-    return years
-
-
-def _parse_years_field(
-    value: Any,
-    *,
-    valid_years: set[int] | None = None,
-) -> tuple[list[int], list[str], list[int]]:
-    """Parse a free-form year selector into structured values."""
-
-    if value in (None, ''):
-        return [], [], []
-
-    text = str(value).strip()
-    if not text:
-        return [], [], []
-
-    normalized = text.translate({ord(char): None for char in '[]{}()'})
-    tokens = [token for token in re.split(r'[;,\s]+', normalized) if token]
-
-    parsed_years: list[int] = []
-    invalid_tokens: list[str] = []
-    out_of_range: list[int] = []
-
-    valid_set = {int(year) for year in valid_years} if valid_years else set()
-
-    for token in tokens:
-        token_str = token.strip()
-        if not token_str:
-            continue
-
-        if '-' in token_str:
-            start_text, end_text = token_str.split('-', 1)
-            try:
-                start_year = int(start_text.strip())
-                end_year = int(end_text.strip())
-            except (TypeError, ValueError):
-                invalid_tokens.append(token_str)
-                continue
-
-            step = 1 if end_year >= start_year else -1
-            for year in range(start_year, end_year + step, step):
-                if valid_set and year not in valid_set:
-                    out_of_range.append(year)
-                else:
-                    parsed_years.append(year)
-            continue
-
-        try:
-            year_int = int(token_str)
-        except (TypeError, ValueError):
-            invalid_tokens.append(token_str)
-            continue
-
-        if valid_set and year_int not in valid_set:
-            out_of_range.append(year_int)
-        else:
-            parsed_years.append(year_int)
-
-    parsed_years = sorted({int(year) for year in parsed_years})
-    out_of_range = sorted({int(year) for year in out_of_range if year not in parsed_years})
-
-    return parsed_years, invalid_tokens, out_of_range
-
-
-def _data_editor_records(value: Any) -> list[dict[str, Any]]:
-    """Return ``value`` normalised to a list of row dictionaries."""
-
-    if value is None:
-        return []
-
-    if hasattr(value, 'to_dict'):
-        try:
-            records = value.to_dict('records')  # type: ignore[call-arg]
-        except Exception:
-            records = None
-        if isinstance(records, list):
-            return [dict(entry) for entry in records if isinstance(entry, Mapping)]
-
-    if isinstance(value, Mapping):
-        return [dict(value)]
-
-    if isinstance(value, Iterable) and not isinstance(value, (str, bytes)):
-        records: list[dict[str, Any]] = []
-        for entry in value:
-            if isinstance(entry, Mapping):
-                records.append(dict(entry))
-        if records:
-            return records
-
-    return []
-
-
 def _build_policy_frame(
     config: Mapping[str, Any],
     years: Iterable[int],
@@ -1513,29 +2069,27 @@ def _build_policy_frame(
     control_period_years: int | None = None,
     banking_enabled: bool = True,
 ) -> pd.DataFrame:
-    """Construct the policy frame consumed by :class:`io_loader.Frames`."""
-
     years_list = sorted(int(year) for year in years)
     if not years_list:
-        raise ValueError('No years supplied for policy frame')
+        raise ValueError("No years supplied for policy frame")
 
-    market_cfg = config.get('allowance_market')
+    market_cfg = config.get("allowance_market")
     if not isinstance(market_cfg, Mapping):
         market_cfg = {}
 
     bank_flag = bool(carbon_policy_enabled and banking_enabled)
 
-    resolution_raw = market_cfg.get('resolution', 'annual')
+    resolution_raw = market_cfg.get("resolution", "annual")
     if isinstance(resolution_raw, str):
-        resolution = resolution_raw.strip().lower() or 'annual'
+        resolution = resolution_raw.strip().lower() or "annual"
     else:
-        resolution = str(resolution_raw).strip().lower() or 'annual'
-    if resolution not in {'annual', 'daily'}:
-        resolution = 'annual'
+        resolution = str(resolution_raw).strip().lower() or "annual"
+    if resolution not in {"annual", "daily"}:
+        resolution = "annual"
 
     if carbon_policy_enabled:
-        ccr1_flag = _coerce_bool_flag(market_cfg.get('ccr1_enabled'), default=True)
-        ccr2_flag = _coerce_bool_flag(market_cfg.get('ccr2_enabled'), default=True)
+        ccr1_flag = _coerce_bool_flag(market_cfg.get("ccr1_enabled"), default=True)
+        ccr2_flag = _coerce_bool_flag(market_cfg.get("ccr2_enabled"), default=True)
         if ccr1_enabled is not None:
             ccr1_flag = bool(ccr1_enabled)
         if ccr2_enabled is not None:
@@ -1543,8 +2097,8 @@ def _build_policy_frame(
 
         control_period = control_period_years
         if control_period is None:
-            raw_control = market_cfg.get('control_period_years')
-            if raw_control not in (None, ''):
+            raw_control = market_cfg.get("control_period_years")
+            if raw_control not in (None, ""):
                 try:
                     control_period = int(raw_control)
                 except (TypeError, ValueError):
@@ -1552,31 +2106,31 @@ def _build_policy_frame(
         if control_period is not None and control_period <= 0:
             control_period = None
 
-        cap_map = _coerce_year_value_map(market_cfg.get('cap'), years_list, cast=float, default=0.0)
-        floor_map = _coerce_year_value_map(market_cfg.get('floor'), years_list, cast=float, default=0.0)
+        cap_map = _coerce_year_value_map(market_cfg.get("cap"), years_list, cast=float, default=0.0)
+        floor_map = _coerce_year_value_map(market_cfg.get("floor"), years_list, cast=float, default=0.0)
         ccr1_trigger_map = _coerce_year_value_map(
-            market_cfg.get('ccr1_trigger'), years_list, cast=float, default=0.0
+            market_cfg.get("ccr1_trigger"), years_list, cast=float, default=0.0
         )
         ccr1_qty_map = _coerce_year_value_map(
-            market_cfg.get('ccr1_qty'), years_list, cast=float, default=0.0
+            market_cfg.get("ccr1_qty"), years_list, cast=float, default=0.0
         )
         ccr2_trigger_map = _coerce_year_value_map(
-            market_cfg.get('ccr2_trigger'), years_list, cast=float, default=0.0
+            market_cfg.get("ccr2_trigger"), years_list, cast=float, default=0.0
         )
         ccr2_qty_map = _coerce_year_value_map(
-            market_cfg.get('ccr2_qty'), years_list, cast=float, default=0.0
+            market_cfg.get("ccr2_qty"), years_list, cast=float, default=0.0
         )
         cp_id_map = _coerce_year_value_map(
-            market_cfg.get('cp_id'), years_list, cast=lambda v: _coerce_str(v, 'CP1'), default='CP1'
+            market_cfg.get("cp_id"), years_list, cast=lambda v: _coerce_str(v, "CP1"), default="CP1"
         )
-        bank0 = _coerce_float(market_cfg.get('bank0'), default=0.0)
-        surrender_frac = _coerce_float(market_cfg.get('annual_surrender_frac'), default=1.0)
-        carry_pct = _coerce_float(market_cfg.get('carry_pct'), default=1.0)
+        bank0 = _coerce_float(market_cfg.get("bank0"), default=0.0)
+        surrender_frac = _coerce_float(market_cfg.get("annual_surrender_frac"), default=1.0)
+        carry_pct = _coerce_float(market_cfg.get("carry_pct"), default=1.0)
         if not bank_flag:
             bank0 = 0.0
             carry_pct = 0.0
         full_compliance_years = _coerce_year_set(
-            market_cfg.get('full_compliance_years'), fallback=[]
+            market_cfg.get("full_compliance_years"), fallback=[]
         )
         if not full_compliance_years:
             if control_period:
@@ -1594,7 +2148,7 @@ def _build_policy_frame(
         ccr1_qty_map = {year: 0.0 for year in years_list}
         ccr2_trigger_map = {year: 0.0 for year in years_list}
         ccr2_qty_map = {year: 0.0 for year in years_list}
-        cp_id_map = {year: 'NoPolicy' for year in years_list}
+        cp_id_map = {year: "NoPolicy" for year in years_list}
         bank0 = _LARGE_ALLOWANCE_SUPPLY
         surrender_frac = 0.0
         carry_pct = 1.0
@@ -1608,84 +2162,141 @@ def _build_policy_frame(
     for year in years_list:
         records.append(
             {
-                'year': year,
-                'cap_tons': float(cap_map[year]),
-                'floor_dollars': float(floor_map[year]),
-                'ccr1_trigger': float(ccr1_trigger_map[year]),
-                'ccr1_qty': float(ccr1_qty_map[year]),
-                'ccr2_trigger': float(ccr2_trigger_map[year]),
-                'ccr2_qty': float(ccr2_qty_map[year]),
-                'cp_id': str(cp_id_map[year]),
-                'full_compliance': year in full_compliance_years,
-                'bank0': float(bank0),
-                'annual_surrender_frac': float(surrender_frac),
-                'carry_pct': float(carry_pct),
-                'policy_enabled': bool(carbon_policy_enabled),
-                'ccr1_enabled': bool(ccr1_flag),
-                'ccr2_enabled': bool(ccr2_flag),
-                'control_period_years': control_period,
-                'bank_enabled': bool(bank_flag),
-                'resolution': resolution,
+                "year": year,
+                "cap_tons": float(cap_map[year]),
+                "floor_dollars": float(floor_map[year]),
+                "ccr1_trigger": float(ccr1_trigger_map[year]),
+                "ccr1_qty": float(ccr1_qty_map[year]),
+                "ccr2_trigger": float(ccr2_trigger_map[year]),
+                "ccr2_qty": float(ccr2_qty_map[year]),
+                "cp_id": str(cp_id_map[year]),
+                "full_compliance": year in full_compliance_years,
+                "bank0": float(bank0),
+                "annual_surrender_frac": float(surrender_frac),
+                "carry_pct": float(carry_pct),
+                "policy_enabled": bool(carbon_policy_enabled),
+                "ccr1_enabled": bool(ccr1_flag),
+                "ccr2_enabled": bool(ccr2_flag),
+                "control_period_years": control_period,
+                "bank_enabled": bool(bank_flag),
+                "resolution": "annual" if resolution not in {"annual", "daily"} else resolution,
             }
         )
 
     return pd.DataFrame(records)
 
 
-def _default_units() -> pd.DataFrame:
+def _available_regions_from_frames(frames: FramesType) -> list[str]:
+    """Return an ordered list of region labels present in ``frames``."""
 
+    regions: list[str] = []
+
+    try:
+        demand = frames.demand()
+        if not demand.empty and 'region' in demand.columns:
+            for value in demand['region']:
+                label = str(value)
+                if label not in regions:
+                    regions.append(label)
+    except Exception:  # pragma: no cover - defensive guard
+        pass
+
+    try:
+        units = frames.units()
+        if not units.empty and 'region' in units.columns:
+            for value in units['region']:
+                label = str(value)
+                if label not in regions:
+                    regions.append(label)
+    except Exception:  # pragma: no cover - defensive guard
+        pass
+
+    if not regions:
+        regions = ['default']
+
+    return regions
+
+
+def _build_coverage_frame(
+    frames: FramesType,
+    coverage_regions: Iterable[str] | None,
+) -> pd.DataFrame | None:
+    """Construct a coverage table aligning regions with enabled status."""
+
+    if coverage_regions is None:
+        return None
+
+    normalized = _normalize_coverage_selection(coverage_regions)
+    cover_all = normalized == ["All"]
+
+    regions = _available_regions_from_frames(frames)
+    ordered = list(dict.fromkeys(regions))
+    for label in normalized:
+        if label != "All" and label not in ordered:
+            ordered.append(label)
+
+    records = [
+        {
+            'region': region,
+            'covered': True if cover_all else region in normalized,
+        }
+        for region in ordered
+    ]
+
+    return pd.DataFrame(records)
+
+
+def _default_units() -> pd.DataFrame:
     data = [
         {
-            'unit_id': 'wind-1',
-            'fuel': 'wind',
-            'region': 'default',
-            'cap_mw': 50.0,
-            'availability': 0.5,
-            'hr_mmbtu_per_mwh': 0.0,
-            'vom_per_mwh': 0.0,
-            'fuel_price_per_mmbtu': 0.0,
-            'ef_ton_per_mwh': 0.0,
+            "unit_id": "wind-1",
+            "fuel": "wind",
+            "region": "default",
+            "cap_mw": 50.0,
+            "availability": 0.5,
+            "hr_mmbtu_per_mwh": 0.0,
+            "vom_per_mwh": 0.0,
+            "fuel_price_per_mmbtu": 0.0,
+            "ef_ton_per_mwh": 0.0,
         },
         {
-            'unit_id': 'coal-1',
-            'fuel': 'coal',
-            'region': 'default',
-            'cap_mw': 80.0,
-            'availability': 0.9,
-            'hr_mmbtu_per_mwh': 9.0,
-            'vom_per_mwh': 1.5,
-            'fuel_price_per_mmbtu': 1.8,
-            'ef_ton_per_mwh': 1.0,
+            "unit_id": "coal-1",
+            "fuel": "coal",
+            "region": "default",
+            "cap_mw": 80.0,
+            "availability": 0.9,
+            "hr_mmbtu_per_mwh": 9.0,
+            "vom_per_mwh": 1.5,
+            "fuel_price_per_mmbtu": 1.8,
+            "ef_ton_per_mwh": 1.0,
         },
         {
-            'unit_id': 'gas-1',
-            'fuel': 'gas',
-            'region': 'default',
-            'cap_mw': 70.0,
-            'availability': 0.85,
-            'hr_mmbtu_per_mwh': 7.0,
-            'vom_per_mwh': 2.0,
-            'fuel_price_per_mmbtu': 2.5,
-            'ef_ton_per_mwh': 0.45,
+            "unit_id": "gas-1",
+            "fuel": "gas",
+            "region": "default",
+            "cap_mw": 70.0,
+            "availability": 0.85,
+            "hr_mmbtu_per_mwh": 7.0,
+            "vom_per_mwh": 2.0,
+            "fuel_price_per_mmbtu": 2.5,
+            "ef_ton_per_mwh": 0.45,
         },
     ]
     return pd.DataFrame(data)
 
 
 def _default_fuels() -> pd.DataFrame:
-
     return pd.DataFrame(
         [
-            {'fuel': 'wind', 'covered': False},
-            {'fuel': 'coal', 'covered': True},
-            {'fuel': 'gas', 'covered': True},
+            {"fuel": "wind", "covered": False},
+            {"fuel": "coal", "covered": True},
+            {"fuel": "gas", "covered": True},
         ]
     )
 
 
 def _default_transmission() -> pd.DataFrame:
-
-    return pd.DataFrame(columns=['from_region', 'to_region', 'limit_mw'])
+    return pd.DataFrame(columns=["from_region", "to_region", "limit_mw"])
 
 
 def _build_default_frames(
@@ -1695,16 +2306,15 @@ def _build_default_frames(
     banking_enabled: bool = True,
 ) -> FramesType:
     frames_cls = FramesType
-
     demand_records = [
-        {'year': int(year), 'region': 'default', 'demand_mwh': float(_DEFAULT_LOAD_MWH)}
+        {"year": int(year), "region": "default", "demand_mwh": float(_DEFAULT_LOAD_MWH)}
         for year in years
     ]
     base_frames = {
-        'units': _default_units(),
-        'demand': pd.DataFrame(demand_records),
-        'fuels': _default_fuels(),
-        'transmission': _default_transmission(),
+        "units": _default_units(),
+        "demand": pd.DataFrame(demand_records),
+        "fuels": _default_fuels(),
+        "transmission": _default_transmission(),
     }
     return frames_cls(
         base_frames,
@@ -1719,44 +2329,46 @@ def _ensure_years_in_demand(frames: FramesType, years: Iterable[int]) -> FramesT
 
     demand = frames.demand()
     if demand.empty:
-        raise ValueError('Demand frame is empty; cannot infer loads for requested years')
+        raise ValueError("Demand frame is empty; cannot infer loads for requested years")
 
-    existing_years = {int(year) for year in demand['year'].unique()}
+    existing_years = {int(year) for year in demand["year"].unique()}
     target_years = {int(year) for year in years}
     missing = sorted(target_years - existing_years)
     if not missing:
         return frames
 
-    averages = demand.groupby('region')['demand_mwh'].mean()
+    averages = demand.groupby("region")["demand_mwh"].mean()
     new_rows: list[dict[str, Any]] = []
     for year in missing:
         for region, value in averages.items():
-            new_rows.append({'year': year, 'region': region, 'demand_mwh': float(value)})
+            new_rows.append({"year": year, "region": region, "demand_mwh": float(value)})
 
     demand_updated = pd.concat([demand, pd.DataFrame(new_rows)], ignore_index=True)
-    demand_updated = demand_updated.sort_values(['year', 'region']).reset_index(drop=True)
-    return frames.with_frame('demand', demand_updated)
+    demand_updated = demand_updated.sort_values(["year", "region"]).reset_index(drop=True)
+    return frames.with_frame("demand", demand_updated)
 
 
 def _write_outputs_to_temp(outputs) -> tuple[Path, dict[str, bytes]]:
-    temp_dir = Path(tempfile.mkdtemp(prefix='bluesky_gui_'))
-    outputs.to_csv(temp_dir)
+    temp_dir = Path(tempfile.mkdtemp(prefix="bluesky_gui_"))
+    # Expect outputs to expose to_csv(target_dir)
+    if hasattr(outputs, "to_csv"):
+        outputs.to_csv(temp_dir)
+    else:
+        raise TypeError("Runner outputs object does not implement to_csv(Path).")
     csv_files: dict[str, bytes] = {}
-    for csv_path in temp_dir.glob('*.csv'):
+    for csv_path in temp_dir.glob("*.csv"):
         csv_files[csv_path.name] = csv_path.read_bytes()
     return temp_dir, csv_files
 
 
 def _read_uploaded_dataframe(uploaded_file: Any | None) -> pd.DataFrame | None:
-    """Return a DataFrame parsed from ``uploaded_file`` or ``None`` on failure."""
-
     if uploaded_file is None:
         return None
 
     try:
-        if hasattr(uploaded_file, 'getvalue'):
+        if hasattr(uploaded_file, "getvalue"):
             raw = uploaded_file.getvalue()
-        elif hasattr(uploaded_file, 'read'):
+        elif hasattr(uploaded_file, "read"):
             raw = uploaded_file.read()
         else:
             raw = uploaded_file
@@ -1770,12 +2382,12 @@ def _read_uploaded_dataframe(uploaded_file: Any | None) -> pd.DataFrame | None:
         df = pd.read_csv(buffer)
     except Exception as exc:
         _ensure_streamlit()
-        st.error(f'Unable to read CSV: {exc}')
+        st.error(f"Unable to read CSV: {exc}")
         return None
 
     if df.empty:
         _ensure_streamlit()
-        st.warning('Uploaded CSV is empty.')
+        st.warning("Uploaded CSV is empty.")
 
     return df
 
@@ -1785,8 +2397,6 @@ def _validate_frame_override(
     frame_name: str,
     df: pd.DataFrame,
 ) -> tuple[FramesType | None, str | None]:
-    """Return a new ``Frames`` object with ``frame_name`` replaced by ``df``."""
-
     validator_name = frame_name.lower()
     try:
         candidate = frames_obj.with_frame(frame_name, df)
@@ -1796,10 +2406,13 @@ def _validate_frame_override(
         else:
             candidate.frame(frame_name)
         return candidate, None
-    except Exception as exc:  # pragma: no cover - defensive guard
+    except Exception as exc:  # pragma: no cover
         return None, str(exc)
 
 
+# -------------------------
+# Assumptions editor tabs
+# -------------------------
 def _render_demand_controls(
     frames_obj: FramesType,
     years: Iterable[int],
@@ -1812,59 +2425,59 @@ def _render_demand_controls(
 
     demand_default = frames_obj.demand()
     if not demand_default.empty:
-        st.caption('Current demand assumptions')
-        st.dataframe(demand_default, use_container_width=True)
+        st.caption("Current demand assumptions")
+        st.dataframe(demand_default, width="stretch")
     else:
-        st.info('No default demand data found. Provide values via the controls or upload a CSV.')
+        st.info("No default demand data found. Provide values via the controls or upload a CSV.")
 
     manual_df: pd.DataFrame | None = None
     manual_note: str | None = None
 
     target_years = sorted({int(year) for year in years}) if years else []
     if not target_years and not demand_default.empty:
-        target_years = sorted({int(year) for year in demand_default['year'].unique()})
+        target_years = sorted({int(year) for year in demand_default["year"].unique()})
     if not target_years:
         target_years = [2025]
 
-    use_manual = st.checkbox('Create demand profile with controls', value=False, key='demand_manual_toggle')
+    use_manual = st.checkbox("Create demand profile with controls", value=False, key="demand_manual_toggle")
     if use_manual:
-        st.caption('Set a baseline load, per-region multipliers, and annual growth to construct demand.')
+        st.caption("Set a baseline load, per-region multipliers, and annual growth to construct demand.")
         if not demand_default.empty:
             first_year = target_years[0]
-            base_year_data = demand_default[demand_default['year'] == first_year]
-            default_base = float(base_year_data['demand_mwh'].mean()) if not base_year_data.empty else float(_DEFAULT_LOAD_MWH)
+            base_year_data = demand_default[demand_default["year"] == first_year]
+            default_base = float(base_year_data["demand_mwh"].mean()) if not base_year_data.empty else float(_DEFAULT_LOAD_MWH)
         else:
             default_base = float(_DEFAULT_LOAD_MWH)
 
         base_value = float(
             st.number_input(
-                'Baseline demand for the first year (MWh)',
+                "Baseline demand for the first year (MWh)",
                 min_value=0.0,
                 value=max(0.0, default_base),
                 step=10_000.0,
-                format='%0.0f',
+                format="%0.0f",
             )
         )
         growth_pct = float(
             st.slider(
-                'Annual growth rate (%)',
+                "Annual growth rate (%)",
                 min_value=-20.0,
                 max_value=20.0,
                 value=0.0,
                 step=0.25,
-                key='demand_growth',
+                key="demand_growth",
             )
         )
 
         if not demand_default.empty:
-            region_labels = sorted({str(region) for region in demand_default['region'].unique()})
+            region_labels = sorted({str(region) for region in demand_default["region"].unique()})
             region_defaults = (
-                demand_default[demand_default['year'] == target_years[0]]
-                .set_index('region')['demand_mwh']
+                demand_default[demand_default["year"] == target_years[0]]
+                .set_index("region")["demand_mwh"]
                 .to_dict()
             )
         else:
-            region_labels = ['default']
+            region_labels = ["default"]
             region_defaults = {}
 
         manual_records: list[dict[str, Any]] = []
@@ -1877,12 +2490,12 @@ def _render_demand_controls(
 
             multiplier = float(
                 st.slider(
-                    f'{region} demand multiplier',
+                    f"{region} demand multiplier",
                     min_value=0.1,
                     max_value=3.0,
                     value=multiplier_default,
                     step=0.05,
-                    key=f'demand_scale_{region}',
+                    key=f"demand_scale_{region}",
                 )
             )
 
@@ -1891,42 +2504,40 @@ def _render_demand_controls(
                 demand_val = base_value * multiplier * growth_factor
                 manual_records.append(
                     {
-                        'year': int(year),
-                        'region': region,
-                        'demand_mwh': float(demand_val),
+                        "year": int(year),
+                        "region": region,
+                        "demand_mwh": float(demand_val),
                     }
                 )
 
         manual_df = pd.DataFrame(manual_records)
         manual_note = (
-            f'Demand constructed from GUI controls with baseline {base_value:,.0f} MWh, '
-            f'growth {growth_pct:0.2f}% across {len(region_labels)} region(s) '
-            f'and {len(target_years)} year(s).'
+            f"Demand constructed from GUI controls with baseline {base_value:,.0f} MWh, "
+            f"growth {growth_pct:0.2f}% across {len(region_labels)} region(s) "
+            f"and {len(target_years)} year(s)."
         )
 
-    uploaded = st.file_uploader('Upload demand CSV', type='csv', key='demand_csv')
+    uploaded = st.file_uploader("Upload demand CSV", type="csv", key="demand_csv")
     if uploaded is not None:
         upload_df = _read_uploaded_dataframe(uploaded)
         if upload_df is not None:
             if manual_df is not None:
-                st.info('Uploaded demand CSV overrides manual adjustments.')
+                st.info("Uploaded demand CSV overrides manual adjustments.")
                 manual_df = None
                 manual_note = None
-            candidate, error = _validate_frame_override(frames_out, 'demand', upload_df)
+            candidate, error = _validate_frame_override(frames_out, "demand", upload_df)
             if candidate is None:
-                message = f'Demand CSV invalid: {error}'
+                message = f"Demand CSV invalid: {error}"
                 st.error(message)
                 errors.append(message)
             else:
                 frames_out = candidate
-                notes.append(
-                    f'Demand table loaded from {uploaded.name} ({len(upload_df)} row(s)).'
-                )
+                notes.append(f"Demand table loaded from {uploaded.name} ({len(upload_df)} row(s)).")
 
     if manual_df is not None:
-        candidate, error = _validate_frame_override(frames_out, 'demand', manual_df)
+        candidate, error = _validate_frame_override(frames_out, "demand", manual_df)
         if candidate is None:
-            message = f'Demand override invalid: {error}'
+            message = f"Demand override invalid: {error}"
             st.error(message)
             errors.append(message)
         else:
@@ -1946,139 +2557,133 @@ def _render_units_controls(frames_obj: FramesType) -> tuple[FramesType, list[str
 
     units_default = frames_obj.units()
     if not units_default.empty:
-        st.caption('Current generating units')
-        st.dataframe(units_default, use_container_width=True)
+        st.caption("Current generating units")
+        st.dataframe(units_default, width="stretch")
     else:
-        st.info('No generating units are defined. Upload a CSV to provide unit characteristics.')
+        st.info("No generating units are defined. Upload a CSV to provide unit characteristics.")
 
     manual_df: pd.DataFrame | None = None
     manual_note: str | None = None
-    edit_inline = st.checkbox('Edit units inline', value=False, key='units_manual_toggle')
+    edit_inline = st.checkbox("Edit units inline", value=False, key="units_manual_toggle")
     if edit_inline and not units_default.empty:
-        st.caption('Adjust unit properties with the controls below.')
+        st.caption("Adjust unit properties with the controls below.")
         manual_records: list[dict[str, Any]] = []
         for index, row in units_default.iterrows():
-            unit_label = str(row['unit_id'])
-            st.markdown(f'**{unit_label}**')
+            unit_label = str(row["unit_id"])
+            st.markdown(f"**{unit_label}**")
             col_meta = st.columns(3)
             with col_meta[0]:
                 unit_id = st.text_input(
-                    'Unit ID',
+                    "Unit ID",
                     value=unit_label,
-                    key=f'units_unit_id_{index}',
-                ).strip()
-                if not unit_id:
-                    unit_id = unit_label
+                    key=f"units_unit_id_{index}",
+                ).strip() or unit_label
             with col_meta[1]:
                 region = st.text_input(
-                    'Region',
-                    value=str(row['region']),
-                    key=f'units_region_{index}',
-                ).strip()
-                if not region:
-                    region = str(row['region'])
+                    "Region",
+                    value=str(row["region"]),
+                    key=f"units_region_{index}",
+                ).strip() or str(row["region"])
             with col_meta[2]:
                 fuel = st.text_input(
-                    'Fuel',
-                    value=str(row['fuel']),
-                    key=f'units_fuel_{index}',
-                ).strip()
-                if not fuel:
-                    fuel = str(row['fuel'])
+                    "Fuel",
+                    value=str(row["fuel"]),
+                    key=f"units_fuel_{index}",
+                ).strip() or str(row["fuel"])
 
             col_perf = st.columns(3)
             with col_perf[0]:
                 cap_mw = st.number_input(
-                    'Capacity (MW)',
+                    "Capacity (MW)",
                     min_value=0.0,
-                    value=float(row['cap_mw']),
+                    value=float(row["cap_mw"]),
                     step=1.0,
-                    key=f'units_cap_{index}',
+                    key=f"units_cap_{index}",
                 )
             with col_perf[1]:
                 availability = st.slider(
-                    'Availability',
+                    "Availability",
                     min_value=0.0,
                     max_value=1.0,
-                    value=float(row['availability']),
+                    value=float(row["availability"]),
                     step=0.01,
-                    key=f'units_availability_{index}',
+                    key=f"units_availability_{index}",
                 )
             with col_perf[2]:
                 heat_rate = st.number_input(
-                    'Heat rate (MMBtu/MWh)',
+                    "Heat rate (MMBtu/MWh)",
                     min_value=0.0,
-                    value=float(row['hr_mmbtu_per_mwh']),
+                    value=float(row["hr_mmbtu_per_mwh"]),
                     step=0.1,
-                    key=f'units_heat_rate_{index}',
+                    key=f"units_heat_rate_{index}",
                 )
 
             col_cost = st.columns(3)
             with col_cost[0]:
                 vom = st.number_input(
-                    'VOM ($/MWh)',
+                    "VOM ($/MWh)",
                     min_value=0.0,
-                    value=float(row['vom_per_mwh']),
+                    value=float(row["vom_per_mwh"]),
                     step=0.1,
-                    key=f'units_vom_{index}',
+                    key=f"units_vom_{index}",
                 )
             with col_cost[1]:
                 fuel_price = st.number_input(
-                    'Fuel price ($/MMBtu)',
+                    "Fuel price ($/MMBtu)",
                     min_value=0.0,
-                    value=float(row['fuel_price_per_mmbtu']),
+                    value=float(row["fuel_price_per_mmbtu"]),
                     step=0.1,
-                    key=f'units_fuel_price_{index}',
+                    key=f"units_fuel_price_{index}",
                 )
             with col_cost[2]:
                 emission_factor = st.number_input(
-                    'Emission factor (ton/MWh)',
+                    "Emission factor (ton/MWh)",
                     min_value=0.0,
-                    value=float(row['ef_ton_per_mwh']),
+                    value=float(row["ef_ton_per_mwh"]),
                     step=0.01,
-                    key=f'units_ef_{index}',
+                    key=f"units_ef_{index}",
                 )
 
             manual_records.append(
                 {
-                    'unit_id': unit_id,
-                    'region': region,
-                    'fuel': fuel,
-                    'cap_mw': float(cap_mw),
-                    'availability': float(availability),
-                    'hr_mmbtu_per_mwh': float(heat_rate),
-                    'vom_per_mwh': float(vom),
-                    'fuel_price_per_mmbtu': float(fuel_price),
-                    'ef_ton_per_mwh': float(emission_factor),
+                    "unit_id": unit_id,
+                    "region": region,
+                    "fuel": fuel,
+                    "cap_mw": float(cap_mw),
+                    "availability": float(availability),
+                    "hr_mmbtu_per_mwh": float(heat_rate),
+                    "vom_per_mwh": float(vom),
+                    "fuel_price_per_mmbtu": float(fuel_price),
+                    "ef_ton_per_mwh": float(emission_factor),
                 }
             )
 
         manual_df = pd.DataFrame(manual_records)
-        manual_note = f'Units modified via GUI controls ({len(manual_records)} unit(s)).'
+        manual_note = f"Units modified via GUI controls ({len(manual_records)} unit(s))."
     elif edit_inline:
-        st.info('Upload a units CSV to edit inline.')
+        st.info("Upload a units CSV to edit inline.")
 
-    uploaded = st.file_uploader('Upload units CSV', type='csv', key='units_csv')
+    uploaded = st.file_uploader("Upload units CSV", type="csv", key="units_csv")
     if uploaded is not None:
         upload_df = _read_uploaded_dataframe(uploaded)
         if upload_df is not None:
             if manual_df is not None:
-                st.info('Uploaded units CSV overrides inline edits.')
+                st.info("Uploaded units CSV overrides inline edits.")
                 manual_df = None
                 manual_note = None
-            candidate, error = _validate_frame_override(frames_out, 'units', upload_df)
+            candidate, error = _validate_frame_override(frames_out, "units", upload_df)
             if candidate is None:
-                message = f'Units CSV invalid: {error}'
+                message = f"Units CSV invalid: {error}"
                 st.error(message)
                 errors.append(message)
             else:
                 frames_out = candidate
-                notes.append(f'Units loaded from {uploaded.name} ({len(upload_df)} row(s)).')
+                notes.append(f"Units loaded from {uploaded.name} ({len(upload_df)} row(s)).")
 
     if manual_df is not None:
-        candidate, error = _validate_frame_override(frames_out, 'units', manual_df)
+        candidate, error = _validate_frame_override(frames_out, "units", manual_df)
         if candidate is None:
-            message = f'Units override invalid: {error}'
+            message = f"Units override invalid: {error}"
             st.error(message)
             errors.append(message)
         else:
@@ -2098,79 +2703,77 @@ def _render_fuels_controls(frames_obj: FramesType) -> tuple[FramesType, list[str
 
     fuels_default = frames_obj.fuels()
     if not fuels_default.empty:
-        st.caption('Current fuel coverage')
-        st.dataframe(fuels_default, use_container_width=True)
+        st.caption("Current fuel coverage")
+        st.dataframe(fuels_default, width="stretch")
     else:
-        st.info('No fuel data available. Upload a CSV to specify fuel coverage.')
+        st.info("No fuel data available. Upload a CSV to specify fuel coverage.")
 
     manual_df: pd.DataFrame | None = None
     manual_note: str | None = None
-    edit_inline = st.checkbox('Edit fuel coverage inline', value=False, key='fuels_manual_toggle')
+    edit_inline = st.checkbox("Edit fuel coverage inline", value=False, key="fuels_manual_toggle")
     if edit_inline and not fuels_default.empty:
-        st.caption('Toggle coverage and update emission factors as needed.')
+        st.caption("Toggle coverage and update emission factors as needed.")
         manual_records: list[dict[str, Any]] = []
-        has_emission_column = 'co2_ton_per_mmbtu' in fuels_default.columns
+        has_emission_column = "co2_ton_per_mmbtu" in fuels_default.columns
         for index, row in fuels_default.iterrows():
-            fuel_label = str(row['fuel'])
+            fuel_label = str(row["fuel"])
             col_line = st.columns(3 if has_emission_column else 2)
             with col_line[0]:
                 fuel_name = st.text_input(
-                    'Fuel',
+                    "Fuel",
                     value=fuel_label,
-                    key=f'fuels_name_{index}',
-                ).strip()
-                if not fuel_name:
-                    fuel_name = fuel_label
+                    key=f"fuels_name_{index}",
+                ).strip() or fuel_label
             with col_line[1]:
                 covered = st.checkbox(
-                    'Covered',
-                    value=bool(row['covered']),
-                    key=f'fuels_covered_{index}',
+                    "Covered",
+                    value=bool(row["covered"]),
+                    key=f"fuels_covered_{index}",
                 )
             emission_value: float | None = None
             if has_emission_column:
                 with col_line[2]:
                     emission_value = float(
                         st.number_input(
-                            'CO₂ tons/MMBtu',
+                            "CO₂ tons/MMBtu",
                             min_value=0.0,
-                            value=float(row.get('co2_ton_per_mmbtu', 0.0)),
+                            value=float(row.get("co2_ton_per_mmbtu", 0.0)),
                             step=0.01,
-                            key=f'fuels_emission_{index}',
+                            key=f"fuels_emission_{index}",
                         )
                     )
 
-            record: dict[str, Any] = {'fuel': fuel_name, 'covered': bool(covered)}
+            record: dict[str, Any] = {"fuel": fuel_name, "covered": bool(covered)}
             if has_emission_column:
-                record['co2_ton_per_mmbtu'] = float(emission_value or 0.0)
+                record["co2_ton_per_mmbtu"] = float(emission_value or 0.0)
             manual_records.append(record)
 
         manual_df = pd.DataFrame(manual_records)
-        manual_note = f'Fuel coverage edited inline ({len(manual_records)} fuel(s)).'
+        manual_note = f"Fuel coverage edited inline ({len(manual_records)} fuel(s))."
     elif edit_inline:
-        st.info('Upload a fuels CSV to edit inline.')
+        st.info("Upload a fuels CSV to edit inline.")
 
-    uploaded = st.file_uploader('Upload fuels CSV', type='csv', key='fuels_csv')
+    uploaded = st.file_uploader("Upload fuels CSV", type="csv", key="fuels_csv")
     if uploaded is not None:
         upload_df = _read_uploaded_dataframe(uploaded)
         if upload_df is not None:
             if manual_df is not None:
-                st.info('Uploaded fuels CSV overrides inline edits.')
+                st.info("Uploaded fuels CSV overrides inline edits.")
                 manual_df = None
                 manual_note = None
-            candidate, error = _validate_frame_override(frames_out, 'fuels', upload_df)
+            candidate, error = _validate_frame_override(frames_out, "fuels", upload_df)
             if candidate is None:
-                message = f'Fuels CSV invalid: {error}'
+                message = f"Fuels CSV invalid: {error}"
                 st.error(message)
                 errors.append(message)
             else:
                 frames_out = candidate
-                notes.append(f'Fuels loaded from {uploaded.name} ({len(upload_df)} row(s)).')
+                notes.append(f"Fuels loaded from {uploaded.name} ({len(upload_df)} row(s)).")
 
     if manual_df is not None:
-        candidate, error = _validate_frame_override(frames_out, 'fuels', manual_df)
+        candidate, error = _validate_frame_override(frames_out, "fuels", manual_df)
         if candidate is None:
-            message = f'Fuels override invalid: {error}'
+            message = f"Fuels override invalid: {error}"
             st.error(message)
             errors.append(message)
         else:
@@ -2192,56 +2795,52 @@ def _render_transmission_controls(
 
     transmission_default = frames_obj.transmission()
     if not transmission_default.empty:
-        st.caption('Current transmission limits')
-        st.dataframe(transmission_default, use_container_width=True)
+        st.caption("Current transmission limits")
+        st.dataframe(transmission_default, width="stretch")
     else:
-        st.info('No transmission limits specified. Add entries below or upload a CSV.')
+        st.info("No transmission limits specified. Add entries below or upload a CSV.")
 
     manual_df: pd.DataFrame | None = None
     manual_note: str | None = None
-    edit_inline = st.checkbox('Edit transmission limits inline', value=False, key='transmission_manual_toggle')
+    edit_inline = st.checkbox("Edit transmission limits inline", value=False, key="transmission_manual_toggle")
     if edit_inline:
         editable = transmission_default.copy()
         if editable.empty:
-            editable = pd.DataFrame(columns=['from_region', 'to_region', 'limit_mw'])
-        st.caption('Use the table to add or modify directional flow limits (MW).')
+            editable = pd.DataFrame(columns=["from_region", "to_region", "limit_mw"])
+        st.caption("Use the table to add or modify directional flow limits (MW).")
         edited = st.data_editor(
             editable,
-            num_rows='dynamic',
-            use_container_width=True,
-            key='transmission_editor',
+            num_rows="dynamic",
+            width="stretch",
+            key="transmission_editor",
         )
-        if isinstance(edited, pd.DataFrame):
-            manual_df = edited.copy()
-        else:
-            manual_df = pd.DataFrame(edited)
-        manual_df = manual_df.dropna(how='all')
-        manual_df = manual_df.reindex(columns=['from_region', 'to_region', 'limit_mw'])
-        manual_note = f'Transmission table edited inline ({len(manual_df)} record(s)).'
+        manual_df = (edited.copy() if isinstance(edited, pd.DataFrame) else pd.DataFrame(edited)).dropna(how="all")
+        manual_df = manual_df.reindex(columns=["from_region", "to_region", "limit_mw"])
+        manual_note = f"Transmission table edited inline ({len(manual_df)} record(s))."
 
-    uploaded = st.file_uploader('Upload transmission CSV', type='csv', key='transmission_csv')
+    uploaded = st.file_uploader("Upload transmission CSV", type="csv", key="transmission_csv")
     if uploaded is not None:
         upload_df = _read_uploaded_dataframe(uploaded)
         if upload_df is not None:
             if manual_df is not None:
-                st.info('Uploaded transmission CSV overrides inline edits.')
+                st.info("Uploaded transmission CSV overrides inline edits.")
                 manual_df = None
                 manual_note = None
-            candidate, error = _validate_frame_override(frames_out, 'transmission', upload_df)
+            candidate, error = _validate_frame_override(frames_out, "transmission", upload_df)
             if candidate is None:
-                message = f'Transmission CSV invalid: {error}'
+                message = f"Transmission CSV invalid: {error}"
                 st.error(message)
                 errors.append(message)
             else:
                 frames_out = candidate
                 notes.append(
-                    f'Transmission limits loaded from {uploaded.name} ({len(upload_df)} row(s)).'
+                    f"Transmission limits loaded from {uploaded.name} ({len(upload_df)} row(s))."
                 )
 
     if manual_df is not None:
-        candidate, error = _validate_frame_override(frames_out, 'transmission', manual_df)
+        candidate, error = _validate_frame_override(frames_out, "transmission", manual_df)
         if candidate is None:
-            message = f'Transmission override invalid: {error}'
+            message = f"Transmission override invalid: {error}"
             st.error(message)
             errors.append(message)
         else:
@@ -2251,6 +2850,104 @@ def _render_transmission_controls(
 
     return frames_out, notes, errors
 
+
+# -------------------------
+# Runner
+# -------------------------
+def _build_run_summary(
+    params: Mapping[str, Any] | None,
+    *,
+    config_label: str | None = None,
+) -> list[tuple[str, str]]:
+    summary: list[tuple[str, str]] = []
+
+    if config_label:
+        summary.append(("Configuration", config_label))
+
+    if not isinstance(params, Mapping):
+        return summary
+
+    def _coerce_int(value: object) -> int | None:
+        try:
+            return int(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return None
+
+    def _enabled_label(flag: object, *, true: str = "Enabled", false: str = "Disabled") -> str:
+        return true if bool(flag) else false
+
+    start_year = _coerce_int(params.get("start_year"))
+    end_year = _coerce_int(params.get("end_year"))
+
+    if start_year is not None and end_year is not None:
+        if start_year == end_year:
+            summary.append(("Simulation years", str(start_year)))
+        else:
+            total_years = max(0, end_year - start_year + 1)
+            years_label = f"{start_year}–{end_year}"
+            if total_years > 0:
+                years_label = f"{years_label} ({total_years} year(s))"
+            summary.append(("Simulation years", years_label))
+    elif start_year is not None:
+        summary.append(("Simulation start year", str(start_year)))
+    elif end_year is not None:
+        summary.append(("Simulation end year", str(end_year)))
+
+    carbon_enabled = params.get("carbon_policy_enabled")
+    summary.append(("Carbon policy", _enabled_label(carbon_enabled)))
+
+    if carbon_enabled:
+        summary.append(("Price floor", _enabled_label(params.get("enable_floor"))))
+        ccr_enabled = params.get("enable_ccr")
+        summary.append(("Cost containment reserve", _enabled_label(ccr_enabled)))
+        if ccr_enabled:
+            ccr_triggers: list[str] = []
+            if params.get("ccr1_enabled"):
+                ccr_triggers.append("CCR1")
+            if params.get("ccr2_enabled"):
+                ccr_triggers.append("CCR2")
+            if ccr_triggers:
+                summary.append(("CCR triggers", ", ".join(ccr_triggers)))
+        summary.append(
+            (
+                "Allowance banking",
+                _enabled_label(params.get("allowance_banking_enabled"), true="Allowed", false="Not allowed"),
+            )
+        )
+        control_period = _coerce_int(params.get("control_period_years"))
+        if control_period:
+            summary.append(("Control period", f"{control_period} year(s)"))
+
+    dispatch_network = params.get("dispatch_use_network")
+    if dispatch_network is not None:
+        summary.append(
+            (
+                "Electricity dispatch",
+                "Network" if bool(dispatch_network) else "Zonal",
+            )
+        )
+
+    module_config = params.get("module_config")
+    if isinstance(module_config, Mapping):
+        enabled_modules: list[str] = []
+        disabled_modules: list[str] = []
+        for raw_name, settings in module_config.items():
+            name = str(raw_name)
+            if isinstance(settings, Mapping):
+                enabled = settings.get("enabled", True)
+            else:
+                enabled = bool(settings)
+            label = name.replace("_", " ").strip().title() or name
+            if bool(enabled):
+                enabled_modules.append(label)
+            else:
+                disabled_modules.append(label)
+        if enabled_modules:
+            summary.append(("Modules enabled", ", ".join(sorted(enabled_modules))))
+        if disabled_modules:
+            summary.append(("Modules disabled", ", ".join(sorted(disabled_modules))))
+
+    return summary
 
 def run_policy_simulation(
     config_source: Any | None,
@@ -2263,102 +2960,382 @@ def run_policy_simulation(
     ccr1_enabled: bool = True,
     ccr2_enabled: bool = True,
     allowance_banking_enabled: bool = True,
+    coverage_regions: Iterable[str] | None = None,
     control_period_years: int | None = None,
+    cap_regions: Sequence[Any] | None = None,
+    carbon_price_enabled: bool | None = None,
+    carbon_price_value: float | None = None,
+    carbon_price_schedule: Mapping[int, float] | Mapping[str, Any] | None = None,
     dispatch_use_network: bool = False,
     module_config: Mapping[str, Any] | None = None,
     frames: FramesType | Mapping[str, pd.DataFrame] | None = None,
     assumption_notes: Iterable[str] | None = None,
     progress_cb: Callable[[str, Mapping[str, object]], None] | None = None,
 ) -> dict[str, Any]:
-    """Execute the allowance engine and return structured results.
-
-    When provided ``progress_cb`` receives progress updates using the
-    ``(stage, payload)`` convention emitted by :func:`engine.run_loop.run_end_to_end_from_frames`.
-    """
 
     try:
         config = _load_config_data(config_source)
-    except Exception as exc:  # pragma: no cover - defensive path
-        return {'error': f'Unable to load configuration: {exc}'}
+    except Exception as exc:  # pragma: no cover
+        return {"error": f"Unable to load configuration: {exc}"}
 
-    allowance_section_raw = config.get('allowance_market')
-    if isinstance(allowance_section_raw, Mapping):
-        if isinstance(allowance_section_raw, dict):
-            allowance_section = allowance_section_raw
-        else:
-            allowance_section = dict(allowance_section_raw)
-            config['allowance_market'] = allowance_section
-    else:
-        allowance_section = {}
-        config['allowance_market'] = allowance_section
-    bank_from_config = _coerce_optional_float(allowance_section.get('bank0'))
+    config.setdefault("modules", {})
 
-    modules_section = config.setdefault('modules', {})
-    merged_modules: dict[str, dict[str, Any]] = {}
-    if isinstance(modules_section, Mapping):
-        for name, settings in modules_section.items():
-            if isinstance(settings, Mapping):
-                merged_modules[str(name)] = dict(settings)
-
-    if isinstance(module_config, Mapping):
-        for name, settings in module_config.items():
-            if isinstance(settings, Mapping):
-                merged_modules[str(name)] = dict(settings)
-            else:
-                merged_modules[str(name)] = {'value': settings}
-
-    carbon_record = merged_modules.setdefault('carbon_policy', {})
-    carbon_record.update(
-        {
-            'enabled': bool(carbon_policy_enabled),
-            'enable_floor': bool(enable_floor),
-            'enable_ccr': bool(enable_ccr),
-            'ccr1_enabled': bool(ccr1_enabled) if enable_ccr else False,
-            'ccr2_enabled': bool(ccr2_enabled) if enable_ccr else False,
-            'allowance_banking_enabled': bool(allowance_banking_enabled),
-            'control_period_years': control_period_years,
-        }
-    )
-    if not enable_ccr:
-        carbon_record['ccr1_enabled'] = False
-        carbon_record['ccr2_enabled'] = False
-
-    dispatch_record = merged_modules.setdefault('electricity_dispatch', {})
-    dispatch_enabled = bool(dispatch_record.get('enabled')) or bool(dispatch_use_network)
-    dispatch_record['enabled'] = dispatch_enabled
-    dispatch_record['use_network'] = bool(dispatch_use_network)
-    current_mode = str(dispatch_record.get('mode', 'network' if dispatch_use_network else 'single')).lower()
-    dispatch_record['mode'] = 'network' if dispatch_use_network else (
-        'network' if current_mode == 'network' else 'single'
-    )
 
     try:
         base_years = _years_from_config(config)
         years = _select_years(base_years, start_year, end_year)
     except Exception as exc:
-        return {'error': f'Invalid year selection: {exc}'}
+        return {"error": f"Invalid year selection: {exc}"}
+
+    merged_modules = _merge_module_dicts(config.get("modules"), module_config)
+
+    carbon_policy_cfg = CarbonPolicyConfig.from_mapping(
+        merged_modules.get("carbon_policy"),
+        enabled=carbon_policy_enabled,
+        enable_floor=enable_floor,
+        enable_ccr=enable_ccr,
+        ccr1_enabled=ccr1_enabled,
+        ccr2_enabled=ccr2_enabled,
+        allowance_banking_enabled=allowance_banking_enabled,
+        control_period_years=control_period_years,
+    )
+
+    price_cfg = CarbonPriceConfig.from_mapping(
+        merged_modules.get("carbon_price"),
+        enabled=carbon_price_enabled,
+        value=carbon_price_value,
+        schedule=carbon_price_schedule,
+        years=years,
+    )
+
+    if price_cfg.active:
+        carbon_policy_cfg.disable_for_price()
+
+    normalized_coverage = _normalize_coverage_selection(
+        coverage_regions
+        if coverage_regions is not None
+        else merged_modules.get("carbon_policy", {}).get("coverage_regions", ["All"])
+    )
+
+    policy_enabled = bool(carbon_policy_cfg.enabled)
+    floor_flag = bool(policy_enabled and carbon_policy_cfg.enable_floor)
+    ccr_flag = bool(
+        policy_enabled
+        and carbon_policy_cfg.enable_ccr
+        and (carbon_policy_cfg.ccr1_enabled or carbon_policy_cfg.ccr2_enabled)
+    )
+    banking_flag = bool(policy_enabled and carbon_policy_cfg.allowance_banking_enabled)
+
+    carbon_record = merged_modules.setdefault("carbon_policy", {})
+    carbon_record.update(
+        {
+            "enabled": policy_enabled,
+            "enable_floor": floor_flag,
+            "enable_ccr": ccr_flag,
+            "ccr1_enabled": bool(carbon_policy_cfg.ccr1_enabled) if ccr_flag else False,
+            "ccr2_enabled": bool(carbon_policy_cfg.ccr2_enabled) if ccr_flag else False,
+            "allowance_banking_enabled": banking_flag,
+            "coverage_regions": normalized_coverage,
+            "control_period_years": (
+                carbon_policy_cfg.control_period_years if policy_enabled else None
+            ),
+        }
+    )
+
+    merged_modules["carbon_price"] = price_cfg.as_dict()
+    normalized_regions: list[Any] = []
+    if cap_regions is not None:
+        seen_labels: set[str] = set()
+        for entry in cap_regions:
+            if entry in (None, ""):
+                continue
+            if isinstance(entry, str):
+                text = entry.strip()
+                if not text:
+                    continue
+                entry = text
+            label = str(entry)
+            if label in seen_labels:
+                continue
+            seen_labels.add(label)
+            try:
+                normalized_entry: Any = int(entry)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                normalized_entry = entry
+            normalized_regions.append(normalized_entry)
+        carbon_record["regions"] = list(normalized_regions)
+
+    config["modules"] = merged_modules
+
+    dispatch_record = merged_modules.setdefault("electricity_dispatch", {})
+    dispatch_record["use_network"] = bool(dispatch_use_network)
+
+    def _coerce_year_range(start: int | None, end: int | None) -> list[int]:
+        if start is None and end is None:
+            return []
+        if start is None:
+            start = end
+        if end is None:
+            end = start
+        assert start is not None and end is not None
+        step = 1 if end >= start else -1
+        return list(range(int(start), int(end) + step, step))
+
+    years = _coerce_year_range(start_year, end_year)
+    if not years:
+        years = _years_from_config(config)
+    if not years:
+        fallback_year = start_year or end_year
+        if fallback_year is not None:
+            years = [int(fallback_year)]
+        else:
+            years = [2025]
+
+    years = sorted({int(year) for year in years})
+    config["years"] = list(years)
+    config["start_year"] = int(years[0])
+    config["end_year"] = int(years[-1])
+
+    if frames is None:
+        frames_obj = _build_default_frames(
+            years,
+            carbon_policy_enabled=bool(carbon_policy_enabled),
+            banking_enabled=bool(allowance_banking_enabled),
+        )
+    else:
+        frames_obj = Frames.coerce(
+            frames,
+            carbon_policy_enabled=bool(carbon_policy_enabled),
+            banking_enabled=bool(allowance_banking_enabled),
+        )
+
+    try:
+        frames_obj = _ensure_years_in_demand(frames_obj, years)
+    except Exception as exc:
+        LOGGER.exception("Unable to normalise demand frame for requested years")
+        return {"error": str(exc)}
+
+    if normalized_regions:
+        region_label_map: dict[str, Any] = {str(region): region for region in normalized_regions}
+
+        def _ingest_region_values(values: Sequence[Any] | pd.Series | None) -> None:
+            if values is None:
+                return
+            if isinstance(values, pd.Series):
+                iterable = values.dropna().unique()
+            else:
+                iterable = values
+            for value in iterable:
+                if value is None:
+                    continue
+                if pd.isna(value):
+                    continue
+                region_label_map.setdefault(str(value), value)
+
+        demand_region_labels: set[str] = set()
+        try:
+            demand_df = frames_obj.demand()
+        except Exception:
+            demand_df = None
+        if demand_df is not None and not demand_df.empty:
+            _ingest_region_values(demand_df["region"])
+            demand_region_labels = {str(region) for region in demand_df["region"].unique()}
+
+        existing_coverage_df: pd.DataFrame | None = None
+        for frame_name in ("units", "coverage"):
+            try:
+                frame_candidate = frames_obj.optional_frame(frame_name)
+            except Exception:
+                frame_candidate = None
+            if frame_candidate is not None and not frame_candidate.empty and "region" in frame_candidate.columns:
+                _ingest_region_values(frame_candidate["region"])
+                if frame_name == "coverage":
+                    existing_coverage_df = frame_candidate.copy()
+
+        if not demand_region_labels:
+            demand_region_labels = set(region_label_map)
+
+        normalized_existing: pd.DataFrame | None = None
+        existing_keys: set[tuple[str, int]] = set()
+        if existing_coverage_df is not None and not existing_coverage_df.empty:
+            normalized_existing = existing_coverage_df.copy()
+            if not isinstance(normalized_existing.index, pd.RangeIndex):
+                normalized_existing = normalized_existing.reset_index(drop=True)
+            index_names = getattr(normalized_existing.index, "names", None) or []
+            if "region" not in normalized_existing.columns and "region" in index_names:
+                normalized_existing = normalized_existing.reset_index()
+            if "region" not in normalized_existing.columns:
+                normalized_existing = normalized_existing.assign(region=pd.Series(dtype=object))
+            if "year" not in normalized_existing.columns:
+                normalized_existing = normalized_existing.assign(year=-1)
+            if "covered" not in normalized_existing.columns:
+                normalized_existing = normalized_existing.assign(covered=False)
+            normalized_existing = normalized_existing.loc[:, ["region", "year", "covered"]]
+            normalized_existing["year"] = pd.to_numeric(
+                normalized_existing["year"], errors="coerce"
+            ).fillna(-1).astype(int)
+            normalized_existing["covered"] = normalized_existing["covered"].astype(bool)
+            existing_keys = {
+                (str(region), int(year))
+                for region, year in zip(normalized_existing["region"], normalized_existing["year"])
+            }
+
+        coverage_records: list[dict[str, Any]] = []
+        selected_labels = {str(region) for region in normalized_regions}
+        for label in sorted({*demand_region_labels, *selected_labels, *region_label_map.keys()}):
+            key = (label, -1)
+            if key in existing_keys:
+                continue
+            region_value = region_label_map.get(label)
+            if region_value is None:
+                try:
+                    region_value = int(label)
+                except (TypeError, ValueError):
+                    region_value = label
+            coverage_records.append(
+                {
+                    "region": region_value,
+                    "year": -1,
+                    "covered": label in selected_labels,
+                }
+            )
+
+        if coverage_records:
+            coverage_df = pd.DataFrame(coverage_records, columns=["region", "year", "covered"])
+        else:
+            coverage_df = pd.DataFrame(columns=["region", "year", "covered"])
+        if normalized_existing is not None:
+            coverage_df = pd.concat([normalized_existing, coverage_df], ignore_index=True)
+        coverage_df = coverage_df.sort_values(["region", "year"]).reset_index(drop=True)
+        frames_obj = frames_obj.with_frame("coverage", coverage_df)
+
+        config_regions = list(dict.fromkeys(list(config.get("regions", [])) + normalized_regions))
+        config["regions"] = config_regions
+
+        cap_group_cfg = config.get('carbon_cap_groups')
+        if isinstance(cap_group_cfg, list):
+            if cap_group_cfg:
+                first_entry = dict(cap_group_cfg[0])
+                first_entry.setdefault('name', first_entry.get('name', 'default'))
+                first_entry['regions'] = list(normalized_regions)
+                cap_group_cfg[0] = first_entry
+            else:
+                cap_group_cfg.append({'name': 'default', 'regions': list(normalized_regions), 'cap': 'none'})
+        elif isinstance(cap_group_cfg, Mapping):
+            updated_groups = {}
+            applied = False
+            for key, value in cap_group_cfg.items():
+                entry = dict(value) if isinstance(value, Mapping) else {}
+                if not applied:
+                    entry['regions'] = list(normalized_regions)
+                    applied = True
+                updated_groups[str(key)] = entry
+            if not applied:
+                updated_groups['default'] = {'regions': list(normalized_regions), 'cap': 'none'}
+            config['carbon_cap_groups'] = updated_groups
+        else:
+            config['carbon_cap_groups'] = [{'name': 'default', 'regions': list(normalized_regions), 'cap': 'none'}]
+
+    policy_frame = _build_policy_frame(
+        config,
+        years,
+        bool(carbon_policy_enabled),
+        ccr1_enabled=bool(ccr1_enabled),
+        ccr2_enabled=bool(ccr2_enabled),
+        control_period_years=control_period_years,
+        banking_enabled=bool(allowance_banking_enabled),
+    )
+    frames_obj = frames_obj.with_frame('policy', policy_frame)
+
+    runner = _ensure_engine_runner()
+    enable_floor_flag = bool(policy_enabled and carbon_policy_cfg.enable_floor)
+    enable_ccr_flag = bool(
+        policy_enabled
+        and carbon_policy_cfg.enable_ccr
+        and (carbon_policy_cfg.ccr1_enabled or carbon_policy_cfg.ccr2_enabled)
+    )
+    price_schedule_map = dict(price_cfg.schedule)
+    price_active = price_cfg.active
+
+    try:
+        outputs = runner(
+            frames_obj,
+            years=years,
+            price_initial=0.0,
+            enable_floor=enable_floor_flag,
+            enable_ccr=enable_ccr_flag,
+            use_network=bool(dispatch_use_network),
+            carbon_price_schedule=price_schedule_map if price_active else None,
+            progress_cb=progress_cb,
+        )
+    except Exception as exc:  # pragma: no cover - defensive guard
+        LOGGER.exception('Policy simulation failed')
+        return {'error': str(exc)}
+
+    temp_dir, csv_files = _write_outputs_to_temp(outputs)
+
+    documentation = {
+        'assumption_overrides': list(assumption_notes or []),
+    }
+
+    result: dict[str, Any] = {
+        'annual': outputs.annual,
+        'emissions_by_region': outputs.emissions_by_region,
+        'price_by_region': outputs.price_by_region,
+        'flows': outputs.flows,
+        'module_config': merged_modules,
+        'config': config,
+        'csv_files': csv_files,
+        'temp_dir': temp_dir,
+        'documentation': documentation,
+    }
+    if normalized_regions:
+        result['cap_regions'] = list(normalized_regions)
+
+    return result
+
+    # Carbon price config
+    price_cfg = CarbonPriceConfig.from_mapping(
+        merged_modules.get("carbon_price"),
+        enabled=carbon_price_enabled,
+        value=carbon_price_value,
+        schedule=carbon_price_schedule,
+        years=years,
+    )
+
+    if price_cfg.active:
+        carbon_policy_cfg.disable_for_price()
+
+    carbon_policy_enabled = carbon_policy_cfg.enabled
+    enable_floor = carbon_policy_cfg.enable_floor
+    enable_ccr = carbon_policy_cfg.enable_ccr
+    ccr1_enabled = carbon_policy_cfg.ccr1_enabled
+    ccr2_enabled = carbon_policy_cfg.ccr2_enabled
+    allowance_banking_enabled = carbon_policy_cfg.allowance_banking_enabled
+    control_period_years = carbon_policy_cfg.control_period_years
+
+    price_value = float(price_cfg.price_per_ton)
+    schedule_map = dict(price_cfg.schedule)
+    price_active = price_cfg.active
+
+    merged_modules["carbon_policy"] = carbon_policy_cfg.as_dict()
+    merged_modules["carbon_price"] = price_cfg.as_dict()
+
+    # Dispatch settings
+    dispatch_record = merged_modules.setdefault("electricity_dispatch", {})
+    dispatch_enabled = bool(dispatch_record.get("enabled")) or bool(dispatch_use_network)
+    dispatch_record["enabled"] = dispatch_enabled
+    dispatch_record["use_network"] = bool(dispatch_use_network)
+    current_mode = str(dispatch_record.get("mode", "network" if dispatch_use_network else "single")).lower()
+    dispatch_record["mode"] = "network" if dispatch_use_network else (
+        "network" if current_mode == "network" else "single"
+    )
 
     frames_cls = FramesType
     try:
         runner = _ensure_engine_runner()
     except ModuleNotFoundError as exc:
-        return {'error': str(exc)}
-
-    if not carbon_policy_enabled:
-        enable_floor = False
-        enable_ccr = False
-        allowance_banking_enabled = False
-
-    carbon_record['enabled'] = bool(carbon_policy_enabled)
-    carbon_record['enable_floor'] = bool(enable_floor)
-    carbon_record['enable_ccr'] = bool(enable_ccr)
-    carbon_record['ccr1_enabled'] = bool(ccr1_enabled) if enable_ccr else False
-    carbon_record['ccr2_enabled'] = bool(ccr2_enabled) if enable_ccr else False
-    carbon_record['allowance_banking_enabled'] = bool(allowance_banking_enabled)
-    carbon_record['control_period_years'] = control_period_years
-    if not enable_ccr:
-        carbon_record['ccr1_enabled'] = False
-        carbon_record['ccr2_enabled'] = False
+        return {"error": str(exc)}
 
     bank_override = _coerce_optional_float(carbon_record.get('bank0'))
     if bank_override is None:
@@ -2393,7 +3370,11 @@ def run_policy_simulation(
             control_period_years=control_period_years,
             banking_enabled=allowance_banking_enabled,
         )
-        frames_obj = frames_obj.with_frame('policy', policy_frame)
+        frames_obj = frames_obj.with_frame("policy", policy_frame)
+
+        coverage_frame = _build_coverage_frame(frames_obj, normalized_coverage)
+        if coverage_frame is not None:
+            frames_obj = frames_obj.with_frame("coverage", coverage_frame)
 
         outputs = runner(
             frames_obj,
@@ -2402,30 +3383,124 @@ def run_policy_simulation(
             enable_floor=bool(enable_floor),
             enable_ccr=bool(enable_ccr),
             use_network=bool(dispatch_use_network),
+            carbon_price_schedule=schedule_map if price_active else None,
             progress_cb=progress_cb,
         )
         temp_dir, csv_files = _write_outputs_to_temp(outputs)
 
         overrides = [str(note) for note in assumption_notes] if assumption_notes else []
 
-        config['modules'] = copy.deepcopy(merged_modules)
+        config["modules"] = copy.deepcopy(merged_modules)
 
         result = {
-            'annual': outputs.annual.copy(),
-            'emissions_by_region': outputs.emissions_by_region.copy(),
-            'price_by_region': outputs.price_by_region.copy(),
-            'flows': outputs.flows.copy(),
-            'csv_files': csv_files,
-            'temp_dir': temp_dir,
-            'years': years,
-            'documentation': {'assumption_overrides': overrides},
-            'module_config': copy.deepcopy(merged_modules),
-            'run_config': copy.deepcopy(config),
+            "annual": outputs.annual.copy(),
+            "emissions_by_region": outputs.emissions_by_region.copy(),
+            "price_by_region": outputs.price_by_region.copy(),
+            "flows": outputs.flows.copy(),
+            "csv_files": csv_files,
+            "temp_dir": temp_dir,
+            "years": years,
+            "documentation": {"assumption_overrides": overrides},
+            "module_config": copy.deepcopy(merged_modules),
+            "run_config": copy.deepcopy(config),
         }
         return result
     except Exception as exc:  # pragma: no cover - defensive path
-        LOGGER.exception('Policy simulation failed')
-        return {'error': str(exc)}
+        LOGGER.exception("Policy simulation failed")
+        return {"error": str(exc)}
+
+      
+def _extract_result_frame(
+    result: Mapping[str, Any],
+    key: str,
+    *,
+    csv_name: str | None = None,
+) -> pd.DataFrame | None:
+    """Return a DataFrame from `result` or load it from cached CSV bytes."""
+    frame = result.get(key)
+    if isinstance(frame, pd.DataFrame):
+        return frame
+
+    csv_files = result.get('csv_files')
+    if isinstance(csv_files, Mapping):
+        filename = csv_name or f'{key}.csv'
+        raw = csv_files.get(filename)
+        if isinstance(raw, (bytes, bytearray)):
+            try:
+                return pd.read_csv(io.BytesIO(raw))
+            except Exception:  # pragma: no cover - defensive guard
+                return None
+    return None
+
+
+def _render_technology_section(
+    frame: pd.DataFrame | None,
+    *,
+    section_title: str,
+    candidate_columns: list[tuple[str, str]],
+) -> None:
+    """Render charts summarising technology-level output data."""
+    _ensure_streamlit()
+    st.subheader(section_title)
+
+    if frame is None or frame.empty:
+        st.caption(f'{section_title} data not available for this run.')
+        return
+
+    if 'technology' not in frame.columns:
+        st.caption('Technology detail unavailable; displaying raw data instead.')
+        st.dataframe(frame, width="stretch")
+        return
+
+    value_col: str | None = None
+    value_label = ''
+    for column, label in candidate_columns:
+        if column in frame.columns:
+            value_col = column
+            value_label = label
+            break
+
+    if value_col is None:
+        numeric_cols = frame.select_dtypes(include='number').columns.tolist()
+        if numeric_cols:
+            value_col = numeric_cols[0]
+            value_label = numeric_cols[0]
+        else:
+            st.caption('No numeric values available to chart; showing raw data.')
+            st.dataframe(frame, width="stretch")
+            return
+
+    display_frame = frame.copy()
+    if 'year' in display_frame.columns:
+        display_frame['year'] = pd.to_numeric(display_frame['year'], errors='coerce')
+        display_frame = display_frame.dropna(subset=['year'])
+
+    if display_frame.empty:
+        st.caption('No valid year entries available; showing raw data.')
+        st.dataframe(frame, width="stretch")
+        return
+
+    display_frame = display_frame.sort_values(['year', 'technology'])
+    pivot = display_frame.pivot_table(
+        index='year',
+        columns='technology',
+        values=value_col,
+        aggfunc='sum',
+    )
+
+    if pivot.empty:
+        st.caption('No data available to chart; showing raw data.')
+        st.dataframe(frame, width="stretch")
+        return
+
+    st.line_chart(pivot)
+
+    latest_year = pivot.index.max()
+    latest_totals = pivot.loc[latest_year].fillna(0.0)
+    latest_df = latest_totals.to_frame(name=value_label)
+    latest_df.index.name = 'technology'
+    st.caption(f'Latest year visualised: {latest_year}')
+    st.bar_chart(latest_df)
 
 
 def _cleanup_session_temp_dirs() -> None:
@@ -2451,7 +3526,7 @@ def _build_run_summary(settings: Mapping[str, Any], *, config_label: str) -> lis
             return None
 
     def _as_float(value: Any) -> float | None:
-        if value in (None, ''):
+        if value is None or value == "":
             return None
         try:
             return float(value)
@@ -2459,303 +3534,91 @@ def _build_run_summary(settings: Mapping[str, Any], *, config_label: str) -> lis
             return None
 
     def _bool_label(value: bool) -> str:
-        return 'Yes' if value else 'No'
+        return "Yes" if value else "No"
 
-    start_year = _as_int(settings.get('start_year'))
-    end_year = _as_int(settings.get('end_year'))
+    start_year = _as_int(settings.get("start_year"))
+    end_year = _as_int(settings.get("end_year"))
 
     if start_year is None and end_year is None:
-        year_display = 'Not specified'
+        year_display = "Not specified"
     else:
         if start_year is None:
             start_year = end_year
         if end_year is None:
             end_year = start_year
         if start_year == end_year:
-            year_display = f'{start_year}'
+            year_display = f"{start_year}"
         else:
-            year_display = f'{start_year} – {end_year}'
+            year_display = f"{start_year} – {end_year}"
 
-    carbon_enabled = bool(settings.get('carbon_policy_enabled', True))
-    enable_floor = bool(settings.get('enable_floor', False)) if carbon_enabled else False
-    enable_ccr = bool(settings.get('enable_ccr', False)) if carbon_enabled else False
-    ccr1_enabled = bool(settings.get('ccr1_enabled', False)) if enable_ccr else False
-    ccr2_enabled = bool(settings.get('ccr2_enabled', False)) if enable_ccr else False
+    carbon_enabled = bool(settings.get("carbon_policy_enabled", True))
+    enable_floor = bool(settings.get("enable_floor", False)) if carbon_enabled else False
+    enable_ccr = bool(settings.get("enable_ccr", False)) if carbon_enabled else False
+    ccr1_enabled = bool(settings.get("ccr1_enabled", False)) if enable_ccr else False
+    ccr2_enabled = bool(settings.get("ccr2_enabled", False)) if enable_ccr else False
     banking_enabled = (
-        bool(settings.get('allowance_banking_enabled', False)) if carbon_enabled else False
+        bool(settings.get("allowance_banking_enabled", False)) if carbon_enabled else False
     )
 
-    control_period = settings.get('control_period_years') if carbon_enabled else None
-    initial_bank_value: float | None = None
-
-    modules = settings.get('module_config')
-    if isinstance(modules, Mapping):
-        carbon_cfg = modules.get('carbon_policy')
-        if isinstance(carbon_cfg, Mapping):
-            carbon_enabled = bool(carbon_cfg.get('enabled', carbon_enabled))
-            enable_floor = bool(carbon_cfg.get('enable_floor', enable_floor)) if carbon_enabled else False
-            enable_ccr = bool(carbon_cfg.get('enable_ccr', enable_ccr)) if carbon_enabled else False
-            ccr1_enabled = bool(carbon_cfg.get('ccr1_enabled', ccr1_enabled)) if enable_ccr else False
-            ccr2_enabled = bool(carbon_cfg.get('ccr2_enabled', ccr2_enabled)) if enable_ccr else False
-            banking_enabled = (
-                bool(carbon_cfg.get('allowance_banking_enabled', banking_enabled))
-                if carbon_enabled
-                else False
-            )
-            control_period = carbon_cfg.get('control_period_years') if carbon_enabled else control_period
-            bank_candidate = _as_float(carbon_cfg.get('bank0'))
-            if bank_candidate is not None:
-                initial_bank_value = bank_candidate
-
-        dispatch_cfg = modules.get('electricity_dispatch')
-        incentives_cfg = modules.get('incentives')
-        outputs_cfg = modules.get('outputs')
-    else:
-        dispatch_cfg = None
-        incentives_cfg = None
-        outputs_cfg = None
-
-    if initial_bank_value is None:
-        config_source = settings.get('config_source')
-        if isinstance(config_source, Mapping):
-            allowance_cfg = config_source.get('allowance_market')
-            if isinstance(allowance_cfg, Mapping):
-                bank_candidate = _as_float(allowance_cfg.get('bank0'))
-                if bank_candidate is not None:
-                    initial_bank_value = bank_candidate
+    control_period = settings.get("control_period_years") if carbon_enabled else None
     if not carbon_enabled:
-        control_display = 'Not applicable'
+        control_display = "Not applicable"
     elif control_period is None:
-        control_display = 'Automatic'
+        control_display = "Automatic"
     else:
         control_display = str(control_period)
 
-    if not carbon_enabled or not banking_enabled:
-        bank_display = 'Not applicable'
-    elif initial_bank_value is None:
-        bank_display = 'Not specified'
-    else:
-        bank_display = f"{initial_bank_value:,.0f} tons"
+    price_enabled = bool(settings.get("carbon_price_enabled", False)) if carbon_enabled else False
+    price_value = _as_float(settings.get("carbon_price_value")) if price_enabled else None
+    price_schedule_raw = settings.get("carbon_price_schedule") if price_enabled else None
+    schedule_entries: list[tuple[int, float]] = []
+    if isinstance(price_schedule_raw, Mapping):
+        for year_key, value in price_schedule_raw.items():
+            year_val = _as_int(year_key)
+            price_val = _as_float(value)
+            if year_val is None or price_val is None:
+                continue
+            schedule_entries.append((year_val, price_val))
+    schedule_entries.sort(key=lambda item: item[0])
 
-    summary: list[tuple[str, str]] = [
-        ('Configuration', config_label),
-        ('Simulation years', year_display),
-        ('Carbon cap enabled', _bool_label(carbon_enabled)),
-        ('Minimum reserve price', _bool_label(enable_floor)),
-        ('CCR enabled', _bool_label(enable_ccr)),
-        ('CCR tranche 1', _bool_label(ccr1_enabled)),
-        ('CCR tranche 2', _bool_label(ccr2_enabled)),
-        ('Allowance banking enabled', _bool_label(banking_enabled)),
-        ('Initial allowance bank', bank_display),
-        ('Control period length', control_display),
+    if not price_enabled:
+        price_display = "Disabled"
+    elif schedule_entries:
+        first_year, first_price = schedule_entries[0]
+        if len(schedule_entries) == 1:
+            price_display = f"Schedule: {first_year} → ${first_price:,.2f}/ton"
+        else:
+            last_year, last_price = schedule_entries[-1]
+            price_display = (
+                f"Schedule ({len(schedule_entries)} entries): "
+                f"{first_year} → ${first_price:,.2f}/ton, "
+                f"{last_year} → ${last_price:,.2f}/ton"
+            )
+    elif price_value is not None:
+        price_display = f"Flat ${price_value:,.2f}/ton"
+    else:
+        price_display = "Enabled (no price specified)"
+
+    dispatch_network = bool(settings.get("dispatch_use_network", False))
+
+    return [
+        ("Configuration", config_label),
+        ("Simulation years", year_display),
+        ("Carbon cap enabled", _bool_label(carbon_enabled)),
+        ("Minimum reserve price", _bool_label(enable_floor)),
+        ("CCR enabled", _bool_label(enable_ccr)),
+        ("CCR tranche 1", _bool_label(ccr1_enabled)),
+        ("CCR tranche 2", _bool_label(ccr2_enabled)),
+        ("Allowance banking enabled", _bool_label(banking_enabled)),
+        ("Control period length", control_display),
+        ("Carbon price", price_display),
+        ("Dispatch uses network", _bool_label(dispatch_network)),
     ]
 
-    dispatch_enabled = False
-    dispatch_network = bool(settings.get('dispatch_use_network', False))
-    dispatch_mode_label = 'Single region'
-    capacity_expansion = False
-    reserve_margins = False
-    if isinstance(dispatch_cfg, Mapping):
-        dispatch_enabled = bool(dispatch_cfg.get('enabled', dispatch_enabled))
-        dispatch_network = bool(dispatch_cfg.get('use_network', dispatch_network))
-        dispatch_mode = str(dispatch_cfg.get('mode', 'network' if dispatch_network else 'single')).lower()
-        dispatch_mode_label = 'Networked' if dispatch_network or dispatch_mode == 'network' else 'Single region'
-        capacity_expansion = bool(dispatch_cfg.get('capacity_expansion', capacity_expansion))
-        reserve_margins = bool(dispatch_cfg.get('reserve_margins', reserve_margins))
-
-    summary.append(('Electricity dispatch module', _bool_label(dispatch_enabled)))
-    if dispatch_enabled or dispatch_network:
-        summary.append(('Dispatch mode', dispatch_mode_label))
-        summary.append(('Capacity expansion', _bool_label(capacity_expansion)))
-        summary.append(('Reserve margins', _bool_label(reserve_margins)))
-
-    incentives_enabled = False
-    production_entries: list[Mapping[str, Any]] = []
-    investment_entries: list[Mapping[str, Any]] = []
-    if isinstance(incentives_cfg, Mapping):
-        incentives_enabled = bool(incentives_cfg.get('enabled', incentives_enabled))
-
-        def _extract_entries(raw: Any) -> list[Mapping[str, Any]]:
-            if isinstance(raw, Mapping):
-                candidates = [raw]
-            elif isinstance(raw, Iterable) and not isinstance(raw, (str, bytes)):
-                candidates = [entry for entry in raw if isinstance(entry, Mapping)]
-            else:
-                candidates = []
-            normalised: list[Mapping[str, Any]] = []
-            for entry in candidates:
-                tech_label = str(entry.get('technology', '')).strip()
-                try:
-                    year_val = int(entry.get('year'))
-                except (TypeError, ValueError):
-                    continue
-                record: dict[str, Any] = {'technology': tech_label, 'year': year_val}
-                normalised.append(record)
-            return normalised
-
-        production_entries = _extract_entries(incentives_cfg.get('production'))
-        investment_entries = _extract_entries(incentives_cfg.get('investment'))
-
-    summary.append(('Incentives module', _bool_label(incentives_enabled)))
-    if incentives_enabled:
-        summary.append(('Production tax credit entries', str(len(production_entries))))
-        if production_entries:
-            ptc_technologies = sorted(
-                {
-                    str(entry.get('technology')).strip()
-                    for entry in production_entries
-                    if str(entry.get('technology')).strip()
-                }
-            )
-            if ptc_technologies:
-                summary.append(('PTC technologies', ', '.join(ptc_technologies)))
-        summary.append(('Investment tax credit entries', str(len(investment_entries))))
-        if investment_entries:
-            itc_technologies = sorted(
-                {
-                    str(entry.get('technology')).strip()
-                    for entry in investment_entries
-                    if str(entry.get('technology')).strip()
-                }
-            )
-            if itc_technologies:
-                summary.append(('ITC technologies', ', '.join(itc_technologies)))
-
-    outputs_enabled = True
-    output_directory = settings.get('output_name', 'outputs')
-    show_sidebar_downloads = False
-    resolved_output_path: Path | None = None
-    if isinstance(outputs_cfg, Mapping):
-        outputs_enabled = bool(outputs_cfg.get('enabled', outputs_enabled))
-        output_directory = outputs_cfg.get('directory', output_directory)
-        show_sidebar_downloads = bool(outputs_cfg.get('show_csv_downloads', show_sidebar_downloads))
-        resolved_entry = outputs_cfg.get('resolved_path')
-        if isinstance(resolved_entry, str):
-            resolved_output_path = Path(resolved_entry)
-
-    if resolved_output_path is None:
-        downloads_root = get_downloads_directory()
-        resolved_output_path = downloads_root if not output_directory else downloads_root / str(output_directory)
-
-    summary.append(('Outputs module', _bool_label(outputs_enabled)))
-    summary.append(('Output directory', str(resolved_output_path)))
-    if outputs_enabled:
-        summary.append(('Sidebar CSV downloads', _bool_label(show_sidebar_downloads)))
-
-    return summary
 
 
-def _extract_result_frame(
-    result: Mapping[str, Any],
-    key: str,
-    *,
-    csv_name: str | None = None,
-) -> pd.DataFrame | None:
-    """Return a DataFrame from ``result`` or load it from cached CSV bytes."""
-
-    frame = result.get(key)
-    if isinstance(frame, pd.DataFrame):
-        return frame
-
-    csv_files = result.get('csv_files')
-    if isinstance(csv_files, Mapping):
-        filename = csv_name or f'{key}.csv'
-        raw = csv_files.get(filename)
-        if isinstance(raw, (bytes, bytearray)):
-            try:
-                return pd.read_csv(io.BytesIO(raw))
-            except Exception:  # pragma: no cover - defensive guard for malformed CSV
-                return None
-
-    return None
-
-
-def _render_technology_section(
-    frame: pd.DataFrame | None,
-    *,
-    section_title: str,
-    candidate_columns: list[tuple[str, str]],
-) -> None:
-    """Render charts summarising technology-level output data."""
-
-    _ensure_streamlit()
-    st.subheader(section_title)
-
-    if frame is None or frame.empty:
-        st.caption(f'{section_title} data not available for this run.')
-        return
-
-    if 'technology' not in frame.columns:
-        st.caption('Technology detail unavailable; displaying raw data instead.')
-        st.dataframe(frame, use_container_width=True)
-        return
-
-    value_col: str | None = None
-    value_label = ''
-    for column, label in candidate_columns:
-        if column in frame.columns:
-            value_col = column
-            value_label = label
-            break
-
-    if value_col is None:
-        numeric_cols = frame.select_dtypes(include='number').columns.tolist()
-        if numeric_cols:
-            value_col = numeric_cols[0]
-            value_label = numeric_cols[0]
-        else:
-            st.caption('No numeric values available to chart; showing raw data.')
-            st.dataframe(frame, use_container_width=True)
-            return
-
-    display_frame = frame.copy()
-
-    if 'year' in display_frame.columns:
-        display_frame['year'] = pd.to_numeric(display_frame['year'], errors='coerce')
-        display_frame = display_frame.dropna(subset=['year'])
-        if display_frame.empty:
-            st.caption('No valid year entries available; showing raw data.')
-            st.dataframe(frame, use_container_width=True)
-            return
-
-        display_frame = display_frame.sort_values(['year', 'technology'])
-        pivot = display_frame.pivot_table(
-            index='year',
-            columns='technology',
-            values=value_col,
-            aggfunc='sum',
-        )
-
-        if pivot.empty:
-            st.caption('No data available to chart; showing raw data.')
-            st.dataframe(frame, use_container_width=True)
-            return
-
-        st.line_chart(pivot)
-
-        latest_year = pivot.index.max()
-        latest_totals = pivot.loc[latest_year].fillna(0.0)
-        latest_df = latest_totals.to_frame(name=value_label)
-        latest_df.index.name = 'technology'
-        st.caption(f'Latest year visualised: {latest_year}')
-        st.bar_chart(latest_df)
-    else:
-        totals = (
-            display_frame.groupby('technology')[value_col]
-            .sum()
-            .sort_values(ascending=False)
-        )
-        if totals.empty:
-            st.caption('No data available to chart; showing raw data.')
-            st.dataframe(frame, use_container_width=True)
-            return
-
-        totals_df = totals.to_frame(name=value_label)
-        totals_df.index.name = 'technology'
-        st.bar_chart(totals_df)
-
-
-def _render_results(result: Mapping[str, Any]) -> None:  # pragma: no cover - UI rendering
+def _render_results(result: Mapping[str, Any]) -> None:
+    """Render charts and tables summarising the latest run results."""
     _ensure_streamlit()
 
     if 'error' in result:
@@ -2776,6 +3639,7 @@ def _render_results(result: Mapping[str, Any]) -> None:  # pragma: no cover - UI
 
     st.caption('Visualisations reflect the most recent model run.')
 
+    # --- Annual results ---
     st.subheader('Allowance market results')
     if not annual.empty:
         display_annual = annual.copy()
@@ -2803,15 +3667,17 @@ def _render_results(result: Mapping[str, Any]) -> None:  # pragma: no cover - UI
                     st.caption(f'{label} unavailable for this run.')
 
         st.markdown('---')
-        st.dataframe(display_annual, use_container_width=True)
+        st.dataframe(display_annual, width="stretch")
     else:
         st.info('No annual results to display.')
 
+    # --- Regional emissions ---
     st.subheader('Emissions by region')
     if not emissions_df.empty:
         display_emissions = emissions_df.copy()
         display_emissions['year'] = pd.to_numeric(display_emissions['year'], errors='coerce')
         display_emissions = display_emissions.dropna(subset=['year'])
+
         if 'region' in display_emissions.columns:
             emissions_pivot = display_emissions.pivot_table(
                 index='year',
@@ -2820,6 +3686,7 @@ def _render_results(result: Mapping[str, Any]) -> None:  # pragma: no cover - UI
                 aggfunc='sum',
             ).sort_index()
             st.line_chart(emissions_pivot)
+
             if not emissions_pivot.empty:
                 latest_year = emissions_pivot.index.max()
                 latest_totals = emissions_pivot.loc[latest_year].fillna(0.0)
@@ -2829,15 +3696,17 @@ def _render_results(result: Mapping[str, Any]) -> None:  # pragma: no cover - UI
                 st.bar_chart(latest_df)
         else:
             st.caption('Regional emissions data unavailable; showing raw table below.')
-            st.dataframe(display_emissions, use_container_width=True)
+            st.dataframe(display_emissions, width="stretch")
     else:
         st.caption('No regional emissions data available for this run.')
 
+    # --- Regional prices ---
     st.subheader('Energy prices by region')
     if not price_df.empty:
         display_price = price_df.copy()
         display_price['year'] = pd.to_numeric(display_price['year'], errors='coerce')
         display_price = display_price.dropna(subset=['year'])
+
         if 'region' in display_price.columns:
             price_pivot = display_price.pivot_table(
                 index='year',
@@ -2846,6 +3715,7 @@ def _render_results(result: Mapping[str, Any]) -> None:  # pragma: no cover - UI
                 aggfunc='mean',
             ).sort_index()
             st.line_chart(price_pivot)
+
             if not price_pivot.empty:
                 latest_year = price_pivot.index.max()
                 latest_totals = price_pivot.loc[latest_year].fillna(0.0)
@@ -2855,10 +3725,11 @@ def _render_results(result: Mapping[str, Any]) -> None:  # pragma: no cover - UI
                 st.bar_chart(latest_df)
         else:
             st.caption('Regional price data unavailable; showing raw table below.')
-            st.dataframe(display_price, use_container_width=True)
+            st.dataframe(display_price, width="stretch")
     else:
         st.caption('No regional price data available for this run.')
 
+    # --- Technology sections ---
     capacity_df = _extract_result_frame(result, 'capacity_by_technology')
     _render_technology_section(
         capacity_df,
@@ -2881,6 +3752,7 @@ def _render_results(result: Mapping[str, Any]) -> None:  # pragma: no cover - UI
         ],
     )
 
+    # --- Assumption overrides ---
     documentation = result.get('documentation')
     overrides: list[str] = []
     if isinstance(documentation, Mapping):
@@ -2893,6 +3765,7 @@ def _render_results(result: Mapping[str, Any]) -> None:  # pragma: no cover - UI
     else:
         st.caption('No assumption overrides were applied in this run.')
 
+    # --- Downloads ---
     st.subheader('Download outputs')
     csv_files = result.get('csv_files')
     if isinstance(csv_files, Mapping) and csv_files:
@@ -2913,22 +3786,19 @@ def _render_results(result: Mapping[str, Any]) -> None:  # pragma: no cover - UI
 
 def _render_outputs_panel(last_result: Mapping[str, Any] | None) -> None:
     """Render the main outputs panel with charts for the latest run."""
-
     _ensure_streamlit()
-
     if not isinstance(last_result, Mapping) or not last_result:
         st.caption('Run the model to populate this panel with results.')
         return
-
     _render_results(last_result)
 
 
-def main() -> None:  # pragma: no cover - Streamlit entry point
+def main() -> None:
+    """Streamlit entry point."""
     _ensure_streamlit()
     st.set_page_config(page_title='BlueSky Policy Simulator', layout='wide')
     st.title('BlueSky Policy Simulator')
     st.write('Upload a run configuration and execute the annual allowance market engine.')
-
     st.session_state.setdefault('last_result', None)
     st.session_state.setdefault('temp_dirs', [])
 
@@ -2952,14 +3822,21 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
 
     carbon_settings = CarbonModuleSettings(
         enabled=False,
+        price_enabled=False,
         enable_floor=False,
         enable_ccr=False,
         ccr1_enabled=False,
         ccr2_enabled=False,
         banking_enabled=False,
+        coverage_regions=["All"],
         control_period_years=None,
-        initial_bank=0.0,
+        cap_regions=[],
+        price_per_ton=0.0,
+        price_schedule={},
+        errors=[],
     )
+
+
     dispatch_settings = DispatchModuleSettings(
         enabled=False,
         mode='single',
@@ -3010,7 +3887,11 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
 
             carbon_label, carbon_expanded = SIDEBAR_SECTIONS[1]
             carbon_expander = st.expander(carbon_label, expanded=carbon_expanded)
-            carbon_settings = _render_carbon_policy_section(carbon_expander, run_config)
+            carbon_settings = _render_carbon_policy_section(
+                carbon_expander,
+                run_config,
+                region_options=general_result.regions,
+            )
             module_errors.extend(carbon_settings.errors)
 
             try:
@@ -3074,16 +3955,14 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
                     assumption_errors.extend(errors)
 
                 if assumption_errors:
-                    st.warning(
-                        'Resolve the highlighted assumption issues before running the simulation.'
-                    )
+                    st.warning('Resolve the highlighted assumption issues before running the simulation.')
             else:
                 st.info(
                     'Default assumption tables are unavailable due to a previous error. '
                     'Resolve the issue above to edit inputs through the GUI.'
                 )
 
-            run_clicked = st.button('Run Model', type='primary', use_container_width=True)
+            run_clicked = st.button('Run Model', type='primary', width="stretch")
 
     try:
         selected_years = _select_years(candidate_years, start_year_val, end_year_val)
@@ -3111,38 +3990,60 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
     run_inputs: dict[str, Any] | None = None
     pending_run = st.session_state.get('pending_run')
     show_confirm_modal = bool(st.session_state.get('show_confirm_modal'))
-    if isinstance(pending_run, Mapping) and not show_confirm_modal:
-        show_confirm_modal = True
-        st.session_state['show_confirm_modal'] = True
+    dispatch_use_network = bool(
+        dispatch_settings.enabled and dispatch_settings.mode == 'network'
+    )
 
-    if run_clicked:
-        if assumption_errors or module_errors:
-            st.error('Resolve the configuration issues above before running the simulation.')
-        else:
-            run_inputs_payload = {
-                'config_source': copy.deepcopy(run_config),
-                'start_year': int(start_year_val),
-                'end_year': int(end_year_val),
-                'carbon_policy_enabled': bool(carbon_settings.enabled),
-                'enable_floor': bool(carbon_settings.enable_floor),
-                'enable_ccr': bool(carbon_settings.enable_ccr),
-                'ccr1_enabled': bool(carbon_settings.ccr1_enabled),
-                'ccr2_enabled': bool(carbon_settings.ccr2_enabled),
-                'allowance_banking_enabled': bool(carbon_settings.banking_enabled),
-                'control_period_years': carbon_settings.control_period_years,
-                'dispatch_use_network': bool(
-                    dispatch_settings.enabled and dispatch_settings.mode == 'network'
-                ),
-                'module_config': copy.deepcopy(run_config.get('modules', {})),
-            }
-            st.session_state['pending_run'] = {
-                'params': run_inputs_payload,
-                'summary': _build_run_summary(run_inputs_payload, config_label=config_label),
-            }
-            pending_run = st.session_state['pending_run']
-            st.session_state['show_confirm_modal'] = True
-            show_confirm_modal = True
-            
+    current_run_payload = {
+        'config_source': copy.deepcopy(run_config),
+        'start_year': int(start_year_val),
+        'end_year': int(end_year_val),
+        'carbon_policy_enabled': bool(carbon_settings.enabled),
+        'enable_floor': bool(carbon_settings.enable_floor),
+        'enable_ccr': bool(carbon_settings.enable_ccr),
+        'ccr1_enabled': bool(carbon_settings.ccr1_enabled),
+        'ccr2_enabled': bool(carbon_settings.ccr2_enabled),
+        'allowance_banking_enabled': bool(carbon_settings.banking_enabled),
+        'control_period_years': carbon_settings.control_period_years,
+        'carbon_price_enabled': bool(carbon_settings.price_enabled),
+        'carbon_price_value': float(carbon_settings.price_per_ton),
+        'carbon_price_schedule': dict(carbon_settings.price_schedule),
+        'dispatch_use_network': dispatch_use_network,
+        'module_config': copy.deepcopy(run_config.get('modules', {})),
+    }
+
+    if isinstance(pending_run, Mapping):
+        pending_params = pending_run.get('params')
+        if not isinstance(pending_params, Mapping):
+            st.session_state.pop('pending_run', None)
+            pending_run = None
+            st.session_state['show_confirm_modal'] = False
+            show_confirm_modal = False
+        elif pending_params != current_run_payload:
+            st.session_state.pop('pending_run', None)
+            pending_run = None
+            st.session_state['show_confirm_modal'] = False
+            show_confirm_modal = False
+
+    def _request_streamlit_rerun() -> None:
+        try:
+            _ensure_streamlit()
+        except ModuleNotFoundError:  # pragma: no cover - GUI dependency missing
+            return
+        rerun_callable = getattr(st, "rerun", None)
+        if not callable(rerun_callable):
+            rerun_callable = getattr(st, "experimental_rerun", None)
+        if callable(rerun_callable):  # pragma: no cover - UI side-effect
+            rerun_callable()
+
+    def _clear_confirmation_button_state() -> None:
+        try:
+            _ensure_streamlit()
+        except ModuleNotFoundError:  # pragma: no cover - GUI dependency missing
+            return
+        st.session_state.pop("confirm_run", None)
+        st.session_state.pop("cancel_run", None)
+
     if isinstance(pending_run, Mapping) and show_confirm_modal:
         # Pick dialog if available (Streamlit >= 1.31), else use expander
         streamlit_version = getattr(st, "__version__", "0")
@@ -3153,14 +4054,7 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
         except Exception:
             use_dialog = hasattr(st, "dialog")
 
-        context_manager = (
-            st.dialog("Confirm model run")
-            if use_dialog and hasattr(st, "dialog")
-            else st.expander("Confirm model run")
-        )
-
-    with context_manager:
-    
+        def _render_confirm_modal() -> tuple[bool, bool]:
             st.markdown('You are about to run the model with the following configuration:')
             summary_details = pending_run.get('summary', [])
             if isinstance(summary_details, list) and summary_details:
@@ -3174,25 +4068,98 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
             confirm_col, cancel_col = st.columns(2)
             confirm_clicked = confirm_col.button('Confirm Run', type='primary', key='confirm_run')
             cancel_clicked = cancel_col.button('Cancel', key='cancel_run')
+            return confirm_clicked, cancel_clicked
 
-            if cancel_clicked:
-                st.session_state.pop('pending_run', None)
-                st.session_state['show_confirm_modal'] = False
-                pending_run = None
-                show_confirm_modal = False
-            elif confirm_clicked:
-                pending_params = pending_run.get('params')
-                if isinstance(pending_params, Mapping):
-                    run_inputs = dict(pending_params)
-                    execute_run = True
-                st.session_state.pop('pending_run', None)
-                st.session_state['show_confirm_modal'] = False
-                pending_run = None
-                show_confirm_modal = False
+        confirm_clicked = False
+        cancel_clicked = False
+
+        if use_dialog and hasattr(st, "dialog"):
+            clicks: dict[str, bool] = {'confirm': False, 'cancel': False}
+
+            @st.dialog('Confirm model run')
+            def _show_confirm_dialog() -> None:
+                confirm, cancel = _render_confirm_modal()
+                clicks['confirm'] = confirm
+                clicks['cancel'] = cancel
+
+            _show_confirm_dialog()
+            confirm_clicked = clicks['confirm']
+            cancel_clicked = clicks['cancel']
+        else:
+            with st.expander('Confirm model run'):
+                confirm_clicked, cancel_clicked = _render_confirm_modal()
+
+        if cancel_clicked:
+            st.session_state.pop('pending_run', None)
+            st.session_state['show_confirm_modal'] = False
+            _clear_confirmation_button_state()
+            pending_run = None
+            show_confirm_modal = False
+            _request_streamlit_rerun()
+        elif confirm_clicked:
+            pending_params = pending_run.get('params')
+            if isinstance(pending_params, Mapping):
+                st.session_state['confirmed_run_params'] = dict(pending_params)
+            st.session_state.pop('pending_run', None)
+            st.session_state['show_confirm_modal'] = False
+            _clear_confirmation_button_state()
+            pending_run = None
+            show_confirm_modal = False
+            _request_streamlit_rerun()
+
+    if isinstance(pending_run, Mapping) and not show_confirm_modal:
+        show_confirm_modal = True
+        st.session_state['show_confirm_modal'] = True
+    if run_clicked:
+        if assumption_errors or module_errors:
+            st.error('Resolve the configuration issues above before running the simulation.')
+        else:
+            run_inputs_payload = copy.deepcopy(current_run_payload)
+            if not run_inputs_payload:
+                run_inputs_payload = {
+                    'config_source': copy.deepcopy(run_config),
+                    'start_year': int(start_year_val),
+                    'end_year': int(end_year_val),
+                    'carbon_policy_enabled': bool(carbon_settings.enabled),
+                    'enable_floor': bool(carbon_settings.enable_floor),
+                    'enable_ccr': bool(carbon_settings.enable_ccr),
+                    'ccr1_enabled': bool(carbon_settings.ccr1_enabled),
+                    'ccr2_enabled': bool(carbon_settings.ccr2_enabled),
+                    'allowance_banking_enabled': bool(carbon_settings.banking_enabled),
+                    'coverage_regions': list(carbon_settings.coverage_regions),
+                    'control_period_years': carbon_settings.control_period_years,
+                    'carbon_price_enabled': bool(carbon_settings.price_enabled),
+                    'carbon_price_value': float(carbon_settings.price_per_ton),
+                    'carbon_price_schedule': dict(carbon_settings.price_schedule),
+                    'dispatch_use_network': bool(
+                        dispatch_settings.enabled and dispatch_settings.mode == 'network'
+                    ),
+                    'module_config': copy.deepcopy(run_config.get('modules', {})),
+                }
+
+            summary_builder = globals().get('_build_run_summary')
+            summary_details: list[tuple[str, str]]
+            if callable(summary_builder):
+                summary_details = summary_builder(run_inputs_payload, config_label=config_label)
+            else:  # pragma: no cover - defensive fallback if helper missing
+                summary_details = []
+
+            st.session_state['pending_run'] = {
+                'params': run_inputs_payload,
+                'summary': summary_details,
+            }
+            pending_run = st.session_state['pending_run']
+            st.session_state['show_confirm_modal'] = True
+            show_confirm_modal = True
 
     dispatch_use_network = bool(
         dispatch_settings.enabled and dispatch_settings.mode == 'network'
     )
+
+    confirmed_run_params = st.session_state.pop('confirmed_run_params', None)
+    if isinstance(confirmed_run_params, Mapping):
+        run_inputs = dict(confirmed_run_params)
+        execute_run = True
 
     if run_inputs is not None:
         run_config = copy.deepcopy(run_inputs.get('config_source', run_config))
@@ -3203,6 +4170,8 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
         )
 
     result = st.session_state.get('last_result')
+
+    inputs_for_run: Mapping[str, Any] = run_inputs or {}
 
     if execute_run:
         _cleanup_session_temp_dirs()
@@ -3283,7 +4252,6 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
                     progress_text.text(f'Completed year {year_display} of {total}')
                 return
 
-        inputs_for_run = run_inputs or {}
         try:
             result = run_policy_simulation(
                 inputs_for_run.get('config_source', run_config),
@@ -3305,8 +4273,23 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
                 allowance_banking_enabled=bool(
                     inputs_for_run.get('allowance_banking_enabled', carbon_settings.banking_enabled)
                 ),
+                coverage_regions=inputs_for_run.get(
+                    'coverage_regions', carbon_settings.coverage_regions
+                ),
                 control_period_years=inputs_for_run.get(
                     'control_period_years', carbon_settings.control_period_years
+                ),
+                cap_regions=inputs_for_run.get(
+                    'cap_regions', carbon_settings.cap_regions
+                ),
+                carbon_price_enabled=inputs_for_run.get(
+                    'carbon_price_enabled', carbon_settings.price_enabled
+                ),
+                carbon_price_value=inputs_for_run.get(
+                    'carbon_price_value', carbon_settings.price_per_ton
+                ),
+                carbon_price_schedule=inputs_for_run.get(
+                    'carbon_price_schedule', carbon_settings.price_schedule
                 ),
                 dispatch_use_network=bool(
                     inputs_for_run.get('dispatch_use_network', dispatch_use_network)
@@ -3318,12 +4301,14 @@ def main() -> None:  # pragma: no cover - Streamlit entry point
                 assumption_notes=assumption_notes,
                 progress_cb=_update_progress,
             )
+
         except Exception as exc:  # pragma: no cover - defensive guard
             LOGGER.exception('Policy simulation failed during execution')
             result = {'error': str(exc)}
         finally:
             progress_bar.empty()
             progress_text.empty()
+
         if 'temp_dir' in result:
             st.session_state['temp_dirs'] = [str(result['temp_dir'])]
         st.session_state['last_result'] = result
