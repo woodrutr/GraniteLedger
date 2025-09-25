@@ -121,6 +121,8 @@ logging.basicConfig(level=logging.INFO)
 
 _SESSION_RUN_TOKEN_KEY = "_app_session_run_token"
 _CURRENT_SESSION_RUN_TOKEN = str(uuid4())
+_SCRIPT_ITERATION_KEY = "_app_script_iteration"
+_ACTIVE_RUN_ITERATION_KEY = "_app_active_run_iteration"
 
 try:  # pragma: no cover - optional dependency shim
     from src.common.utilities import get_downloads_directory as _get_downloads_directory
@@ -3906,6 +3908,41 @@ def _reset_run_state_on_reload() -> None:
         st.session_state.pop('show_confirm_modal', None)
 
 
+def _advance_script_iteration() -> int:
+    """Increment and return the current Streamlit rerun iteration counter."""
+
+    try:
+        _ensure_streamlit()
+    except ModuleNotFoundError:  # pragma: no cover - GUI dependency missing
+        return 0
+
+    current = int(st.session_state.get(_SCRIPT_ITERATION_KEY, 0)) + 1
+    st.session_state[_SCRIPT_ITERATION_KEY] = current
+    return current
+
+
+def _recover_stuck_run_state(current_iteration: int) -> None:
+    """Clear stale run state flags left behind by interrupted executions."""
+
+    try:
+        _ensure_streamlit()
+    except ModuleNotFoundError:  # pragma: no cover - GUI dependency missing
+        return
+
+    if not st.session_state.get('run_in_progress'):
+        st.session_state.pop(_ACTIVE_RUN_ITERATION_KEY, None)
+        return
+
+    active_iteration = st.session_state.get(_ACTIVE_RUN_ITERATION_KEY)
+    stale_state = not isinstance(active_iteration, int) or active_iteration < current_iteration
+    if stale_state:
+        LOGGER.warning('Detected stale run_in_progress flag; resetting run state')
+        st.session_state['run_in_progress'] = False
+        st.session_state.pop('pending_run', None)
+        st.session_state.pop('show_confirm_modal', None)
+        st.session_state.pop(_ACTIVE_RUN_ITERATION_KEY, None)
+
+
 def _build_run_summary(settings: Mapping[str, Any], *, config_label: str) -> list[tuple[str, str]]:
     """Return human-readable configuration details for confirmation dialogs."""
 
@@ -4228,7 +4265,9 @@ def main() -> None:
     st.session_state.setdefault('last_result', None)
     st.session_state.setdefault('temp_dirs', [])
     st.session_state.setdefault('run_in_progress', False)
+    current_iteration = _advance_script_iteration()
     _reset_run_state_on_reload()
+    _recover_stuck_run_state(current_iteration)
 
     module_errors: list[str] = []
     assumption_notes: list[str] = []
@@ -4599,6 +4638,7 @@ def main() -> None:
         if cancel_clicked:
             st.session_state.pop('pending_run', None)
             st.session_state.pop('show_confirm_modal', None)
+            st.session_state.pop(_ACTIVE_RUN_ITERATION_KEY, None)
             st.session_state['run_in_progress'] = False
             _clear_confirmation_button_state()
             pending_run = None
@@ -4608,6 +4648,7 @@ def main() -> None:
             run_inputs = dict(pending_params)
             execute_run = True
             st.session_state['run_in_progress'] = True
+            st.session_state[_ACTIVE_RUN_ITERATION_KEY] = current_iteration
             st.session_state.pop('pending_run', None)
             st.session_state.pop('show_confirm_modal', None)
             _clear_confirmation_button_state()
@@ -4665,6 +4706,7 @@ def main() -> None:
 
         try:
             st.session_state['run_in_progress'] = True
+            st.session_state[_ACTIVE_RUN_ITERATION_KEY] = current_iteration
             st.session_state.pop('show_confirm_modal', None)
             _cleanup_session_temp_dirs()
             progress_state = _reset_progress_state()
@@ -4761,6 +4803,7 @@ def main() -> None:
             run_result = {'error': str(exc)}
         finally:
             st.session_state['run_in_progress'] = False
+            st.session_state.pop(_ACTIVE_RUN_ITERATION_KEY, None)
             if isinstance(run_result, Mapping):
                 if 'error' in run_result:
                     progress_state.stage = 'error'
