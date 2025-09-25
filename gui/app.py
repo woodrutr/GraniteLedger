@@ -876,6 +876,18 @@ def _render_general_config_section(
         selected_years=selected_years,
         regions=selected_regions,
     )
+
+
+def _render_carbon_policy_section(
+    container: Any,
+    run_config: dict[str, Any],
+    *,
+    region_options: Iterable[Any] | None = None,
+) -> CarbonModuleSettings:
+    modules = run_config.setdefault("modules", {})
+    defaults = modules.get("carbon_policy", {}) or {}
+    price_defaults = modules.get("carbon_price", {}) or {}
+
     # -------------------------
     # Defaults
     # -------------------------
@@ -907,15 +919,29 @@ def _render_general_config_section(
         price_defaults.get("price_schedule")
     )
 
+    coverage_value_map: dict[str, Any] = {
+        _ALL_REGIONS_LABEL: "All",
+        "All": "All",
+    }
+    for label in coverage_default:
+        coverage_value_map.setdefault(label, canonical_region_value(label))
+    if region_options is not None:
+        for entry in region_options:
+            label = canonical_region_label(entry)
+            coverage_value_map.setdefault(label, canonical_region_value(entry))
+
     # -------------------------
     # Coverage / Regions
     # -------------------------
     region_labels: list[str] = []
     if region_options is not None:
         for entry in region_options:
-            label = str(entry).strip() or "default"
+            label = canonical_region_label(entry).strip() or "default"
             if label not in region_labels:
                 region_labels.append(label)
+    for label in coverage_default:
+        if label != _ALL_REGIONS_LABEL and label not in region_labels:
+            region_labels.append(label)
     if not region_labels:
         region_labels = ["default"]
 
@@ -927,14 +953,17 @@ def _render_general_config_section(
             label for label in coverage_default if label in coverage_choices
         ] or [_ALL_REGIONS_LABEL]
 
-
     session_enabled_default = enabled_default
     session_price_default = price_enabled_default
     last_changed = None
     if st is not None:
         last_changed = st.session_state.get("carbon_module_last_changed")
-        session_enabled_default = bool(st.session_state.get("carbon_enable", enabled_default))
-        session_price_default = bool(st.session_state.get("carbon_price_enable", price_enabled_default))
+        session_enabled_default = bool(
+            st.session_state.get("carbon_enable", enabled_default)
+        )
+        session_price_default = bool(
+            st.session_state.get("carbon_price_enable", price_enabled_default)
+        )
         if session_enabled_default and session_price_default:
             if last_changed == "cap":
                 session_price_default = False
@@ -1004,7 +1033,7 @@ def _render_general_config_section(
                 cap_panel.number_input(
                     "Initial allowance bank (tons)",
                     min_value=0.0,
-                    value=float(bank_value_default if bank_value_default >= 0.0 else 0.0),
+                    value=float(bank_default if bank_default >= 0.0 else 0.0),
                     step=1000.0,
                     format="%f",
                     key="carbon_bank0",
@@ -1031,7 +1060,9 @@ def _render_general_config_section(
             disabled=not (enabled and control_override),
         )
         control_period_years = (
-            _sanitize_control_period(control_period_value) if enabled and control_override else None
+            _sanitize_control_period(control_period_value)
+            if enabled and control_override
+            else None
         )
 
         coverage_selection = cap_panel.multiselect(
