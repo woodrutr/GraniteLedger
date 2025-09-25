@@ -848,31 +848,41 @@ def render_carbon_module_controls(run_config: dict[str, Any], container) -> Carb
             return
         st.session_state["carbon_module_last_changed"] = key
 
+    session_enabled_default = enabled_default
+    session_price_default = price_enabled_default
+    last_changed = None
+    if st is not None:  # pragma: no cover - UI path
+        last_changed = st.session_state.get("carbon_module_last_changed")
+        session_enabled_default = bool(st.session_state.get("carbon_enable", enabled_default))
+        session_price_default = bool(
+            st.session_state.get("carbon_price_enable", price_enabled_default)
+        )
+        if session_enabled_default and session_price_default:
+            if last_changed == "cap":
+                session_price_default = False
+            else:
+                session_enabled_default = False
+            st.session_state["carbon_enable"] = session_enabled_default
+            st.session_state["carbon_price_enable"] = session_price_default
+
     enabled = container.toggle(
         "Enable carbon cap",
-        value=enabled_default,
+        value=session_enabled_default,
         key="carbon_enable",
         on_change=lambda: _mark_last_changed("cap"),
     )
     price_enabled = container.toggle(
         "Enable carbon price",
-        value=price_enabled_default,
+        value=session_price_default,
         key="carbon_price_enable",
         on_change=lambda: _mark_last_changed("price"),
     )
 
-    last_changed = None
-    if st is not None:  # pragma: no cover - UI path
-        last_changed = st.session_state.get("carbon_module_last_changed")
     if enabled and price_enabled:
         if last_changed == "cap":
             price_enabled = False
-            if st is not None:  # pragma: no cover - UI path
-                st.session_state["carbon_price_enable"] = False
         else:
             enabled = False
-            if st is not None:  # pragma: no cover - UI path
-                st.session_state["carbon_enable"] = False
 
     enable_floor = container.toggle("Enable price floor", value=enable_floor_default, key="carbon_floor")
     enable_ccr = container.toggle("Enable CCR", value=enable_ccr_default, key="carbon_ccr")
@@ -3382,6 +3392,25 @@ def main() -> None:
     pending_run = st.session_state.get('pending_run')
     show_confirm_modal = bool(st.session_state.get('show_confirm_modal'))
 
+    def _request_streamlit_rerun() -> None:
+        try:
+            _ensure_streamlit()
+        except ModuleNotFoundError:  # pragma: no cover - GUI dependency missing
+            return
+        rerun_callable = getattr(st, "rerun", None)
+        if not callable(rerun_callable):
+            rerun_callable = getattr(st, "experimental_rerun", None)
+        if callable(rerun_callable):  # pragma: no cover - UI side-effect
+            rerun_callable()
+
+    def _clear_confirmation_button_state() -> None:
+        try:
+            _ensure_streamlit()
+        except ModuleNotFoundError:  # pragma: no cover - GUI dependency missing
+            return
+        st.session_state.pop("confirm_run", None)
+        st.session_state.pop("cancel_run", None)
+
     if isinstance(pending_run, Mapping) and show_confirm_modal:
         # Pick dialog if available (Streamlit >= 1.31), else use expander
         streamlit_version = getattr(st, "__version__", "0")
@@ -3430,17 +3459,20 @@ def main() -> None:
         if cancel_clicked:
             st.session_state.pop('pending_run', None)
             st.session_state['show_confirm_modal'] = False
+            _clear_confirmation_button_state()
             pending_run = None
             show_confirm_modal = False
+            _request_streamlit_rerun()
         elif confirm_clicked:
             pending_params = pending_run.get('params')
             if isinstance(pending_params, Mapping):
-                run_inputs = dict(pending_params)
-                execute_run = True
+                st.session_state['confirmed_run_params'] = dict(pending_params)
             st.session_state.pop('pending_run', None)
             st.session_state['show_confirm_modal'] = False
+            _clear_confirmation_button_state()
             pending_run = None
             show_confirm_modal = False
+            _request_streamlit_rerun()
 
     if isinstance(pending_run, Mapping) and not show_confirm_modal:
         show_confirm_modal = True
@@ -3486,6 +3518,11 @@ def main() -> None:
     dispatch_use_network = bool(
         dispatch_settings.enabled and dispatch_settings.mode == 'network'
     )
+
+    confirmed_run_params = st.session_state.pop('confirmed_run_params', None)
+    if isinstance(confirmed_run_params, Mapping):
+        run_inputs = dict(confirmed_run_params)
+        execute_run = True
 
     if run_inputs is not None:
         run_config = copy.deepcopy(run_inputs.get('config_source', run_config))
