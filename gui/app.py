@@ -4054,24 +4054,25 @@ def main() -> None:
             cancel_clicked = cancel_col.button('Cancel', key='cancel_run')
             return confirm_clicked, cancel_clicked
 
-        confirm_clicked = False
-        cancel_clicked = False
+        confirm_clicked = bool(st.session_state.get('confirm_run'))
+        cancel_clicked = bool(st.session_state.get('cancel_run'))
 
-        if use_dialog and hasattr(st, "dialog"):
-            clicks: dict[str, bool] = {'confirm': False, 'cancel': False}
+        if not confirm_clicked and not cancel_clicked:
+            if use_dialog and hasattr(st, "dialog"):
+                clicks: dict[str, bool] = {'confirm': False, 'cancel': False}
 
-            @st.dialog('Confirm model run')
-            def _show_confirm_dialog() -> None:
-                confirm, cancel = _render_confirm_modal()
-                clicks['confirm'] = confirm
-                clicks['cancel'] = cancel
+                @st.dialog('Confirm model run')
+                def _show_confirm_dialog() -> None:
+                    confirm, cancel = _render_confirm_modal()
+                    clicks['confirm'] = confirm
+                    clicks['cancel'] = cancel
 
-            _show_confirm_dialog()
-            confirm_clicked = clicks['confirm']
-            cancel_clicked = clicks['cancel']
-        else:
-            with st.expander('Confirm model run'):
-                confirm_clicked, cancel_clicked = _render_confirm_modal()
+                _show_confirm_dialog()
+                confirm_clicked = clicks['confirm']
+                cancel_clicked = clicks['cancel']
+            else:
+                with st.expander('Confirm model run'):
+                    confirm_clicked, cancel_clicked = _render_confirm_modal()
 
         if cancel_clicked:
             st.session_state.pop("pending_run", None)
