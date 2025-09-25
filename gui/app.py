@@ -44,6 +44,7 @@ try:
     from gui.module_settings import (
         CarbonModuleSettings,
         DispatchModuleSettings,
+        GeneralConfigResult,
         IncentivesModuleSettings,
         OutputsModuleSettings,
     )
@@ -51,6 +52,7 @@ except ModuleNotFoundError:  # pragma: no cover - compatibility fallback
     from module_settings import (  # type: ignore[import-not-found]
         CarbonModuleSettings,
         DispatchModuleSettings,
+        GeneralConfigResult,
         IncentivesModuleSettings,
         OutputsModuleSettings,
     )
