@@ -903,7 +903,6 @@ def _render_carbon_policy_section(
     region_options: Iterable[int | str] | None = None,
 ) -> CarbonModuleSettings:
     """Render the carbon policy section wrapper."""
-    # You can decide whether to call render_carbon_module_controls here
     return render_carbon_module_controls(
         run_config,
         container,
@@ -923,22 +922,40 @@ def render_carbon_module_controls(
     defaults = modules.get("carbon_policy", {})
     price_defaults = modules.get("carbon_price", {})
 
+    # -------------------------
+    # Defaults
+    # -------------------------
     enabled_default = bool(defaults.get("enabled", True))
     enable_floor_default = bool(defaults.get("enable_floor", True))
     enable_ccr_default = bool(defaults.get("enable_ccr", True))
     ccr1_default = bool(defaults.get("ccr1_enabled", True))
     ccr2_default = bool(defaults.get("ccr2_enabled", True))
     banking_default = bool(defaults.get("allowance_banking_enabled", True))
-    bank_default = _coerce_float(defaults.get("bank0"), default=0.0)
+    bank_default = _coerce_float(defaults.get("bank0", 0.0), default=0.0)
+
     coverage_default = _normalize_coverage_selection(
         defaults.get("coverage_regions", ["All"])
     )
+
     control_default_raw = defaults.get("control_period_years")
     try:
         control_default = int(control_default_raw)
     except (TypeError, ValueError):
         control_default = 3
     control_override_default = control_default_raw is not None
+
+    price_enabled_default = bool(price_defaults.get("enabled", False))
+    price_value_raw = price_defaults.get(
+        "price_per_ton", price_defaults.get("price", 0.0)
+    )
+    price_default = _coerce_float(price_value_raw, default=0.0)
+    price_schedule_default = _normalize_price_schedule(
+        price_defaults.get("price_schedule")
+    )
+
+    # -------------------------
+    # Coverage / Regions
+    # -------------------------
     region_labels: list[str] = []
     if region_options is not None:
         for entry in region_options:
@@ -956,83 +973,35 @@ def render_carbon_module_controls(
     else:
         coverage_default_display = [
             label for label in coverage_default if label in coverage_choices
-        ]
-        if not coverage_default_display:
-            coverage_default_display = [_ALL_REGIONS_LABEL]
-
-    price_enabled_default = bool(price_defaults.get("enabled", False))
-    price_value_raw = price_defaults.get("price_per_ton", price_defaults.get("price", 0.0))
-    price_default = _coerce_float(price_value_raw, default=0.0)
-    price_schedule_default = _normalize_price_schedule(price_defaults.get("price_schedule"))
-
-    # Normalize region labels
-    region_labels: list[str] = []
-    if region_options is not None:
-        for entry in region_options:
-            label = str(entry).strip()
-            if not label:
-                label = "default"
-            if label not in region_labels:
-                region_labels.append(label)
-    if not region_labels:
-        region_labels = ["default"]
-
-    coverage_choices = [_ALL_REGIONS_LABEL] + sorted(region_labels, key=str)
-    if coverage_default == ["All"]:
-        coverage_default_display = [_ALL_REGIONS_LABEL]
-    else:
-        coverage_default_display = [
-            label for label in coverage_default if label in coverage_choices
-        ]
-        if not coverage_default_display:
-            coverage_default_display = [_ALL_REGIONS_LABEL]
-
-def build_carbon_policy_ui(
-    container,
-    run_config,
-    defaults,
-    enabled_default: bool,
-    price_defaults: dict[str, Any],
-    enable_floor_default: bool,
-    enable_ccr_default: bool,
-    ccr1_default: bool,
-    ccr2_default: bool,
-    banking_default: bool,
-    bank_default: float,
-    control_override_default: bool,
-    control_default: int,
-    coverage_choices: list[str],
-    coverage_default_display: list[str],
-    price_schedule_default: dict[int, float],
-) -> CarbonModuleSettings:
-    """Construct the Carbon Policy section of the UI and return selected settings."""
+        ] or [_ALL_REGIONS_LABEL]
 
     # -------------------------
-    # Carbon price defaults
+    # Session State Sync
     # -------------------------
-    price_enabled_default = bool(price_defaults.get("enabled", False))
-    price_value_raw = price_defaults.get("price_per_ton", price_defaults.get("price", 0.0))
-    price_default = _coerce_float(price_value_raw, default=0.0)
-    price_schedule_default = _normalize_price_schedule(price_defaults.get("price_schedule"))
-
     bank_value_default = bank_default
-    if st is not None:  # pragma: no cover - UI path
-        bank_value_default = float(st.session_state.setdefault("carbon_bank0", bank_default))
+    if st is not None:
+        bank_value_default = float(
+            st.session_state.setdefault("carbon_bank0", bank_default)
+        )
 
     def _mark_last_changed(key: str) -> None:
         try:
             _ensure_streamlit()
-        except ModuleNotFoundError:  # pragma: no cover
+        except ModuleNotFoundError:
             return
         st.session_state["carbon_module_last_changed"] = key
 
     session_enabled_default = enabled_default
     session_price_default = price_enabled_default
     last_changed = None
-    if st is not None:  # pragma: no cover - UI path
+    if st is not None:
         last_changed = st.session_state.get("carbon_module_last_changed")
-        session_enabled_default = bool(st.session_state.get("carbon_enable", enabled_default))
-        session_price_default = bool(st.session_state.get("carbon_price_enable", price_enabled_default))
+        session_enabled_default = bool(
+            st.session_state.get("carbon_enable", enabled_default)
+        )
+        session_price_default = bool(
+            st.session_state.get("carbon_price_enable", price_enabled_default)
+        )
         if session_enabled_default and session_price_default:
             if last_changed == "cap":
                 session_price_default = False
@@ -1140,7 +1109,10 @@ def build_carbon_policy_ui(
             default=coverage_default_display,
             disabled=not enabled,
             key="carbon_coverage_regions",
-            help="Select the regions subject to the cap. Choose “All regions” to apply the carbon policy across every region.",
+            help=(
+                "Select the regions subject to the cap. Choose “All regions” to apply "
+                "the carbon policy across every region."
+            ),
         )
         coverage_regions = _normalize_coverage_selection(
             coverage_selection_raw or coverage_default_display
@@ -1183,8 +1155,6 @@ def build_carbon_policy_ui(
         price_schedule=price_schedule,
         errors=errors,
     )
-
-
 
 # -------------------------
 # Dispatch UI
@@ -4060,23 +4030,31 @@ def main() -> None:
                 confirm_clicked, cancel_clicked = _render_confirm_modal()
 
         if cancel_clicked:
-            st.session_state.pop('pending_run', None)
-            st.session_state.pop('show_confirm_modal', None)
-            st.session_state['run_in_progress'] = False
+            st.session_state.pop("pending_run", None)
+            st.session_state.pop("show_confirm_modal", None)
+            st.session_state["run_in_progress"] = False
             _clear_confirmation_button_state()
             pending_run = None
             show_confirm_modal = False
+
         elif confirm_clicked:
-            pending_params = pending_run.get('params')
+            pending_params = pending_run.get("params")
             if isinstance(pending_params, Mapping):
+                # Save confirmed params in session for downstream logic
+                st.session_state["confirmed_run_params"] = dict(pending_params)
+
+                # Also set local flags for immediate run execution
                 run_inputs = dict(pending_params)
                 execute_run = True
-                st.session_state['run_in_progress'] = True
-            st.session_state.pop('pending_run', None)
-            st.session_state.pop('show_confirm_modal', None)
+
+                st.session_state["run_in_progress"] = True
+
+            st.session_state.pop("pending_run", None)
+            st.session_state.pop("show_confirm_modal", None)
             _clear_confirmation_button_state()
             pending_run = None
             show_confirm_modal = False
+
 
     if isinstance(pending_run, Mapping) and not show_confirm_modal and not run_in_progress:
         show_confirm_modal = True
