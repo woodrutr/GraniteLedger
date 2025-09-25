@@ -5063,7 +5063,8 @@ def main() -> None:
                     deep_carbon_pricing=bool(
                         inputs_for_run.get(
                             "dispatch_deep_carbon",
-                            getattr(dispatch_settings, "deep_carbon_pricing", False)
+                            getattr(dispatch_settings, "deep_carbon_pricing", False),
+                        )
                     ),
 
                     module_config=inputs_for_run.get(
