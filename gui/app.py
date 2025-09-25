@@ -928,6 +928,7 @@ def render_carbon_module_controls(
     ccr1_default = bool(defaults.get("ccr1_enabled", True))
     ccr2_default = bool(defaults.get("ccr2_enabled", True))
     banking_default = bool(defaults.get("allowance_banking_enabled", True))
+    bank_default = _coerce_float(defaults.get("initial_allowance_bank", 0.0), default=0.0)
     coverage_default = _normalize_coverage_selection(
         defaults.get("coverage_regions", ["All"])
     )
@@ -937,6 +938,13 @@ def render_carbon_module_controls(
     except (TypeError, ValueError):
         control_default = 3
     control_override_default = control_default_raw is not None
+
+    price_enabled_default = bool(price_defaults.get("enabled", False))
+    price_value_raw = price_defaults.get("price_per_ton", price_defaults.get("price", 0.0))
+    price_default = _coerce_float(price_value_raw, default=0.0)
+    price_schedule_default = _normalize_price_schedule(price_defaults.get("price_schedule"))
+    price_schedule_value = dict(price_schedule_default)
+
     region_labels: list[str] = []
     if region_options is not None:
         for entry in region_options:
@@ -958,38 +966,27 @@ def render_carbon_module_controls(
         if not coverage_default_display:
             coverage_default_display = [_ALL_REGIONS_LABEL]
 
-    price_enabled_default = bool(price_defaults.get("enabled", False))
-    price_value_raw = price_defaults.get("price_per_ton", price_defaults.get("price", 0.0))
-    price_default = _coerce_float(price_value_raw, default=0.0)
-    price_schedule_default = _normalize_price_schedule(price_defaults.get("price_schedule"))
-
-    # Normalize region labels
-    region_labels: list[str] = []
-    if region_options is not None:
-        for entry in region_options:
-            label = str(entry).strip()
-            if not label:
-                label = "default"
-            if label not in region_labels:
-                region_labels.append(label)
-    if not region_labels:
-        region_labels = ["default"]
-
-    coverage_choices = [_ALL_REGIONS_LABEL] + sorted(region_labels, key=str)
-    if coverage_default == ["All"]:
-        coverage_default_display = [_ALL_REGIONS_LABEL]
-    else:
-        coverage_default_display = [
-            label for label in coverage_default if label in coverage_choices
-        ]
-        if not coverage_default_display:
-            coverage_default_display = [_ALL_REGIONS_LABEL]
-
-    # Carbon price defaults
-    price_enabled_default = bool(price_defaults.get("enabled", False))
-    price_value_raw = price_defaults.get("price_per_ton", price_defaults.get("price", 0.0))
-    price_default = _coerce_float(price_value_raw, default=0.0)
-    price_schedule_default = _normalize_price_schedule(price_defaults.get("price_schedule"))
+    raw_region_values = run_config.get("regions", [])
+    available_region_values = [
+        value for value in raw_region_values if value not in (None, "")
+    ]
+    region_option_map = {str(value): value for value in available_region_values}
+    default_region_candidates = defaults.get("regions")
+    if isinstance(default_region_candidates, Mapping):
+        default_region_candidates = list(default_region_candidates.values())
+    if isinstance(default_region_candidates, (str, bytes)):
+        default_region_candidates = [default_region_candidates]
+    if not isinstance(default_region_candidates, Iterable) or isinstance(
+        default_region_candidates, (bytes, str)
+    ):
+        default_region_candidates = []
+    normalized_defaults = {
+        str(candidate)
+        for candidate in default_region_candidates
+        if candidate not in (None, "")
+    }
+    if not normalized_defaults and available_region_values:
+        normalized_defaults = {str(value) for value in available_region_values}
 
     def _mark_last_changed(key: str) -> None:
         try:
@@ -1003,7 +1000,9 @@ def render_carbon_module_controls(
     last_changed = None
     if st is not None:  # pragma: no cover - UI path
         last_changed = st.session_state.get("carbon_module_last_changed")
-        session_enabled_default = bool(st.session_state.get("carbon_enable", enabled_default))
+        session_enabled_default = bool(
+            st.session_state.get("carbon_enable", enabled_default)
+        )
         session_price_default = bool(
             st.session_state.get("carbon_price_enable", price_enabled_default)
         )
@@ -1015,7 +1014,6 @@ def render_carbon_module_controls(
             st.session_state["carbon_enable"] = session_enabled_default
             st.session_state["carbon_price_enable"] = session_price_default
 
-    # UI toggles
     enabled = container.toggle(
         "Enable carbon cap",
         value=session_enabled_default,
@@ -1029,48 +1027,17 @@ def render_carbon_module_controls(
         on_change=lambda: _mark_last_changed("price"),
     )
 
-
     if enabled and price_enabled:
         if last_changed == "cap":
             price_enabled = False
         else:
             enabled = False
 
-    enable_floor = container.toggle("Enable price floor", value=enable_floor_default, key="carbon_floor")
-    enable_ccr = container.toggle("Enable CCR", value=enable_ccr_default, key="carbon_ccr")
-    ccr1_enabled = container.toggle("Enable CCR Tier 1", value=ccr1_default, key="carbon_ccr1")
-    ccr2_enabled = container.toggle("Enable CCR Tier 2", value=ccr2_default, key="carbon_ccr2")
-    banking_enabled = container.toggle("Enable allowance banking", value=banking_default, key="carbon_banking")
-
-    control_override = container.toggle(
-        "Override control period",
-        value=control_override_default,
-        key="carbon_ctrl_override",
-    )
-    control_period_years = control_default if control_override else None
-
-    price_per_ton = container.number_input("Carbon price ($/ton)", value=price_default, key="carbon_price_val")
-    price_schedule = price_schedule_default
-
-    errors: list[str] = []
-    if enabled and price_enabled:
-        errors.append("Cannot enable both carbon cap and carbon price simultaneously.")
-
-    return CarbonModuleSettings(
-        enabled=enabled,
-        price_enabled=price_enabled,
-        enable_floor=enable_floor,
-        enable_ccr=enable_ccr,
-        ccr1_enabled=ccr1_enabled,
-        ccr2_enabled=ccr2_enabled,
-        banking_enabled=banking_enabled,
-        coverage_regions=coverage_default_display,
-        control_period_years=control_period_years,
-        price_per_ton=price_per_ton,
-        price_schedule=price_schedule,
-        errors=errors,
-    )
-
+    selected_cap_regions: list[Any] = []
+    coverage_selection_raw: list[str] | tuple[str, ...] | None = None
+    control_period_value = control_default
+    control_override = control_override_default
+    bank0_value = float(bank_default)
 
     with _sidebar_panel(container, enabled) as panel:
         enable_floor = panel.checkbox(
@@ -1105,12 +1072,12 @@ def render_carbon_module_controls(
         )
         bank0_value = float(
             panel.number_input(
-                'Initial allowance bank (tons)',
+                "Initial allowance bank (tons)",
                 min_value=0.0,
                 value=float(bank_default),
                 step=1000.0,
-                format='%f',
-                key='carbon_bank0',
+                format="%f",
+                key="carbon_bank0",
                 disabled=not (enabled and banking_enabled),
             )
         )
@@ -1140,48 +1107,14 @@ def render_carbon_module_controls(
                 "the carbon policy across every region."
             ),
         )
-
-    with _sidebar_panel(container, price_enabled) as price_panel:
-        price_per_ton_value = price_panel.number_input(
-            'Carbon price ($/ton)',
-            min_value=0.0,
-            value=float(price_default if price_default >= 0.0 else 0.0),
-            step=1.0,
-            format='%0.2f',
-            key='carbon_price_value',
-            disabled=not price_enabled,
-        )
-
-        raw_region_values = run_config.get("regions", [])
-        available_region_values = [
-            value for value in raw_region_values if value not in (None, "")
-        ]
-        region_option_map = {str(value): value for value in available_region_values}
-        default_region_candidates = defaults.get("regions")
-        if isinstance(default_region_candidates, Mapping):
-            default_region_candidates = list(default_region_candidates.values())
-        if isinstance(default_region_candidates, (str, bytes)):
-            default_region_candidates = [default_region_candidates]
-        if not isinstance(default_region_candidates, Iterable) or isinstance(
-            default_region_candidates, (bytes, str)
-        ):
-            default_region_candidates = []
-        normalized_defaults = {
-            str(candidate)
-            for candidate in default_region_candidates
-            if candidate not in (None, "")
-        }
-        if not normalized_defaults and available_region_values:
-            normalized_defaults = {str(value) for value in available_region_values}
-
-        region_options = list(region_option_map)
-        if region_options:
+        region_options_list = list(region_option_map)
+        if region_options_list:
             default_labels = [
-                label for label in region_options if label in normalized_defaults
+                label for label in region_options_list if label in normalized_defaults
             ]
             selected_region_labels = panel.multiselect(
                 "Cap-covered regions",
-                options=region_options,
+                options=region_options_list,
                 default=default_labels,
                 disabled=not enabled,
                 key="carbon_regions",
@@ -1196,9 +1129,21 @@ def render_carbon_module_controls(
         if enabled and not selected_cap_regions:
             selected_cap_regions = list(available_region_values)
 
+    with _sidebar_panel(container, price_enabled) as price_panel:
+        price_per_ton_value = price_panel.number_input(
+            "Carbon price ($/ton)",
+            min_value=0.0,
+            value=float(price_default if price_default >= 0.0 else 0.0),
+            step=1.0,
+            format="%0.2f",
+            key="carbon_price_value",
+            disabled=not price_enabled,
+        )
+
     control_period_years = int(control_period_value) if enabled and control_override else None
     coverage_selection = coverage_selection_raw or coverage_default_display
     coverage_regions = _normalize_coverage_selection(coverage_selection)
+
     if not enabled:
         enable_floor = False
         enable_ccr = False
@@ -1206,10 +1151,12 @@ def render_carbon_module_controls(
         ccr2_enabled = False
         banking_enabled = False
         control_period_years = None
+        selected_cap_regions = []
+        bank0_value = 0.0
 
     if not price_enabled:
-        price_per_ton = 0.0
-        price_schedule = {}
+        price_per_ton_value = 0.0
+        price_schedule_value = {}
 
     modules["carbon_policy"] = {
         "enabled": bool(enabled),
@@ -1218,6 +1165,7 @@ def render_carbon_module_controls(
         "ccr1_enabled": bool(ccr1_enabled),
         "ccr2_enabled": bool(ccr2_enabled),
         "allowance_banking_enabled": bool(banking_enabled),
+        "initial_allowance_bank": float(bank0_value) if banking_enabled else 0.0,
         "coverage_regions": coverage_regions,
         "control_period_years": control_period_years,
         "regions": list(selected_cap_regions),
@@ -1225,13 +1173,9 @@ def render_carbon_module_controls(
 
     modules["carbon_price"] = {
         "enabled": bool(price_enabled),
-        "price_per_ton": float(price_per_ton),
-        "price_schedule": dict(price_schedule),
+        "price_per_ton": float(price_per_ton_value),
+        "price_schedule": dict(price_schedule_value),
     }
-
-    if price_schedule_default:
-        price_record["price_schedule"] = dict(price_schedule_default)
-    modules["carbon_price"] = price_record
 
     errors: list[str] = []
     if enabled and not isinstance(run_config.get("allowance_market"), Mapping):
@@ -1247,13 +1191,13 @@ def render_carbon_module_controls(
         ccr1_enabled=ccr1_enabled,
         ccr2_enabled=ccr2_enabled,
         banking_enabled=banking_enabled,
-        coverage_regions=coverage_default_display,
+        coverage_regions=coverage_regions,
         control_period_years=control_period_years,
-        price_per_ton=float(price_per_ton),
-        price_schedule=dict(price_schedule),
+        price_per_ton=float(price_per_ton_value),
+        cap_regions=list(selected_cap_regions),
+        price_schedule=dict(price_schedule_value),
         errors=errors,
     )
-
 
 # -------------------------
 # Dispatch UI
