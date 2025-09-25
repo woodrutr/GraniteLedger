@@ -362,6 +362,7 @@ def test_backend_dispatch_and_carbon_modules(monkeypatch):
         policy = frames.policy().to_policy()
         captured["carbon_enabled"] = policy.enabled
         captured["use_network"] = kwargs.get("use_network")
+        captured["deep_carbon_pricing"] = kwargs.get("deep_carbon_pricing")
         return real_runner(frames, **kwargs)
 
     monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: capturing_runner)
@@ -393,11 +394,76 @@ def test_backend_dispatch_and_carbon_modules(monkeypatch):
     assert "error" not in result
     assert captured.get("carbon_enabled") is True
     assert captured.get("use_network") is True
+    assert captured.get("deep_carbon_pricing") is False
     dispatch_cfg = result["module_config"]["electricity_dispatch"]
     assert dispatch_cfg["enabled"] is True
     assert dispatch_cfg["use_network"] is True
+    assert dispatch_cfg.get("deep_carbon_pricing") is False
     carbon_cfg = result["module_config"]["carbon_policy"]
     assert carbon_cfg.get("regions") == [1]
+
+    _cleanup_temp_dir(result)
+
+
+def test_backend_mutual_exclusion_without_deep():
+    config = _baseline_config()
+    frames = _frames_for_years([2025])
+
+    result = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2025,
+        frames=frames,
+        carbon_policy_enabled=True,
+        cap_regions=[1],
+        carbon_price_enabled=True,
+        carbon_price_value=25.0,
+        deep_carbon_pricing=False,
+    )
+
+    assert result.get("error") == "Cannot enable both carbon cap and carbon price simultaneously."
+
+
+def test_backend_deep_carbon_combines_prices(monkeypatch):
+    real_runner = importlib.import_module("engine.run_loop").run_end_to_end_from_frames
+    captured: dict[str, object] = {}
+
+    def capturing_runner(frames, **kwargs):
+        captured["deep_carbon_pricing"] = kwargs.get("deep_carbon_pricing")
+        return real_runner(frames, **kwargs)
+
+    monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: capturing_runner)
+
+    config = _baseline_config()
+    frames = _frames_for_years([2025])
+
+    result = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2025,
+        frames=frames,
+        carbon_policy_enabled=True,
+        cap_regions=[1],
+        carbon_price_enabled=True,
+        carbon_price_value=15.0,
+        deep_carbon_pricing=True,
+    )
+
+    assert "error" not in result
+    assert captured.get("deep_carbon_pricing") is True
+
+    annual = result["annual"]
+    row = annual.loc[annual["year"] == 2025].iloc[0]
+    allowance_price = float(row["p_co2_allowance"])
+    exogenous_price = float(row["p_co2_exogenous"])
+    effective_price = float(row["p_co2_effective"])
+
+    assert row["p_co2"] == pytest.approx(allowance_price)
+    assert exogenous_price == pytest.approx(15.0)
+    assert effective_price == pytest.approx(allowance_price + exogenous_price)
+
+    dispatch_cfg = result["module_config"].get("electricity_dispatch", {})
+    assert dispatch_cfg.get("deep_carbon_pricing") is True
 
     _cleanup_temp_dir(result)
 
