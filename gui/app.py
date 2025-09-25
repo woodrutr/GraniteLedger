@@ -1074,19 +1074,49 @@ def _render_general_config_section(
                 return text
         return value_to_label.get(value, region_display_label(value))
 
+    def _canonicalize_selection(entries: Iterable[Any]) -> list[str]:
+        canonical: list[str] = []
+        seen: set[str] = set()
+        for entry in entries:
+            label = _canonical_region_label_entry(entry)
+            if label and label not in seen:
+                canonical.append(label)
+                seen.add(label)
+        if not canonical:
+            canonical = list(default_selection)
+        return canonical
+
     if st is not None:
-        st.session_state.setdefault(_GENERAL_REGIONS_NORMALIZED_KEY, list(default_selection))
+        st.session_state.setdefault(
+            _GENERAL_REGIONS_NORMALIZED_KEY, list(default_selection)
+        )
         prev_raw = st.session_state.get(_GENERAL_REGIONS_NORMALIZED_KEY, [])
         if isinstance(prev_raw, (list, tuple)):
-            previous_clean_selection = tuple(
-                _canonical_region_label_entry(e) for e in prev_raw
-            )
+            previous_clean_selection = _canonicalize_selection(prev_raw)
         elif isinstance(prev_raw, str):
-            previous_clean_selection = (_canonical_region_label_entry(prev_raw),)
+            previous_clean_selection = _canonicalize_selection([prev_raw])
         else:
-            previous_clean_selection = ()
+            previous_clean_selection = list(default_selection)
+
+        existing_widget_value = st.session_state.get("general_regions")
+        if isinstance(existing_widget_value, str):
+            existing_entries: Iterable[Any] = [existing_widget_value]
+        elif isinstance(existing_widget_value, (list, tuple, set)):
+            existing_entries = existing_widget_value
+        else:
+            existing_entries = []
+
+        if existing_entries:
+            canonical_existing = _canonicalize_selection(existing_entries)
+        else:
+            canonical_existing = previous_clean_selection
+
+        if list(existing_entries) != canonical_existing:
+            st.session_state["general_regions"] = list(canonical_existing)
+
+        previous_clean_selection = canonical_existing
     else:
-        previous_clean_selection = tuple(default_selection)
+        previous_clean_selection = list(default_selection)
 
     selected_regions_raw = list(
         container.multiselect(
@@ -1106,8 +1136,6 @@ def _render_general_config_section(
         if label and label not in seen_labels:
             canonical_selection.append(label)
             seen_labels.add(label)
-    if canonical_selection != selected_regions_raw and st is not None:
-        st.session_state["general_regions"] = canonical_selection
     selected_regions_raw = canonical_selection
     if st is not None:
         st.session_state[_GENERAL_REGIONS_NORMALIZED_KEY] = list(selected_regions_raw)
