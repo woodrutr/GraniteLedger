@@ -174,6 +174,7 @@ class CarbonModuleSettings:
     coverage_regions: list[str]
     control_period_years: int | None
     price_per_ton: float
+    initial_bank: float = 0.0
     cap_regions: list[Any] = field(default_factory=list)
     price_schedule: dict[int, float] = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
@@ -928,6 +929,7 @@ def render_carbon_module_controls(
     ccr1_default = bool(defaults.get("ccr1_enabled", True))
     ccr2_default = bool(defaults.get("ccr2_enabled", True))
     banking_default = bool(defaults.get("allowance_banking_enabled", True))
+    bank_default = _coerce_float(defaults.get("bank0"), default=0.0)
     coverage_default = _normalize_coverage_selection(
         defaults.get("coverage_regions", ["All"])
     )
@@ -991,6 +993,10 @@ def render_carbon_module_controls(
     price_default = _coerce_float(price_value_raw, default=0.0)
     price_schedule_default = _normalize_price_schedule(price_defaults.get("price_schedule"))
 
+    bank_value_default = bank_default
+    if st is not None:  # pragma: no cover - UI path
+        bank_value_default = float(st.session_state.setdefault("carbon_bank0", bank_default))
+
     def _mark_last_changed(key: str) -> None:
         try:
             _ensure_streamlit()
@@ -1040,7 +1046,23 @@ def render_carbon_module_controls(
     enable_ccr = container.toggle("Enable CCR", value=enable_ccr_default, key="carbon_ccr")
     ccr1_enabled = container.toggle("Enable CCR Tier 1", value=ccr1_default, key="carbon_ccr1")
     ccr2_enabled = container.toggle("Enable CCR Tier 2", value=ccr2_default, key="carbon_ccr2")
-    banking_enabled = container.toggle("Enable allowance banking", value=banking_default, key="carbon_banking")
+    banking_enabled = container.toggle(
+        "Enable allowance banking",
+        value=banking_default,
+        key="carbon_banking",
+    )
+
+    if banking_enabled:
+        initial_bank = float(
+            container.number_input(
+                "Initial allowance bank (tons)",
+                min_value=0.0,
+                value=float(bank_value_default if bank_value_default >= 0.0 else 0.0),
+                key="carbon_bank0",
+            )
+        )
+    else:
+        initial_bank = 0.0
 
     control_override = container.toggle(
         "Override control period",
@@ -1067,6 +1089,7 @@ def render_carbon_module_controls(
         coverage_regions=coverage_default_display,
         control_period_years=control_period_years,
         price_per_ton=price_per_ton,
+        initial_bank=initial_bank,
         price_schedule=price_schedule,
         errors=errors,
     )
@@ -1103,17 +1126,20 @@ def render_carbon_module_controls(
             disabled=not enabled,
             key="carbon_banking",
         )
-        bank0_value = float(
-            panel.number_input(
-                'Initial allowance bank (tons)',
-                min_value=0.0,
-                value=float(bank_default),
-                step=1000.0,
-                format='%f',
-                key='carbon_bank0',
-                disabled=not (enabled and banking_enabled),
+        if banking_enabled:
+            bank0_value = float(
+                panel.number_input(
+                    "Initial allowance bank (tons)",
+                    min_value=0.0,
+                    value=float(bank_value_default if bank_value_default >= 0.0 else 0.0),
+                    step=1000.0,
+                    format="%f",
+                    key="carbon_bank0",
+                    disabled=not enabled,
+                )
             )
-        )
+        else:
+            bank0_value = 0.0
         control_override = panel.checkbox(
             "Specify control period length",
             value=control_override_default,
@@ -1207,6 +1233,8 @@ def render_carbon_module_controls(
         banking_enabled = False
         control_period_years = None
 
+    initial_bank = float(bank0_value) if banking_enabled else 0.0
+
     if not price_enabled:
         price_per_ton = 0.0
         price_schedule = {}
@@ -1221,6 +1249,7 @@ def render_carbon_module_controls(
         "coverage_regions": coverage_regions,
         "control_period_years": control_period_years,
         "regions": list(selected_cap_regions),
+        "bank0": float(initial_bank),
     }
 
     modules["carbon_price"] = {
@@ -1250,6 +1279,7 @@ def render_carbon_module_controls(
         coverage_regions=coverage_default_display,
         control_period_years=control_period_years,
         price_per_ton=float(price_per_ton),
+        initial_bank=float(initial_bank),
         price_schedule=dict(price_schedule),
         errors=errors,
     )
@@ -2969,6 +2999,7 @@ def run_policy_simulation(
     ccr1_enabled: bool = True,
     ccr2_enabled: bool = True,
     allowance_banking_enabled: bool = True,
+    initial_bank: float = 0.0,
     coverage_regions: Iterable[str] | None = None,
     control_period_years: int | None = None,
     cap_regions: Sequence[Any] | None = None,
@@ -3036,6 +3067,8 @@ def run_policy_simulation(
     banking_flag = bool(policy_enabled and carbon_policy_cfg.allowance_banking_enabled)
 
     carbon_record = merged_modules.setdefault("carbon_policy", {})
+    initial_bank_value = float(initial_bank) if banking_flag else 0.0
+
     carbon_record.update(
         {
             "enabled": policy_enabled,
@@ -3048,6 +3081,7 @@ def run_policy_simulation(
             "control_period_years": (
                 carbon_policy_cfg.control_period_years if policy_enabled else None
             ),
+            "bank0": initial_bank_value,
         }
     )
 
@@ -3073,6 +3107,11 @@ def run_policy_simulation(
                 normalized_entry = entry
             normalized_regions.append(normalized_entry)
         carbon_record["regions"] = list(normalized_regions)
+
+    if not normalized_regions and normalized_coverage and normalized_coverage != ["All"]:
+        normalized_regions = list(normalized_coverage)
+        if normalized_regions:
+            carbon_record["regions"] = list(normalized_regions)
 
     config["modules"] = merged_modules
 
@@ -3839,6 +3878,7 @@ def main() -> None:
         banking_enabled=False,
         coverage_regions=["All"],
         control_period_years=None,
+        initial_bank=0.0,
         cap_regions=[],
         price_per_ton=0.0,
         price_schedule={},
@@ -4013,6 +4053,7 @@ def main() -> None:
         'ccr1_enabled': bool(carbon_settings.ccr1_enabled),
         'ccr2_enabled': bool(carbon_settings.ccr2_enabled),
         'allowance_banking_enabled': bool(carbon_settings.banking_enabled),
+        'initial_bank': float(carbon_settings.initial_bank),
         'control_period_years': carbon_settings.control_period_years,
         'carbon_price_enabled': bool(carbon_settings.price_enabled),
         'carbon_price_value': float(carbon_settings.price_per_ton),
@@ -4281,6 +4322,9 @@ def main() -> None:
                 ),
                 allowance_banking_enabled=bool(
                     inputs_for_run.get('allowance_banking_enabled', carbon_settings.banking_enabled)
+                ),
+                initial_bank=float(
+                    inputs_for_run.get('initial_bank', carbon_settings.initial_bank)
                 ),
                 coverage_regions=inputs_for_run.get(
                     'coverage_regions', carbon_settings.coverage_regions
