@@ -2903,6 +2903,119 @@ def _render_technology_section(
     st.bar_chart(latest_df)
 
 
+def _cleanup_session_temp_dirs() -> None:
+    _ensure_streamlit()
+    temp_dirs = st.session_state.get('temp_dirs', [])
+    for path_str in temp_dirs:
+        try:
+            shutil.rmtree(path_str, ignore_errors=True)
+        except Exception:  # pragma: no cover - best effort cleanup
+            continue
+    st.session_state['temp_dirs'] = []
+
+
+def _build_run_summary(settings: Mapping[str, Any], *, config_label: str) -> list[tuple[str, str]]:
+    """Return human-readable configuration details for confirmation dialogs."""
+
+    def _as_int(value: Any) -> int | None:
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _as_float(value: Any) -> float | None:
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _bool_label(value: bool) -> str:
+        return 'Yes' if value else 'No'
+
+    start_year = _as_int(settings.get('start_year'))
+    end_year = _as_int(settings.get('end_year'))
+
+    if start_year is None and end_year is None:
+        year_display = 'Not specified'
+    else:
+        if start_year is None:
+            start_year = end_year
+        if end_year is None:
+            end_year = start_year
+        if start_year == end_year:
+            year_display = f'{start_year}'
+        else:
+            year_display = f'{start_year} – {end_year}'
+
+    carbon_enabled = bool(settings.get('carbon_policy_enabled', True))
+    enable_floor = bool(settings.get('enable_floor', False)) if carbon_enabled else False
+    enable_ccr = bool(settings.get('enable_ccr', False)) if carbon_enabled else False
+    ccr1_enabled = bool(settings.get('ccr1_enabled', False)) if enable_ccr else False
+    ccr2_enabled = bool(settings.get('ccr2_enabled', False)) if enable_ccr else False
+    banking_enabled = (
+        bool(settings.get('allowance_banking_enabled', False)) if carbon_enabled else False
+    )
+
+    control_period = settings.get('control_period_years') if carbon_enabled else None
+    if not carbon_enabled:
+        control_display = 'Not applicable'
+    elif control_period is None:
+        control_display = 'Automatic'
+    else:
+        control_display = str(control_period)
+
+    price_enabled = bool(settings.get('carbon_price_enabled', False)) if carbon_enabled else False
+    price_value = _as_float(settings.get('carbon_price_value')) if price_enabled else None
+    price_schedule_raw = settings.get('carbon_price_schedule') if price_enabled else None
+    schedule_entries: list[tuple[int, float]] = []
+    if isinstance(price_schedule_raw, Mapping):
+        for year_key, value in price_schedule_raw.items():
+            year_val = _as_int(year_key)
+            price_val = _as_float(value)
+            if year_val is None or price_val is None:
+                continue
+            schedule_entries.append((year_val, price_val))
+    schedule_entries.sort(key=lambda item: item[0])
+
+    if not price_enabled:
+        price_display = 'Disabled'
+    elif schedule_entries:
+        first_year, first_price = schedule_entries[0]
+        if len(schedule_entries) == 1:
+            price_display = f'Schedule: {first_year} → ${first_price:,.2f}/ton'
+        else:
+            last_year, last_price = schedule_entries[-1]
+            price_display = (
+                f'Schedule ({len(schedule_entries)} entries): '
+                f'{first_year} → ${first_price:,.2f}/ton, '
+                f'{last_year} → ${last_price:,.2f}/ton'
+            )
+    elif price_value is not None:
+        price_display = f'Flat ${price_value:,.2f}/ton'
+    else:
+        price_display = 'Enabled (no price specified)'
+
+    dispatch_network = bool(settings.get('dispatch_use_network', False))
+
+    return [
+        ('Configuration', config_label),
+        ('Simulation years', year_display),
+        ('Carbon cap enabled', _bool_label(carbon_enabled)),
+        ('Minimum reserve price', _bool_label(enable_floor)),
+        ('CCR enabled', _bool_label(enable_ccr)),
+        ('CCR tranche 1', _bool_label(ccr1_enabled)),
+        ('CCR tranche 2', _bool_label(ccr2_enabled)),
+        ('Allowance banking enabled', _bool_label(banking_enabled)),
+        ('Control period length', control_display),
+        ('Carbon price', price_display),
+        ('Dispatch uses network', _bool_label(dispatch_network)),
+    ]
+
+
 def _render_results(result: Mapping[str, Any]) -> None:
     """Render charts and tables summarising the latest run results."""
     _ensure_streamlit()
@@ -3342,9 +3455,16 @@ def main() -> None:
                 ),
                 'module_config': copy.deepcopy(run_config.get('modules', {})),
             }
+            summary_builder = globals().get('_build_run_summary')
+            summary_details: list[tuple[str, str]]
+            if callable(summary_builder):
+                summary_details = summary_builder(run_inputs_payload, config_label=config_label)
+            else:  # pragma: no cover - defensive fallback if helper missing
+                summary_details = []
+
             st.session_state['pending_run'] = {
                 'params': run_inputs_payload,
-                'summary': _build_run_summary(run_inputs_payload, config_label=config_label),
+                'summary': summary_details,
             }
             pending_run = st.session_state['pending_run']
             st.session_state['show_confirm_modal'] = True
@@ -3362,6 +3482,8 @@ def main() -> None:
         )
 
     result = st.session_state.get('last_result')
+
+    inputs_for_run: Mapping[str, Any] = run_inputs or {}
 
     if execute_run:
         _cleanup_session_temp_dirs()
@@ -3442,7 +3564,6 @@ def main() -> None:
                     progress_text.text(f'Completed year {year_display} of {total}')
                 return
 
-        inputs_for_run = run_inputs or {}
         try:
             result = run_policy_simulation(
                 inputs_for_run.get('config_source', run_config),
