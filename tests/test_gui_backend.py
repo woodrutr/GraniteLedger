@@ -1,6 +1,7 @@
 import importlib
 import io
 import shutil
+from collections.abc import Mapping
 
 import pytest
 
@@ -204,6 +205,49 @@ def test_backend_dispatch_and_carbon_modules(monkeypatch):
     _cleanup_temp_dir(result)
 
 
+def test_backend_carbon_price_disables_cap(monkeypatch):
+    real_runner = importlib.import_module("engine.run_loop").run_end_to_end_from_frames
+    captured: dict[str, object] = {}
+
+    def capturing_runner(frames, **kwargs):
+        policy = frames.policy().to_policy()
+        captured["carbon_enabled"] = policy.enabled
+        captured["price_schedule"] = kwargs.get("carbon_price_schedule")
+        return real_runner(frames, **kwargs)
+
+    monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: capturing_runner)
+
+    config = _baseline_config()
+    frames = _frames_for_years([2026])
+
+    module_config = {"carbon_price": {"enabled": True, "price_per_ton": 37.0}}
+
+    result = run_policy_simulation(
+        config,
+        start_year=2026,
+        end_year=2026,
+        frames=frames,
+        carbon_policy_enabled=False,
+        carbon_price_enabled=True,
+        carbon_price_value=37.0,
+        module_config=module_config,
+    )
+
+    assert "error" not in result
+    assert captured.get("carbon_enabled") is False
+    schedule = captured.get("price_schedule")
+    assert isinstance(schedule, Mapping)
+    assert schedule.get(2026) == pytest.approx(37.0)
+
+    carbon_cfg = result["module_config"].get("carbon_policy", {})
+    assert carbon_cfg.get("enabled") is False
+    price_cfg = result["module_config"].get("carbon_price", {})
+    assert price_cfg.get("enabled") is True
+    assert price_cfg.get("price_per_ton") == pytest.approx(37.0)
+
+    _cleanup_temp_dir(result)
+
+
 def test_backend_banking_toggle_disables_bank(tmp_path):
     config = _baseline_config()
     frames = _frames_for_years([2025, 2026])
@@ -289,6 +333,57 @@ def test_backend_builds_default_frames(tmp_path):
 
     assert "error" not in result
     assert not result["annual"].empty
+
+    _cleanup_temp_dir(result)
+
+
+def test_backend_coverage_selection_builds_frame(monkeypatch):
+    real_runner = importlib.import_module("engine.run_loop").run_end_to_end_from_frames
+    captured: dict[str, object] = {}
+
+    def capturing_runner(frames, **kwargs):
+        captured["coverage_df"] = frames.coverage()
+        captured["coverage_map"] = frames.coverage_for_year(2025)
+        return real_runner(frames, **kwargs)
+
+    monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: capturing_runner)
+
+    config = _baseline_config()
+    frames = baseline_frames(year=2025)
+    units = frames.units()
+    units.loc[units["unit_id"] == "coal-1", "region"] = "north"
+    units.loc[units["unit_id"] == "gas-1", "region"] = "south"
+    units.loc[units["unit_id"] == "wind-1", "region"] = "north"
+    frames = frames.with_frame("units", units)
+    demand = pd.DataFrame(
+        [
+            {"year": 2025, "region": "north", "demand_mwh": 250_000.0},
+            {"year": 2025, "region": "south", "demand_mwh": 250_000.0},
+        ]
+    )
+    frames = frames.with_frame("demand", demand)
+
+    result = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2025,
+        frames=frames,
+        coverage_regions=["north"],
+        dispatch_use_network=True,
+    )
+
+    assert "error" not in result
+    coverage_df = captured.get("coverage_df")
+    assert isinstance(coverage_df, pd.DataFrame)
+    assert {"north", "south"}.issubset(set(coverage_df["region"]))
+    north_flag = bool(
+        coverage_df.loc[coverage_df["region"] == "north", "covered"].iloc[0]
+    )
+    south_flag = bool(
+        coverage_df.loc[coverage_df["region"] == "south", "covered"].iloc[0]
+    )
+    assert north_flag is True
+    assert south_flag is False
 
     _cleanup_temp_dir(result)
 
