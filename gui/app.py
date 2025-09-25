@@ -1587,7 +1587,7 @@ def _render_incentives_section(
     production_limit_col = "Limit (MWh)"
     investment_credit_col = "Credit ($/MW)"
     investment_limit_col = "Limit (MW)"
-    selection_column = "Apply credit"
+    selection_column = "Apply Credit"
 
     def _build_editor_rows(
         entries: list[dict[str, Any]],
@@ -1629,7 +1629,7 @@ def _render_incentives_section(
         )
         return rows
 
-    production_rows_default = _build_editor_rows(
+    production_rows_default: list[dict[str, Any]] = _build_editor_rows(
         existing_production_entries,
         credit_key="credit_per_mwh",
         limit_key="limit_mwh",
@@ -1637,7 +1637,7 @@ def _render_incentives_section(
         limit_label=production_limit_col,
         selection_label=selection_column,
     )
-    investment_rows_default = _build_editor_rows(
+    investment_rows_default: list[dict[str, Any]] = _build_editor_rows(
         existing_investment_entries,
         credit_key="credit_per_mw",
         limit_key="limit_mw",
@@ -1645,6 +1645,21 @@ def _render_incentives_section(
         limit_label=investment_limit_col,
         selection_label=selection_column,
     )
+
+    production_column_order: list[str] = [
+        selection_column,
+        "Technology",
+        "Years",
+        production_credit_col,
+        production_limit_col,
+    ]
+    investment_column_order: list[str] = [
+        selection_column,
+        "Technology",
+        "Years",
+        investment_credit_col,
+        investment_limit_col,
+    ]
 
     available_years = _simulation_years_from_config(run_config)
     valid_years_set = {int(year) for year in available_years}
@@ -1751,16 +1766,10 @@ def _render_incentives_section(
             num_rows="dynamic",
             width="stretch",  # Streamlit >= 1.38: replaces use_container_width
             key="incentives_production_editor",
-            column_order=[
-                selection_column,
-                "Technology",
-                "Years",
-                production_credit_col,
-                production_limit_col,
-            ],
+            column_order=production_column_order,
             column_config={
                 selection_column: st.column_config.CheckboxColumn(
-                    "Apply credit",
+                    "Apply Credit",
                     help=(
                         "Select to apply production tax credits for this technology. "
                         "Unchecked technologies default to $0 incentives across all years."
@@ -1796,16 +1805,10 @@ def _render_incentives_section(
             num_rows="dynamic",
             width="stretch",  # Streamlit >= 1.38: replaces use_container_width
             key="incentives_investment_editor",
-            column_order=[
-                selection_column,
-                "Technology",
-                "Years",
-                investment_credit_col,
-                investment_limit_col,
-            ],
+            column_order=investment_column_order,
             column_config={
                 selection_column: st.column_config.CheckboxColumn(
-                    "Apply credit",
+                    "Apply Credit",
                     help=(
                         "Select to apply investment tax credits for this technology. "
                         "Unchecked technologies default to $0 incentives across all years."
