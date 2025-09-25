@@ -193,7 +193,28 @@ def test_backend_dispatch_and_carbon_modules(monkeypatch):
     dispatch_cfg = result["module_config"]["electricity_dispatch"]
     assert dispatch_cfg["enabled"] is True
     assert dispatch_cfg["use_network"] is True
+    carbon_cfg = result["module_config"]["carbon_policy"]
+    assert carbon_cfg.get("regions")
 
+    _cleanup_temp_dir(result)
+
+
+def test_backend_carbon_region_override():
+    config = _baseline_config()
+    config["carbon_cap_groups"] = [{"name": "default", "regions": [1]}]
+    frames = _frames_for_years([2025])
+
+    result = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2025,
+        frames=frames,
+        carbon_cap_regions=[9],
+    )
+
+    assert "error" not in result
+    carbon_cfg = result["module_config"]["carbon_policy"]
+    assert carbon_cfg.get("regions") == [9]
     _cleanup_temp_dir(result)
 
 

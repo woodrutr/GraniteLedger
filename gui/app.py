@@ -352,6 +352,7 @@ class CarbonModuleSettings:
     ccr2_enabled: bool
     banking_enabled: bool
     control_period_years: int | None
+    regions: list[int | str]
     errors: list[str] = field(default_factory=list)
 
 
@@ -559,6 +560,47 @@ def _render_carbon_policy_section(
 
     enabled = container.toggle("Enable carbon cap", value=enabled_default, key="carbon_enable")
 
+    region_values = _regions_from_config(run_config)
+    if not region_values:
+        region_values = [1]
+    label_to_value: dict[str, int | str] = {}
+    for value in region_values:
+        label = str(value).strip()
+        if not label:
+            label = "default"
+        if label not in label_to_value:
+            label_to_value[label] = value
+
+    default_region_values_raw = defaults.get("regions")
+    if isinstance(default_region_values_raw, (list, tuple, set)):
+        default_region_labels = [str(entry) for entry in default_region_values_raw]
+    elif default_region_values_raw not in (None, ""):
+        default_region_labels = [str(default_region_values_raw)]
+    else:
+        default_region_labels = []
+
+    for label in default_region_labels:
+        if label == "All":
+            continue
+        if label not in label_to_value:
+            try:
+                label_to_value[label] = int(label)
+            except ValueError:
+                label_to_value[label] = label
+
+    region_option_labels = ["All", *label_to_value.keys()]
+    if not default_region_labels:
+        default_region_labels = ["All"]
+
+    if st is not None:
+        previous_selection = st.session_state.get(
+            "carbon_regions_normalized", list(default_region_labels)
+        )
+        if not isinstance(previous_selection, (list, tuple)):
+            previous_selection = list(default_region_labels)
+    else:
+        previous_selection = list(default_region_labels)
+
     with _sidebar_panel(container, enabled) as panel:
         enable_floor = panel.checkbox(
             "Enable minimum reserve price",
@@ -606,7 +648,25 @@ def _render_carbon_policy_section(
             disabled=not (enabled and control_override),
         )
 
-    control_period_years = int(control_period_value) if enabled and control_override else None
+        selected_region_labels_raw = list(
+            panel.multiselect(
+                "Regions covered by the carbon cap",
+                options=region_option_labels,
+                default=default_region_labels,
+                key="carbon_regions",
+                disabled=not enabled,
+            )
+        )
+
+    normalized_region_labels = _normalize_region_labels(
+        selected_region_labels_raw, previous_selection
+    )
+    if st is not None:
+        if normalized_region_labels != selected_region_labels_raw:
+            st.session_state["carbon_regions"] = normalized_region_labels
+        st.session_state["carbon_regions_normalized"] = list(normalized_region_labels)
+
+    available_region_values = list(label_to_value.values())
     if not enabled:
         enable_floor = False
         enable_ccr = False
@@ -614,6 +674,25 @@ def _render_carbon_policy_section(
         ccr2_enabled = False
         banking_enabled = False
         control_period_years = None
+        carbon_regions = list(available_region_values)
+    else:
+        if "All" in normalized_region_labels or not normalized_region_labels:
+            carbon_regions = list(available_region_values)
+        else:
+            carbon_regions = []
+            for label in normalized_region_labels:
+                if label == "All":
+                    continue
+                value = label_to_value.get(label)
+                if value is None:
+                    try:
+                        value = int(label)
+                    except ValueError:
+                        value = label
+                if value not in carbon_regions:
+                    carbon_regions.append(value)
+
+    control_period_years = int(control_period_value) if enabled and control_override else None
 
     modules["carbon_policy"] = {
         "enabled": bool(enabled),
@@ -623,6 +702,7 @@ def _render_carbon_policy_section(
         "ccr2_enabled": bool(ccr2_enabled),
         "allowance_banking_enabled": bool(banking_enabled),
         "control_period_years": control_period_years,
+        "regions": list(carbon_regions),
     }
 
     errors: list[str] = []
@@ -639,6 +719,7 @@ def _render_carbon_policy_section(
         ccr2_enabled=bool(ccr2_enabled),
         banking_enabled=bool(banking_enabled),
         control_period_years=control_period_years,
+        regions=list(carbon_regions),
         errors=errors,
     )
 
@@ -2202,6 +2283,7 @@ def run_policy_simulation(
     ccr2_enabled: bool = True,
     allowance_banking_enabled: bool = True,
     control_period_years: int | None = None,
+    carbon_cap_regions: Iterable[int | str] | None = None,
     dispatch_use_network: bool = False,
     module_config: Mapping[str, Any] | None = None,
     frames: FramesType | Mapping[str, pd.DataFrame] | None = None,
@@ -2228,6 +2310,28 @@ def run_policy_simulation(
                 merged_modules[str(name)] = {"value": settings}
 
     carbon_record = merged_modules.setdefault("carbon_policy", {})
+
+    def _normalize_region_values(values: Iterable[int | str]) -> list[int | str]:
+        normalized: list[int | str] = []
+        for entry in values:
+            candidate: int | str
+            if isinstance(entry, bool):
+                candidate = int(entry)
+            elif isinstance(entry, (int, float)) and not isinstance(entry, bool):
+                candidate = int(entry)
+            else:
+                text = str(entry).strip()
+                if not text:
+                    candidate = "default"
+                else:
+                    try:
+                        candidate = int(text)
+                    except (TypeError, ValueError):
+                        candidate = text
+            if candidate not in normalized:
+                normalized.append(candidate)
+        return normalized
+
     carbon_record.update(
         {
             "enabled": bool(carbon_policy_enabled),
@@ -2239,6 +2343,153 @@ def run_policy_simulation(
             "control_period_years": control_period_years,
         }
     )
+
+    configured_regions: list[int | str] = []
+    existing_regions = carbon_record.get("regions")
+    if isinstance(existing_regions, (list, tuple, set)):
+        configured_regions.extend(_normalize_region_values(existing_regions))
+    elif existing_regions not in (None, ""):
+        configured_regions.extend(_normalize_region_values([existing_regions]))
+
+    if carbon_cap_regions is not None:
+        configured_regions = _normalize_region_values(carbon_cap_regions)
+
+    if not configured_regions:
+        configured_regions = _normalize_region_values(_regions_from_config(config))
+
+    carbon_record["regions"] = list(configured_regions)
+
+    cap_groups = config.get("carbon_cap_groups")
+    if isinstance(cap_groups, list) and configured_regions:
+        updated_groups: list[Any] = []
+        for group in cap_groups:
+            if isinstance(group, Mapping):
+                updated = dict(group)
+                updated["regions"] = list(configured_regions)
+                updated_groups.append(updated)
+            else:
+                updated_groups.append(group)
+        config["carbon_cap_groups"] = updated_groups
+
+    years_from_config = _years_from_config(config)
+    try:
+        selected_years = _select_years(years_from_config, start_year, end_year)
+    except Exception:
+        selected_years = list(years_from_config)
+
+    if not selected_years:
+        fallback_years: list[int] = []
+        for candidate in (start_year, end_year):
+            if candidate is not None:
+                try:
+                    fallback_years.append(int(candidate))
+                except (TypeError, ValueError):
+                    continue
+        if not fallback_years:
+            fallback_years = list(years_from_config)
+        if not fallback_years:
+            fallback_years = [2025]
+        selected_years = sorted({int(year) for year in fallback_years})
+
+    policy_enabled = bool(carbon_record.get("enabled", True))
+    banking_enabled = bool(carbon_record.get("allowance_banking_enabled", True))
+
+    if frames is None:
+        frames_for_run = _build_default_frames(
+            selected_years,
+            carbon_policy_enabled=policy_enabled,
+            banking_enabled=banking_enabled,
+        )
+    else:
+        try:
+            frames_for_run = Frames.coerce(
+                frames,
+                carbon_policy_enabled=policy_enabled,
+                banking_enabled=banking_enabled,
+            )
+        except Exception as exc:
+            return {"error": str(exc)}
+        try:
+            frames_for_run = _ensure_years_in_demand(frames_for_run, selected_years)
+        except Exception as exc:
+            return {"error": str(exc)}
+
+    try:
+        policy_frame = _build_policy_frame(
+            config,
+            selected_years,
+            policy_enabled,
+            ccr1_enabled=carbon_record.get("ccr1_enabled"),
+            ccr2_enabled=carbon_record.get("ccr2_enabled"),
+            control_period_years=carbon_record.get("control_period_years"),
+            banking_enabled=banking_enabled,
+        )
+    except Exception as exc:
+        return {"error": str(exc)}
+
+    frames_for_run = frames_for_run.with_frame("policy", policy_frame)
+
+    dispatch_record = merged_modules.setdefault("electricity_dispatch", {})
+    dispatch_enabled = bool(dispatch_record.get("enabled", False))
+    dispatch_mode_raw = dispatch_record.get("mode", "network" if dispatch_use_network else "single")
+    dispatch_mode = str(dispatch_mode_raw or "single").lower()
+    use_network = bool(
+        dispatch_use_network
+        or (dispatch_enabled and dispatch_mode == "network")
+    )
+    dispatch_record["enabled"] = dispatch_enabled
+    dispatch_record["mode"] = "network" if use_network else (dispatch_mode or "single")
+    dispatch_record["use_network"] = use_network
+    dispatch_record["capacity_expansion"] = bool(
+        dispatch_record.get("capacity_expansion", True)
+    )
+    dispatch_record["reserve_margins"] = bool(
+        dispatch_record.get("reserve_margins", True)
+    )
+
+    assumption_notes_list = [str(note) for note in (assumption_notes or [])]
+
+    try:
+        runner = _ensure_engine_runner()
+    except ModuleNotFoundError as exc:
+        return {"error": str(exc)}
+
+    try:
+        outputs = runner(
+            frames_for_run,
+            years=selected_years,
+            enable_floor=bool(carbon_record.get("enable_floor", True)),
+            enable_ccr=bool(carbon_record.get("enable_ccr", True)),
+            use_network=use_network,
+            progress_cb=progress_cb,
+        )
+    except Exception as exc:  # pragma: no cover - defensive guard
+        LOGGER.exception("Policy simulation failed")
+        return {"error": str(exc)}
+
+    try:
+        temp_dir, csv_files = _write_outputs_to_temp(outputs)
+    except Exception as exc:  # pragma: no cover - defensive guard
+        LOGGER.exception("Failed to write CSV outputs")
+        return {"error": str(exc)}
+
+    documentation = {
+        "assumption_overrides": assumption_notes_list,
+    }
+
+    result: dict[str, Any] = {
+        "annual": outputs.annual,
+        "emissions_by_region": outputs.emissions_by_region,
+        "price_by_region": outputs.price_by_region,
+        "flows": outputs.flows,
+        "module_config": copy.deepcopy(merged_modules),
+        "csv_files": csv_files,
+        "temp_dir": str(temp_dir),
+        "documentation": documentation,
+    }
+
+    return result
+
 
 def _extract_result_frame(
     result: Mapping[str, Any],
@@ -2544,6 +2795,7 @@ def main() -> None:
         ccr2_enabled=False,
         banking_enabled=False,
         control_period_years=None,
+        regions=[],
     )
     dispatch_settings = DispatchModuleSettings(
         enabled=False,
@@ -2760,6 +3012,7 @@ def main() -> None:
                 'ccr2_enabled': bool(carbon_settings.ccr2_enabled),
                 'allowance_banking_enabled': bool(carbon_settings.banking_enabled),
                 'control_period_years': carbon_settings.control_period_years,
+                'carbon_cap_regions': list(carbon_settings.regions),
                 'dispatch_use_network': bool(
                     dispatch_settings.enabled and dispatch_settings.mode == 'network'
                 ),
@@ -2889,6 +3142,9 @@ def main() -> None:
                 ),
                 control_period_years=inputs_for_run.get(
                     'control_period_years', carbon_settings.control_period_years
+                ),
+                carbon_cap_regions=inputs_for_run.get(
+                    'carbon_cap_regions', carbon_settings.regions
                 ),
                 dispatch_use_network=bool(
                     inputs_for_run.get('dispatch_use_network', dispatch_use_network)

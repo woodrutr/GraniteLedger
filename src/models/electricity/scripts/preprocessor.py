@@ -197,7 +197,7 @@ def _build_transmission_frame(tranlimit_df: pd.DataFrame | None) -> pd.DataFrame
 
 
 def _default_coverage_frame(setin) -> pd.DataFrame:
-    """Return a coverage frame marking all configured regions as uncovered."""
+    """Return a coverage frame marking all configured regions as covered."""
 
     _ensure_pandas()
 
@@ -209,7 +209,7 @@ def _default_coverage_frame(setin) -> pd.DataFrame:
         {
             'region': regions,
             'year': [-1] * len(regions),
-            'covered': [False] * len(regions),
+            'covered': [True] * len(regions),
         }
     )
 
