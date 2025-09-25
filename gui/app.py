@@ -971,7 +971,7 @@ def render_carbon_module_controls(
     # -------------------------
     # Coverage / Regions
     # -------------------------
-    coverage_labels: list[str] = []
+    coverage_labels: set[str] = set()
 
     def _register_coverage_value(candidate: Any) -> None:
         if candidate is None:
@@ -991,8 +991,7 @@ def render_carbon_module_controls(
         label = canonical_region_label(value)
         if not label:
             return
-        if label not in coverage_labels:
-            coverage_labels.append(label)
+        coverage_labels.add(label)
 
     if region_options is not None:
         for entry in region_options:
@@ -1001,12 +1000,12 @@ def render_carbon_module_controls(
     for entry in coverage_default:
         _register_coverage_value(entry)
 
-    if not coverage_labels:
-        coverage_labels = ["default"]
+    if coverage_labels:
+        coverage_labels_display = sorted(coverage_labels, key=str)
     else:
-        coverage_labels = sorted(coverage_labels, key=str)
+        coverage_labels_display = ["default"]
 
-    coverage_choices = [_ALL_REGIONS_LABEL] + coverage_labels
+    coverage_choices = [_ALL_REGIONS_LABEL] + coverage_labels_display
 
     def _canonical_coverage_label(entry: Any) -> str:
         if entry is None:
