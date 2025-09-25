@@ -304,14 +304,26 @@ class CarbonPriceConfig:
         price_raw = value if value is not None else record.get('price_per_ton', record.get('price', 0.0))
         price_value = _coerce_float(price_raw, default=0.0)
 
-        schedule_map = _normalize_price_schedule(record.get('price_schedule'))
-        if schedule is not None:
-            schedule_map.update(_normalize_price_schedule(schedule))
+        schedule_map = _merge_price_schedules(
+            record.get('price_schedule'),
+            schedule,
+        )
 
         if not schedule_map and price_value and years:
-            schedule_map = {int(year): float(price_value) for year in years}
-        else:
-            schedule_map = {int(year): float(val) for year, val in schedule_map.items()}
+            normalized_years: list[int] = []
+            for year in years:
+                try:
+                    normalized_years.append(int(year))
+                except (TypeError, ValueError):
+                    continue
+            if normalized_years:
+                schedule_map = {
+                    year: float(price_value)
+                    for year in sorted(set(normalized_years))
+                }
+
+        if schedule_map:
+            schedule_map = dict(sorted(schedule_map.items()))
 
         config = cls(
             enabled=bool(enabled_val),
@@ -352,16 +364,45 @@ def _sanitize_control_period(value: Any) -> int | None:
 def _normalize_price_schedule(value: Any) -> dict[int, float]:
     """Return a normalized mapping of year to carbon price."""
 
-    schedule: dict[int, float] = {}
-    if isinstance(value, Mapping):
-        for key, raw in value.items():
-            try:
-                year = int(key)
-                price = float(raw)
-            except (TypeError, ValueError):
-                continue
-            schedule[year] = price
-    return schedule
+    if not isinstance(value, Mapping):
+        return {}
+
+    entries: list[tuple[int, float]] = []
+    for key, raw in value.items():
+        if raw in (None, ""):
+            continue
+        try:
+            year = int(key)
+        except (TypeError, ValueError):
+            continue
+        try:
+            price = float(raw)
+        except (TypeError, ValueError):
+            continue
+        entries.append((year, price))
+
+    if not entries:
+        return {}
+
+    entries.sort(key=lambda item: item[0])
+    return {year: price for year, price in entries}
+
+
+def _merge_price_schedules(
+    *values: Mapping[int, float] | Mapping[str, Any] | None,
+) -> dict[int, float]:
+    """Combine candidate schedules, returning a sorted ``{year: price}`` mapping."""
+
+    merged: dict[int, float] = {}
+    for candidate in values:
+        if not isinstance(candidate, Mapping):
+            continue
+        merged.update(_normalize_price_schedule(candidate))
+
+    if not merged:
+        return {}
+
+    return dict(sorted(merged.items()))
 
 
 def _merge_module_dicts(*sections: Mapping[str, Any] | None) -> dict[str, dict[str, Any]]:
@@ -963,7 +1004,7 @@ def render_carbon_module_controls(
     price_enabled_default = bool(price_defaults.get("enabled", False))
     price_value_raw = price_defaults.get("price_per_ton", price_defaults.get("price", 0.0))
     price_default = _coerce_float(price_value_raw, default=0.0)
-    price_schedule_default = _normalize_price_schedule(price_defaults.get("price_schedule"))
+    price_schedule_default = _merge_price_schedules(price_defaults.get("price_schedule"))
 
     # Normalize region labels
     region_labels: list[str] = []
@@ -1013,7 +1054,6 @@ def build_carbon_policy_ui(
     price_enabled_default = bool(price_defaults.get("enabled", False))
     price_value_raw = price_defaults.get("price_per_ton", price_defaults.get("price", 0.0))
     price_default = _coerce_float(price_value_raw, default=0.0)
-    price_schedule_default = _normalize_price_schedule(price_defaults.get("price_schedule"))
 
     bank_value_default = bank_default
     if st is not None:  # pragma: no cover - UI path
@@ -1159,7 +1199,7 @@ def build_carbon_policy_ui(
             key="carbon_price_value",
             disabled=not price_enabled,
         )
-        price_schedule = dict(price_schedule_default) if price_enabled else {}
+        price_schedule = price_schedule_default.copy() if price_enabled else {}
 
     # -------------------------
     # Errors and Return
