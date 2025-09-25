@@ -27,19 +27,20 @@ import pandas as pd
 # -------------------------
 try:
     import tomllib
-except ModuleNotFoundError:  # pragma: no cover - Python < 3.11 fallback
+except ModuleNotFoundError:  # Python < 3.11 fallback
     try:
         import tomli as tomllib  # type: ignore[import-not-found]
-    except ModuleNotFoundError as exc:  # pragma: no cover - dependency missing
+    except ModuleNotFoundError as exc:
         raise ModuleNotFoundError(
             "Python 3.11+ or the tomli package is required to read TOML configuration files."
         ) from exc
 
 try:
     from main.definitions import PROJECT_ROOT
-except ModuleNotFoundError:  # pragma: no cover - fallback for packaged app execution
+except ModuleNotFoundError:  # fallback for packaged app execution
     PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
+# Region metadata helpers (robust to running as a script)
 try:
     from gui.region_metadata import (
         DEFAULT_REGION_METADATA,
@@ -48,17 +49,29 @@ try:
         region_alias_map,
         region_display_label,
     )
-except ModuleNotFoundError:  # pragma: no cover - fallback when run as a script
-    # ``python gui/app.py`` executes the file outside of the package context, so
-    # ``gui`` is not importable via normal absolute imports.  Import directly in
-    # that scenario so the module remains runnable without ``streamlit run``.
-    from region_metadata import (  # type: ignore[import-not-found]
-        DEFAULT_REGION_METADATA,
-        canonical_region_label,
-        canonical_region_value,
-        region_alias_map,
-        region_display_label,
-    )
+except ModuleNotFoundError:
+    try:
+        from region_metadata import (  # type: ignore[import-not-found]
+            DEFAULT_REGION_METADATA,
+            canonical_region_label,
+            canonical_region_value,
+            region_alias_map,
+            region_display_label,
+        )
+    except ModuleNotFoundError:
+        # Safe no-op fallbacks so the UI can still render
+        DEFAULT_REGION_METADATA = {}
+        region_alias_map = {}
+
+        def canonical_region_label(x: object) -> str:
+            return str(x)
+
+        def canonical_region_value(x: object):
+            return x
+
+        def region_display_label(x: object) -> str:
+            return str(x)
+
 
 if importlib.util.find_spec("streamlit") is not None:  # pragma: no cover - optional dependency
     import streamlit as st  # type: ignore[import-not-found]
@@ -159,40 +172,6 @@ SIDEBAR_STYLE = """
 """
 
 _download_directory_fallback_used = False
-
-@dataclass
-class GeneralConfigResult:
-    """Container for user-selected general configuration settings."""
-
-    config_label: str
-    config_source: Any
-    run_config: dict[str, Any]
-    candidate_years: list[int]
-    start_year: int
-    end_year: int
-    selected_years: list[int]
-    regions: list[int | str]
-
-
-@dataclass
-class CarbonModuleSettings:
-    """Record of carbon policy sidebar selections."""
-
-    enabled: bool
-    price_enabled: bool
-    enable_floor: bool
-    enable_ccr: bool
-    ccr1_enabled: bool
-    ccr2_enabled: bool
-    banking_enabled: bool
-    coverage_regions: list[str]
-    control_period_years: int | None
-    price_per_ton: float
-    initial_bank: float = 0.0
-    cap_regions: list[Any] = field(default_factory=list)
-    price_schedule: dict[int, float] = field(default_factory=dict)
-    errors: list[str] = field(default_factory=list)
-
 
 @dataclass
 class CarbonPolicyConfig:
@@ -395,38 +374,6 @@ def _merge_module_dicts(*sections: Mapping[str, Any] | None) -> dict[str, dict[s
             else:
                 merged[key] = {'value': settings}
     return merged
-
-
-@dataclass
-class DispatchModuleSettings:
-    """Record of electricity dispatch sidebar selections."""
-
-    enabled: bool
-    mode: str
-    capacity_expansion: bool
-    reserve_margins: bool
-    errors: list[str] = field(default_factory=list)
-
-
-@dataclass
-class IncentivesModuleSettings:
-    """Record of incentives sidebar selections."""
-
-    enabled: bool
-    production_credits: list[dict[str, Any]]
-    investment_credits: list[dict[str, Any]]
-    errors: list[str] = field(default_factory=list)
-
-
-@dataclass
-class OutputsModuleSettings:
-    """Record of outputs sidebar selections."""
-
-    enabled: bool
-    directory: str
-    resolved_path: Path
-    show_csv_downloads: bool
-    errors: list[str] = field(default_factory=list)
 
 
 # -------------------------
@@ -669,46 +616,6 @@ def _normalize_coverage_selection(selection: Any) -> list[str]:
         return ["All"]
     return normalized
 
-
-# -------------------------
-# Dataclasses
-# -------------------------
-@dataclass
-class GeneralConfigResult:
-    config_label: str
-    config_source: Any
-    run_config: dict[str, Any]
-    candidate_years: list[int]
-    start_year: int
-    end_year: int
-    selected_years: list[int]
-    regions: list[int | str]
-
-
-@dataclass
-class DispatchModuleSettings:
-    enabled: bool
-    mode: str
-    capacity_expansion: bool
-    reserve_margins: bool
-    errors: list[str] = field(default_factory=list)
-
-
-@dataclass
-class IncentivesModuleSettings:
-    enabled: bool
-    production_credits: list[dict[str, Any]]
-    investment_credits: list[dict[str, Any]]
-    errors: list[str] = field(default_factory=list)
-
-
-@dataclass
-class OutputsModuleSettings:
-    enabled: bool
-    directory: str
-    resolved_path: Path
-    show_csv_downloads: bool
-    errors: list[str] = field(default_factory=list)
 
 # General Config UI
 # -------------------------
@@ -962,89 +869,36 @@ def render_carbon_module_controls(
     control_override_default = control_default_raw is not None
 
     price_enabled_default = bool(price_defaults.get("enabled", False))
-    price_value_raw = price_defaults.get(
-        "price_per_ton", price_defaults.get("price", 0.0)
-    )
+    price_value_raw = price_defaults.get("price_per_ton", price_defaults.get("price", 0.0))
     price_default = _coerce_float(price_value_raw, default=0.0)
-    price_schedule_default = _normalize_price_schedule(
-        price_defaults.get("price_schedule")
-    )
+    price_schedule_default = _normalize_price_schedule(price_defaults.get("price_schedule"))
 
     # -------------------------
     # Coverage / Regions
     # -------------------------
-    coverage_labels: set[str] = set()
-
-    def _register_coverage_value(candidate: Any) -> None:
-        if candidate is None:
-            return
-        text = str(candidate).strip()
-        if not text:
-            return
-        lowered = text.lower()
-        if lowered in {"all", "all regions", _ALL_REGIONS_LABEL.lower()}:
-            return
-        resolved = canonical_region_value(candidate)
-        value: int | str
-        if isinstance(resolved, str):
-            value = resolved.strip() or "default"
-        else:
-            value = int(resolved)
-        label = canonical_region_label(value)
-        if not label:
-            return
-        coverage_labels.add(label)
-
-    # Always include the default 25-region dataset in the coverage options so the
-    # multiselect remains comprehensive even when the base configuration only
-    # lists a subset of regions.
-    for default_region in DEFAULT_REGION_METADATA:
-        _register_coverage_value(default_region)
-
+    region_labels: list[str] = []
     if region_options is not None:
         for entry in region_options:
-            _register_coverage_value(entry)
+            label = str(entry).strip() or "default"
+            if label not in region_labels:
+                region_labels.append(label)
+    if not region_labels:
+        region_labels = ["default"]
 
-    for entry in coverage_default:
-        _register_coverage_value(entry)
-
-    if coverage_labels:
-        coverage_labels_display = sorted(coverage_labels, key=str)
-    else:
-        coverage_labels_display = ["default"]
-
-    coverage_choices = [_ALL_REGIONS_LABEL] + coverage_labels_display
-
-    def _canonical_coverage_label(entry: Any) -> str:
-        if entry is None:
-            return ""
-        text = str(entry).strip()
-        if not text:
-            return ""
-        lowered = text.lower()
-        if lowered in {"all", "all regions", _ALL_REGIONS_LABEL.lower()}:
-            return _ALL_REGIONS_LABEL
-        label = canonical_region_label(entry)
-        return label
-
+    coverage_choices = [_ALL_REGIONS_LABEL] + sorted(region_labels, key=str)
     if coverage_default == ["All"]:
         coverage_default_display = [_ALL_REGIONS_LABEL]
     else:
-        default_labels = [
-            label
-            for label in (_canonical_coverage_label(entry) for entry in coverage_default)
-            if label and label in coverage_choices
-        ]
-        coverage_default_display = default_labels or [_ALL_REGIONS_LABEL]
+        coverage_default_display = [
+            label for label in coverage_default if label in coverage_choices
+        ] or [_ALL_REGIONS_LABEL]
 
     # -------------------------
     # Session State Sync
     # -------------------------
     bank_value_default = bank_default
     if st is not None:
-        bank_value_default = float(
-            st.session_state.setdefault("carbon_bank0", bank_default)
-        )
+        bank_value_default = float(st.session_state.setdefault("carbon_bank0", bank_default))
 
     def _mark_last_changed(key: str) -> None:
         try:
@@ -1058,12 +912,8 @@ def render_carbon_module_controls(
     last_changed = None
     if st is not None:
         last_changed = st.session_state.get("carbon_module_last_changed")
-        session_enabled_default = bool(
-            st.session_state.get("carbon_enable", enabled_default)
-        )
-        session_price_default = bool(
-            st.session_state.get("carbon_price_enable", price_enabled_default)
-        )
+        session_enabled_default = bool(st.session_state.get("carbon_enable", enabled_default))
+        session_price_default = bool(st.session_state.get("carbon_price_enable", price_enabled_default))
         if session_enabled_default and session_price_default:
             if last_changed == "cap":
                 session_price_default = False
@@ -1073,7 +923,7 @@ def render_carbon_module_controls(
             st.session_state["carbon_price_enable"] = session_price_default
 
     # -------------------------
-    # Cap vs Price mutual exclusion toggles
+    # Cap vs Price toggles (mutually exclusive)
     # -------------------------
     enabled = container.toggle(
         "Enable carbon cap",
@@ -1160,9 +1010,7 @@ def render_carbon_module_controls(
             disabled=not (enabled and control_override),
         )
         control_period_years = (
-            _sanitize_control_period(control_period_value)
-            if enabled and control_override
-            else None
+            _sanitize_control_period(control_period_value) if enabled and control_override else None
         )
 
         coverage_selection_raw = cap_panel.multiselect(
@@ -1217,6 +1065,7 @@ def render_carbon_module_controls(
         price_schedule=price_schedule,
         errors=errors,
     )
+
 
 
 # -------------------------
@@ -4065,8 +3914,10 @@ def main() -> None:
         'ccr1_enabled': bool(carbon_settings.ccr1_enabled),
         'ccr2_enabled': bool(carbon_settings.ccr2_enabled),
         'allowance_banking_enabled': bool(carbon_settings.banking_enabled),
+        'coverage_regions': list(carbon_settings.coverage_regions),
         'initial_bank': float(carbon_settings.initial_bank),
         'control_period_years': carbon_settings.control_period_years,
+        'cap_regions': list(carbon_settings.cap_regions),
         'carbon_price_enabled': bool(carbon_settings.price_enabled),
         'carbon_price_value': float(carbon_settings.price_per_ton),
         'carbon_price_schedule': dict(carbon_settings.price_schedule),
@@ -4202,14 +4053,67 @@ def main() -> None:
             pending_run = None
             show_confirm_modal = False
 
-    pending_run_value = st.session_state.get('pending_run')
+    # -------------------------
+    # Pending run + confirm modal state
+    # -------------------------
+    pending_run_value = st.session_state.get("pending_run")
     pending_run = pending_run_value if isinstance(pending_run_value, Mapping) else None
-    show_confirm_modal = bool(st.session_state.get('show_confirm_modal'))
-    run_in_progress = bool(st.session_state.get('run_in_progress'))
+    show_confirm_modal = bool(st.session_state.get("show_confirm_modal"))
+    run_in_progress = bool(st.session_state.get("run_in_progress"))
 
+    # If there’s a pending run but no modal yet, open it
+    if isinstance(pending_run, Mapping) and not show_confirm_modal and not run_in_progress:
+        show_confirm_modal = True
+        st.session_state["show_confirm_modal"] = True
+
+    # Handle "Run Model" button click
+    if run_clicked:
+        if assumption_errors or module_errors:
+            st.error("Resolve the configuration issues above before running the simulation.")
+        else:
+            run_inputs_payload = copy.deepcopy(current_run_payload) or {
+                "config_source": copy.deepcopy(run_config),
+                "start_year": int(start_year_val),
+                "end_year": int(end_year_val),
+                "carbon_policy_enabled": bool(carbon_settings.enabled),
+                "enable_floor": bool(carbon_settings.enable_floor),
+                "enable_ccr": bool(carbon_settings.enable_ccr),
+                "ccr1_enabled": bool(carbon_settings.ccr1_enabled),
+                "ccr2_enabled": bool(carbon_settings.ccr2_enabled),
+                "allowance_banking_enabled": bool(carbon_settings.banking_enabled),
+                "initial_bank": float(carbon_settings.initial_bank),
+                "coverage_regions": list(carbon_settings.coverage_regions),
+                "control_period_years": carbon_settings.control_period_years,
+                "cap_regions": list(carbon_settings.cap_regions),
+                "carbon_price_enabled": bool(carbon_settings.price_enabled),
+                "carbon_price_value": float(carbon_settings.price_per_ton),
+                "carbon_price_schedule": dict(carbon_settings.price_schedule),
+                "dispatch_use_network": bool(
+                    dispatch_settings.enabled and dispatch_settings.mode == "network"
+                ),
+                "module_config": copy.deepcopy(run_config.get("modules", {})),
+            }
+
+            summary_builder = globals().get("_build_run_summary")
+            if callable(summary_builder):
+                summary_details = summary_builder(run_inputs_payload, config_label=config_label)
+            else:
+                summary_details = []
+
+            st.session_state["pending_run"] = {
+                "params": run_inputs_payload,
+                "summary": summary_details,
+            }
+            pending_run = st.session_state["pending_run"]
+            st.session_state["show_confirm_modal"] = True
+            show_confirm_modal = True
+
+    # Sync dispatch toggle
     dispatch_use_network = bool(
         dispatch_settings.enabled and dispatch_settings.mode == "network"
     )
+
+
 
     if run_inputs is not None:
         run_config = copy.deepcopy(run_inputs.get('config_source', run_config))
