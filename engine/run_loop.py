@@ -291,7 +291,7 @@ def _build_allowance_supply(
 
 
 def _solve_allowance_market_year(
-    dispatch_solver: Callable[[int, float], object],
+    dispatch_solver: Callable[[int, float, float], object],
     year: int,
     supply: AllowanceSupply,
     bank_prev: float,
@@ -304,6 +304,7 @@ def _solve_allowance_market_year(
     annual_surrender_frac: float,
     carry_pct: float,
     banking_enabled: bool,
+    carbon_price: float = 0.0,
     progress_cb: ProgressCallback | None = None,
 ) -> dict[str, object]:
     """Solve for the allowance clearing price for ``year`` using bisection.
@@ -381,7 +382,9 @@ def _solve_allowance_market_year(
 
     if not policy_enabled or not supply.enabled:
         clearing_price = 0.0
-        dispatch_result = dispatch_solver(year, clearing_price)
+        dispatch_result = dispatch_solver(
+            year, clearing_price, carbon_price=carbon_price
+        )
         emissions = _extract_emissions(dispatch_result)
         allowances = max(supply.available_allowances(clearing_price), emissions)
         ccr1_issued, ccr2_issued = _issued_quantities(clearing_price, allowances)
@@ -422,7 +425,7 @@ def _solve_allowance_market_year(
     low = max(0.0, float(min_price))
     high = max(low, high_price if high_price > 0.0 else low)
 
-    dispatch_low = dispatch_solver(year, low)
+    dispatch_low = dispatch_solver(year, low, carbon_price=carbon_price)
     emissions_low = _extract_emissions(dispatch_low)
     allowances_low = supply.available_allowances(low)
 
@@ -430,7 +433,9 @@ def _solve_allowance_market_year(
     if total_allowances_low >= emissions_low:
         clearing_price = supply.enforce_floor(low)
         if clearing_price != low:
-            dispatch_low = dispatch_solver(year, clearing_price)
+            dispatch_low = dispatch_solver(
+                year, clearing_price, carbon_price=carbon_price
+            )
             emissions_low = _extract_emissions(dispatch_low)
             allowances_low = supply.available_allowances(clearing_price)
             total_allowances_low = bank_prev + allowances_low
@@ -471,14 +476,16 @@ def _solve_allowance_market_year(
         }
         return _finalize(result)
 
-    dispatch_high = dispatch_solver(year, high)
+    dispatch_high = dispatch_solver(year, high, carbon_price=carbon_price)
     emissions_high = _extract_emissions(dispatch_high)
     allowances_high = supply.available_allowances(high)
 
     if bank_prev + allowances_high < emissions_high - tol:
         clearing_price = supply.enforce_floor(high)
         if clearing_price != high:
-            dispatch_high = dispatch_solver(year, clearing_price)
+            dispatch_high = dispatch_solver(
+                year, clearing_price, carbon_price=carbon_price
+            )
             emissions_high = _extract_emissions(dispatch_high)
             allowances_high = supply.available_allowances(clearing_price)
         total_allowances_high = bank_prev + allowances_high
@@ -530,7 +537,7 @@ def _solve_allowance_market_year(
 
     for iteration in range(1, max_iter_int + 1):
         mid = 0.5 * (low_bound + high_bound)
-        dispatch_mid = dispatch_solver(year, mid)
+        dispatch_mid = dispatch_solver(year, mid, carbon_price=carbon_price)
         emissions_mid = _extract_emissions(dispatch_mid)
         allowances_mid = supply.available_allowances(mid)
         total_allowances_mid = bank_prev + allowances_mid
@@ -558,7 +565,9 @@ def _solve_allowance_market_year(
 
     clearing_price = supply.enforce_floor(best_price)
     if clearing_price != best_price:
-        best_dispatch = dispatch_solver(year, clearing_price)
+        best_dispatch = dispatch_solver(
+            year, clearing_price, carbon_price=carbon_price
+        )
         best_emissions = _extract_emissions(best_dispatch)
         best_allowances = supply.available_allowances(clearing_price)
     total_allowances = bank_prev + best_allowances
@@ -714,7 +723,8 @@ def _dispatch_from_frames(
     | Mapping[str, Any]
     | float
     | None = None,
-) -> Callable[[Any, float], object]:
+) -> Callable[[Any, float, float], object]:
+
     """Build a dispatch callback that solves using the frame container."""
 
     _ensure_pandas()
@@ -790,9 +800,26 @@ def _dispatch_from_frames(
             )
         return result
 
+def _dispatch_from_frames(
+    frames: Frames | Mapping[str, pd.DataFrame],
+    *,
+    use_network: bool = False,
+    period_weights: Mapping[Any, float] | None = None,
+    carbon_price_schedule: Mapping[int, float]
+    | Mapping[str, Any]
+    | float
+    | None = None,
+) -> Callable[[Any, float], object]:
+    """
+    Build a dispatch function from Frames that accounts for allowance costs
+    and optional carbon price schedules.
+    """
+
+    # Lookup table for carbon prices by year (or default None key)
     schedule_lookup: dict[int | None, float] = {}
 
     def _ingest_schedule(payload: Mapping[Any, Any] | float | None) -> None:
+        """Load carbon price schedule into lookup dictionary."""
         if payload is None:
             return
         if isinstance(payload, Mapping):
@@ -811,10 +838,14 @@ def _dispatch_from_frames(
         except (TypeError, ValueError):
             return
 
-    _ingest_schedule(frames_obj.carbon_price_schedule)
+    # Support schedule provided in frames or directly as arg
+    frames_obj = frames if isinstance(frames, Frames) else None
+    if frames_obj is not None and hasattr(frames_obj, "carbon_price_schedule"):
+        _ingest_schedule(frames_obj.carbon_price_schedule)
     _ingest_schedule(carbon_price_schedule)
 
     def _price_for(period: Any) -> float:
+        """Resolve carbon price for given year/period."""
         if not schedule_lookup:
             return 0.0
         try:
@@ -830,11 +861,31 @@ def _dispatch_from_frames(
             return float(schedule_lookup[None])
         return 0.0
 
+    def _weight_for(period: Any) -> float:
+        """Get period weight, default = 1.0."""
+        if not period_weights:
+            return 1.0
+        return float(period_weights.get(period, 1.0))
+
+    def _scaled_frames(period: Any, weight: float) -> Frames:
+        """Apply scaling to frames for weighted runs."""
+        return frames.scale(weight) if hasattr(frames, "scale") else frames
+
+    def _scale_result(result: Any, weight: float) -> Any:
+        """Scale results back down if weighting applied."""
+        if weight == 1.0:
+            return result
+        if hasattr(result, "scale"):
+            return result.scale(1.0 / weight)
+        return result
+
     def dispatch(year: Any, allowance_cost: float):
+        """Dispatch solver with combined allowance + carbon price."""
         weight = _weight_for(year)
         frames_for_year = _scaled_frames(year, weight)
         carbon_adder = _price_for(year)
         effective_allowance_cost = float(allowance_cost) + carbon_adder
+
         if use_network:
             raw_result = solve_network_from_frames(
                 frames_for_year, year, effective_allowance_cost
@@ -843,6 +894,7 @@ def _dispatch_from_frames(
             raw_result = solve_single(
                 year, effective_allowance_cost, frames=frames_for_year
             )
+
         return _scale_result(raw_result, weight)
 
     return dispatch
@@ -879,7 +931,9 @@ def run_fixed_point_from_frames(
     )
 
     def dispatch_model(year: int, allowance_cost: float) -> float:
-        return _extract_emissions(dispatch_solver(year, allowance_cost))
+        return _extract_emissions(
+            dispatch_solver(year, allowance_cost, carbon_price=0.0)
+        )
 
     return run_annual_fixed_point(
         policy,
@@ -895,7 +949,7 @@ def run_fixed_point_from_frames(
 def _build_engine_outputs(
     years: Sequence[Any],
     raw_results: Mapping[Any, Mapping[str, object]],
-    dispatch_solver: Callable[[Any, float], object],
+    dispatch_solver: Callable[..., object],
     policy: RGGIPolicyAnnual,
 ) -> EngineOutputs:
     """Convert fixed-point results into structured engine outputs."""
@@ -912,7 +966,7 @@ def _build_engine_outputs(
         price = float(summary.get("p_co2", 0.0))
         dispatch_result = summary.pop("_dispatch_result", None)
         if dispatch_result is None:
-            dispatch_result = dispatch_solver(period, price)
+            dispatch_result = dispatch_solver(period, price, carbon_price=0.0)
         emissions_total = float(summary.get("emissions", _extract_emissions(dispatch_result)))
 
         compliance_year = getattr(policy, "compliance_year_for", None)
@@ -1201,13 +1255,16 @@ def run_end_to_end_from_frames(
                 },
             )
 
+        carbon_price_value = _price_for_year(year)
+
         if not policy_enabled_global:
-            price = _price_for_year(year)
-            dispatch_result = dispatch_solver(year, price)
+            dispatch_result = dispatch_solver(
+                year, 0.0, carbon_price=carbon_price_value
+            )
             emissions = _extract_emissions(dispatch_result)
             summary_disabled: dict[str, object] = {
                 'year': year,
-                'p_co2': float(price),
+                'p_co2': float(carbon_price_value),
                 'available_allowances': float(emissions),
                 'allowances_total': float(emissions),
                 'bank_prev': 0.0,
@@ -1237,7 +1294,7 @@ def run_end_to_end_from_frames(
                         "index": idx,
                         "total_years": total_years,
                         "shortage": False,
-                        "price": float(price),
+                        "price": float(carbon_price_value),
                         "iterations": 0,
                     },
                 )
@@ -1305,6 +1362,7 @@ def run_end_to_end_from_frames(
             annual_surrender_frac=surrender_frac,
             carry_pct=carry_pct,
             banking_enabled=banking_enabled_year,
+            carbon_price=carbon_price_value,
             progress_cb=progress_cb,
         )
 
