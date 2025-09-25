@@ -11,13 +11,13 @@ import importlib.util
 import logging
 import re
 import shutil
+import sys
 import tempfile
 from collections.abc import Iterable, Mapping
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable, TypeVar
-import sys
 
 import pandas as pd
 
@@ -53,9 +53,6 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when root not on sys.
     from io_loader import Frames
 
 FramesType = Frames
-
-from pathlib import Path
-import logging
 
 LOGGER = logging.getLogger(__name__)
 
@@ -121,8 +118,6 @@ def _ensure_streamlit() -> None:
     if st is None:
         raise ModuleNotFoundError(STREAMLIT_REQUIRED_MESSAGE)
 
-
-LOGGER = logging.getLogger(__name__)
 
 DEFAULT_CONFIG_PATH = Path(PROJECT_ROOT, 'src', 'common', 'run_config.toml')
 _DEFAULT_LOAD_MWH = 1_000_000.0
