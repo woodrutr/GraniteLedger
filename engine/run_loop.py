@@ -744,6 +744,47 @@ def _dispatch_from_frames(
             normalized = _normalize_progress_year(period)
             weights[normalized] = weight
 
+    schedule_lookup: dict[int | None, float] = {}
+
+    def _ingest_schedule(payload: Mapping[Any, Any] | float | None) -> None:
+        if payload is None:
+            return
+        if isinstance(payload, Mapping):
+            for key, value in payload.items():
+                try:
+                    year = int(key) if key is not None else None
+                except (TypeError, ValueError):
+                    continue
+                try:
+                    schedule_lookup[year] = float(value)
+                except (TypeError, ValueError):
+                    continue
+            return
+        try:
+            schedule_lookup[None] = float(payload)
+        except (TypeError, ValueError):
+            return
+
+    if hasattr(frames_obj, "carbon_price_schedule"):
+        _ingest_schedule(getattr(frames_obj, "carbon_price_schedule", None))
+    _ingest_schedule(carbon_price_schedule)
+
+    def _price_for(period: Any) -> float:
+        if not schedule_lookup:
+            return 0.0
+        try:
+            year_key = int(period)
+        except (TypeError, ValueError):
+            year_key = None
+        if year_key is not None and year_key in schedule_lookup:
+            return float(schedule_lookup[year_key])
+        normalized = _normalize_progress_year(period)
+        if isinstance(normalized, int) and normalized in schedule_lookup:
+            return float(schedule_lookup[normalized])
+        if None in schedule_lookup:
+            return float(schedule_lookup[None])
+        return 0.0
+
     def _weight_for(period: Any) -> float:
         weight = weights.get(period)
         if weight is not None:
@@ -751,13 +792,13 @@ def _dispatch_from_frames(
         normalized = _normalize_progress_year(period)
         return float(weights.get(normalized, 1.0))
 
-    def _scaled_frames(year: Any, weight: float) -> Frames:
+    def _scaled_frames(period: Any, weight: float) -> Frames:
         if abs(weight - 1.0) <= 1e-12:
             return frames_obj
         try:
-            normalized_year = int(year)
+            normalized_year = int(period)
         except (TypeError, ValueError):
-            normalized_year = year
+            normalized_year = period
         demand_df = frames_obj.demand()
         if 'year' not in demand_df.columns:
             return frames_obj
@@ -800,91 +841,20 @@ def _dispatch_from_frames(
             )
         return result
 
-def _dispatch_from_frames(
-    frames: Frames | Mapping[str, pd.DataFrame],
-    *,
-    use_network: bool = False,
-    period_weights: Mapping[Any, float] | None = None,
-    carbon_price_schedule: Mapping[int, float]
-    | Mapping[str, Any]
-    | float
-    | None = None,
-) -> Callable[[Any, float], object]:
-    """
-    Build a dispatch function from Frames that accounts for allowance costs
-    and optional carbon price schedules.
-    """
-
-    # Lookup table for carbon prices by year (or default None key)
-    schedule_lookup: dict[int | None, float] = {}
-
-    def _ingest_schedule(payload: Mapping[Any, Any] | float | None) -> None:
-        """Load carbon price schedule into lookup dictionary."""
-        if payload is None:
-            return
-        if isinstance(payload, Mapping):
-            for key, value in payload.items():
-                try:
-                    year = int(key) if key is not None else None
-                except (TypeError, ValueError):
-                    continue
-                try:
-                    schedule_lookup[year] = float(value)
-                except (TypeError, ValueError):
-                    continue
-            return
-        try:
-            schedule_lookup[None] = float(payload)
-        except (TypeError, ValueError):
-            return
-
-    # Support schedule provided in frames or directly as arg
-    frames_obj = frames if isinstance(frames, Frames) else None
-    if frames_obj is not None and hasattr(frames_obj, "carbon_price_schedule"):
-        _ingest_schedule(frames_obj.carbon_price_schedule)
-    _ingest_schedule(carbon_price_schedule)
-
-    def _price_for(period: Any) -> float:
-        """Resolve carbon price for given year/period."""
-        if not schedule_lookup:
+    def _normalize_extra_price(value: float | None) -> float:
+        if value in (None, ""):
             return 0.0
         try:
-            year_key = int(period)
+            return float(value)
         except (TypeError, ValueError):
-            year_key = None
-        if year_key is not None and year_key in schedule_lookup:
-            return float(schedule_lookup[year_key])
-        normalized = _normalize_progress_year(period)
-        if isinstance(normalized, int) and normalized in schedule_lookup:
-            return float(schedule_lookup[normalized])
-        if None in schedule_lookup:
-            return float(schedule_lookup[None])
-        return 0.0
+            return 0.0
 
-    def _weight_for(period: Any) -> float:
-        """Get period weight, default = 1.0."""
-        if not period_weights:
-            return 1.0
-        return float(period_weights.get(period, 1.0))
-
-    def _scaled_frames(period: Any, weight: float) -> Frames:
-        """Apply scaling to frames for weighted runs."""
-        return frames.scale(weight) if hasattr(frames, "scale") else frames
-
-    def _scale_result(result: Any, weight: float) -> Any:
-        """Scale results back down if weighting applied."""
-        if weight == 1.0:
-            return result
-        if hasattr(result, "scale"):
-            return result.scale(1.0 / weight)
-        return result
-
-    def dispatch(year: Any, allowance_cost: float):
-        """Dispatch solver with combined allowance + carbon price."""
+    def dispatch(year: Any, allowance_cost: float, carbon_price: float | None = None):
         weight = _weight_for(year)
         frames_for_year = _scaled_frames(year, weight)
-        carbon_adder = _price_for(year)
-        effective_allowance_cost = float(allowance_cost) + carbon_adder
+        schedule_price = _price_for(year)
+        extra_price = _normalize_extra_price(carbon_price)
+        effective_allowance_cost = float(allowance_cost) + schedule_price + extra_price
 
         if use_network:
             raw_result = solve_network_from_frames(
