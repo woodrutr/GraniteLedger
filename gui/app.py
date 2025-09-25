@@ -152,8 +152,10 @@ class CarbonModuleSettings:
     ccr1_enabled: bool
     ccr2_enabled: bool
     banking_enabled: bool
+    coverage_regions: list[str]
     control_period_years: int | None
     price_per_ton: float
+    cap_regions: list[Any] = field(default_factory=list)
     price_schedule: dict[int, float] = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
 
@@ -644,20 +646,6 @@ class GeneralConfigResult:
     end_year: int
     selected_years: list[int]
     regions: list[int | str]
-
-
-@dataclass
-class CarbonModuleSettings:
-    enabled: bool
-    enable_floor: bool
-    enable_ccr: bool
-    ccr1_enabled: bool
-    ccr2_enabled: bool
-    banking_enabled: bool
-    coverage_regions: list[str]
-    control_period_years: int | None
-    cap_regions: list[Any] = field(default_factory=list)
-    errors: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -2981,16 +2969,31 @@ def run_policy_simulation(
         control_period_years=control_period_years,
     )
 
+    price_cfg = CarbonPriceConfig.from_mapping(
+        merged_modules.get("carbon_price"),
+        enabled=carbon_price_enabled,
+        value=carbon_price_value,
+        schedule=carbon_price_schedule,
+        years=years,
+    )
+
+    if price_cfg.active:
+        carbon_policy_cfg.disable_for_price()
+
     normalized_coverage = _normalize_coverage_selection(
         coverage_regions
         if coverage_regions is not None
         else merged_modules.get("carbon_policy", {}).get("coverage_regions", ["All"])
     )
 
-    policy_enabled = bool(carbon_policy_enabled)
-    floor_flag = bool(enable_floor and policy_enabled)
-    ccr_flag = bool(enable_ccr and policy_enabled)
-    banking_flag = bool(allowance_banking_enabled and policy_enabled)
+    policy_enabled = bool(carbon_policy_cfg.enabled)
+    floor_flag = bool(policy_enabled and carbon_policy_cfg.enable_floor)
+    ccr_flag = bool(
+        policy_enabled
+        and carbon_policy_cfg.enable_ccr
+        and (carbon_policy_cfg.ccr1_enabled or carbon_policy_cfg.ccr2_enabled)
+    )
+    banking_flag = bool(policy_enabled and carbon_policy_cfg.allowance_banking_enabled)
 
     carbon_record = merged_modules.setdefault("carbon_policy", {})
     carbon_record.update(
@@ -2998,13 +3001,17 @@ def run_policy_simulation(
             "enabled": policy_enabled,
             "enable_floor": floor_flag,
             "enable_ccr": ccr_flag,
-            "ccr1_enabled": bool(ccr1_enabled) if ccr_flag else False,
-            "ccr2_enabled": bool(ccr2_enabled) if ccr_flag else False,
+            "ccr1_enabled": bool(carbon_policy_cfg.ccr1_enabled) if ccr_flag else False,
+            "ccr2_enabled": bool(carbon_policy_cfg.ccr2_enabled) if ccr_flag else False,
             "allowance_banking_enabled": banking_flag,
             "coverage_regions": normalized_coverage,
-            "control_period_years": control_period_years if policy_enabled else None,
+            "control_period_years": (
+                carbon_policy_cfg.control_period_years if policy_enabled else None
+            ),
         }
     )
+
+    merged_modules["carbon_price"] = price_cfg.as_dict()
     normalized_regions: list[Any] = []
     if cap_regions is not None:
         seen_labels: set[str] = set()
@@ -3210,20 +3217,24 @@ def run_policy_simulation(
     frames_obj = frames_obj.with_frame('policy', policy_frame)
 
     runner = _ensure_engine_runner()
-    enable_floor_flag = bool(carbon_policy_enabled and enable_floor)
+    enable_floor_flag = bool(policy_enabled and carbon_policy_cfg.enable_floor)
     enable_ccr_flag = bool(
-        carbon_policy_enabled
-        and enable_ccr
-        and (ccr1_enabled or ccr2_enabled)
+        policy_enabled
+        and carbon_policy_cfg.enable_ccr
+        and (carbon_policy_cfg.ccr1_enabled or carbon_policy_cfg.ccr2_enabled)
     )
+    price_schedule_map = dict(price_cfg.schedule)
+    price_active = price_cfg.active
 
     try:
         outputs = runner(
             frames_obj,
             years=years,
+            price_initial=0.0,
             enable_floor=enable_floor_flag,
             enable_ccr=enable_ccr_flag,
             use_network=bool(dispatch_use_network),
+            carbon_price_schedule=price_schedule_map if price_active else None,
             progress_cb=progress_cb,
         )
     except Exception as exc:  # pragma: no cover - defensive guard
