@@ -719,12 +719,17 @@ def _dispatch_from_frames(
     *,
     use_network: bool = False,
     period_weights: Mapping[Any, float] | None = None,
+    carbon_price_schedule: Mapping[int, float]
+    | Mapping[str, Any]
+    | float
+    | None = None,
 ) -> Callable[[Any, float, float], object]:
+
     """Build a dispatch callback that solves using the frame container."""
 
     _ensure_pandas()
 
-    frames_obj = Frames.coerce(frames)
+    frames_obj = Frames.coerce(frames, carbon_price_schedule=carbon_price_schedule)
 
     weights: dict[object, float] = {}
     if period_weights:
@@ -795,23 +800,101 @@ def _dispatch_from_frames(
             )
         return result
 
-    def dispatch(year: Any, allowance_cost: float, carbon_price: float = 0.0):
+def _dispatch_from_frames(
+    frames: Frames | Mapping[str, pd.DataFrame],
+    *,
+    use_network: bool = False,
+    period_weights: Mapping[Any, float] | None = None,
+    carbon_price_schedule: Mapping[int, float]
+    | Mapping[str, Any]
+    | float
+    | None = None,
+) -> Callable[[Any, float], object]:
+    """
+    Build a dispatch function from Frames that accounts for allowance costs
+    and optional carbon price schedules.
+    """
+
+    # Lookup table for carbon prices by year (or default None key)
+    schedule_lookup: dict[int | None, float] = {}
+
+    def _ingest_schedule(payload: Mapping[Any, Any] | float | None) -> None:
+        """Load carbon price schedule into lookup dictionary."""
+        if payload is None:
+            return
+        if isinstance(payload, Mapping):
+            for key, value in payload.items():
+                try:
+                    year = int(key) if key is not None else None
+                except (TypeError, ValueError):
+                    continue
+                try:
+                    schedule_lookup[year] = float(value)
+                except (TypeError, ValueError):
+                    continue
+            return
+        try:
+            schedule_lookup[None] = float(payload)
+        except (TypeError, ValueError):
+            return
+
+    # Support schedule provided in frames or directly as arg
+    frames_obj = frames if isinstance(frames, Frames) else None
+    if frames_obj is not None and hasattr(frames_obj, "carbon_price_schedule"):
+        _ingest_schedule(frames_obj.carbon_price_schedule)
+    _ingest_schedule(carbon_price_schedule)
+
+    def _price_for(period: Any) -> float:
+        """Resolve carbon price for given year/period."""
+        if not schedule_lookup:
+            return 0.0
+        try:
+            year_key = int(period)
+        except (TypeError, ValueError):
+            year_key = None
+        if year_key is not None and year_key in schedule_lookup:
+            return float(schedule_lookup[year_key])
+        normalized = _normalize_progress_year(period)
+        if isinstance(normalized, int) and normalized in schedule_lookup:
+            return float(schedule_lookup[normalized])
+        if None in schedule_lookup:
+            return float(schedule_lookup[None])
+        return 0.0
+
+    def _weight_for(period: Any) -> float:
+        """Get period weight, default = 1.0."""
+        if not period_weights:
+            return 1.0
+        return float(period_weights.get(period, 1.0))
+
+    def _scaled_frames(period: Any, weight: float) -> Frames:
+        """Apply scaling to frames for weighted runs."""
+        return frames.scale(weight) if hasattr(frames, "scale") else frames
+
+    def _scale_result(result: Any, weight: float) -> Any:
+        """Scale results back down if weighting applied."""
+        if weight == 1.0:
+            return result
+        if hasattr(result, "scale"):
+            return result.scale(1.0 / weight)
+        return result
+
+    def dispatch(year: Any, allowance_cost: float):
+        """Dispatch solver with combined allowance + carbon price."""
         weight = _weight_for(year)
         frames_for_year = _scaled_frames(year, weight)
+        carbon_adder = _price_for(year)
+        effective_allowance_cost = float(allowance_cost) + carbon_adder
+
         if use_network:
             raw_result = solve_network_from_frames(
-                frames_for_year,
-                year,
-                allowance_cost,
-                carbon_price=carbon_price,
+                frames_for_year, year, effective_allowance_cost
             )
         else:
             raw_result = solve_single(
-                year,
-                allowance_cost,
-                frames=frames_for_year,
-                carbon_price=carbon_price,
+                year, effective_allowance_cost, frames=frames_for_year
             )
+
         return _scale_result(raw_result, weight)
 
     return dispatch
@@ -826,12 +909,16 @@ def run_fixed_point_from_frames(
     max_iter: int = 25,
     relaxation: float = 0.5,
     use_network: bool = False,
+    carbon_price_schedule: Mapping[int, float]
+    | Mapping[str, Any]
+    | float
+    | None = None,
 ) -> dict[int, dict]:
     """Run the annual fixed-point integration using in-memory frames."""
 
     _ensure_pandas()
 
-    frames_obj = Frames.coerce(frames)
+    frames_obj = Frames.coerce(frames, carbon_price_schedule=carbon_price_schedule)
     policy_spec = frames_obj.policy()
     policy = policy_spec.to_policy()
     years_sequence = _coerce_years(policy, years)
@@ -840,6 +927,7 @@ def run_fixed_point_from_frames(
         frames_obj,
         use_network=use_network,
         period_weights=period_weights,
+        carbon_price_schedule=carbon_price_schedule,
     )
 
     def dispatch_model(year: int, allowance_cost: float) -> float:
@@ -1112,7 +1200,7 @@ def run_end_to_end_from_frames(
 
     _ensure_pandas()
 
-    frames_obj = Frames.coerce(frames)
+    frames_obj = Frames.coerce(frames, carbon_price_schedule=carbon_price_schedule)
     policy_spec = frames_obj.policy()
     policy = policy_spec.to_policy()
     years_sequence = _coerce_years(policy, years)
@@ -1121,6 +1209,7 @@ def run_end_to_end_from_frames(
         frames_obj,
         use_network=use_network,
         period_weights=period_weights,
+        carbon_price_schedule=carbon_price_schedule,
     )
     years_sequence = list(years_sequence)
     total_years = len(years_sequence)

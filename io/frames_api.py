@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from numbers import Integral, Real
-from typing import Dict, Iterable, Tuple
+from typing import Any, Dict, Iterable, Tuple
 
 import pandas as pd
 
@@ -33,6 +33,29 @@ def _ensure_dataframe(name: str, value: object) -> pd.DataFrame:
     if not isinstance(value, pd.DataFrame):
         raise TypeError(f'frame "{name}" must be provided as a pandas DataFrame')
     return value.copy(deep=True)
+
+
+def _normalize_carbon_price_schedule(
+    schedule: Mapping[Any, Any] | None,
+) -> Dict[int | None, float]:
+    """Normalise an optional carbon price schedule to use numeric keys."""
+
+    if not schedule:
+        return {}
+
+    normalized: Dict[int | None, float] = {}
+    for key, value in schedule.items():
+        try:
+            year = int(key) if key is not None else None
+        except (TypeError, ValueError):
+            continue
+        try:
+            price = float(value)
+        except (TypeError, ValueError):
+            continue
+        normalized[year] = price
+
+    return normalized
 
 
 def _validate_columns(frame: str, df: pd.DataFrame, required: Iterable[str]) -> pd.DataFrame:
@@ -148,12 +171,16 @@ class Frames(Mapping[str, pd.DataFrame]):
         *,
         carbon_policy_enabled: bool | None = None,
         banking_enabled: bool | None = None,
+        carbon_price_schedule: Mapping[Any, Any] | None = None,
     ):
         self._frames: Dict[str, pd.DataFrame] = {}
         self._carbon_policy_enabled = True if carbon_policy_enabled is None else bool(
             carbon_policy_enabled
         )
         self._banking_enabled = True if banking_enabled is None else bool(banking_enabled)
+        self._carbon_price_schedule: Dict[int | None, float] = _normalize_carbon_price_schedule(
+            carbon_price_schedule
+        )
         if frames:
             for name, df in frames.items():
                 key = _normalize_name(name)
@@ -184,6 +211,7 @@ class Frames(Mapping[str, pd.DataFrame]):
         *,
         carbon_policy_enabled: bool | None = None,
         banking_enabled: bool | None = None,
+        carbon_price_schedule: Mapping[Any, Any] | None = None,
     ) -> Frames:
         """Return ``frames`` as a :class:`Frames` instance."""
 
@@ -194,12 +222,17 @@ class Frames(Mapping[str, pd.DataFrame]):
                 frames._carbon_policy_enabled = bool(carbon_policy_enabled)
             if banking_enabled is not None:
                 frames._banking_enabled = bool(banking_enabled)
+            if carbon_price_schedule is not None:
+                frames._carbon_price_schedule = _normalize_carbon_price_schedule(
+                    carbon_price_schedule
+                )
             return frames
         if isinstance(frames, Mapping):
             return cls(
                 frames,
                 carbon_policy_enabled=carbon_policy_enabled,
                 banking_enabled=banking_enabled,
+                carbon_price_schedule=carbon_price_schedule,
             )
         raise TypeError('frames must be provided as Frames or a mapping of names to DataFrames')
 
@@ -212,6 +245,7 @@ class Frames(Mapping[str, pd.DataFrame]):
             updated,
             carbon_policy_enabled=self._carbon_policy_enabled,
             banking_enabled=self._banking_enabled,
+            carbon_price_schedule=self._carbon_price_schedule,
         )
 
     # ------------------------------------------------------------------
@@ -251,6 +285,12 @@ class Frames(Mapping[str, pd.DataFrame]):
         """Return the cached allowance banking enabled flag."""
 
         return bool(self._banking_enabled)
+
+    @property
+    def carbon_price_schedule(self) -> Dict[int | None, float]:
+        """Return a copy of the configured carbon price schedule."""
+
+        return dict(self._carbon_price_schedule)
 
     # ------------------------------------------------------------------
     # Accessors with schema validation
