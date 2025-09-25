@@ -1045,9 +1045,22 @@ def render_carbon_module_controls(
     control_override = container.toggle(
         "Override control period",
         value=control_override_default,
-        key="carbon_ctrl_override",
+        key="carbon_control_toggle",
     )
-    control_period_years = control_default if control_override else None
+    control_period_value = container.number_input(
+        "Control period length (years)",
+        min_value=1,
+        value=int(control_default if control_default > 0 else 3),
+        step=1,
+        format="%d",
+        key="carbon_control_years",
+        disabled=not (enabled and control_override),
+    )
+    control_period_years = (
+        _sanitize_control_period(control_period_value)
+        if enabled and control_override
+        else None
+    )
 
     price_per_ton = container.number_input("Carbon price ($/ton)", value=price_default, key="carbon_price_val")
     price_schedule = price_schedule_default
@@ -1115,7 +1128,7 @@ def render_carbon_module_controls(
             )
         )
         control_override = panel.checkbox(
-            "Specify control period length",
+            "Override control period",
             value=control_override_default,
             disabled=not enabled,
             key="carbon_control_toggle",
@@ -1196,7 +1209,11 @@ def render_carbon_module_controls(
         if enabled and not selected_cap_regions:
             selected_cap_regions = list(available_region_values)
 
-    control_period_years = int(control_period_value) if enabled and control_override else None
+    control_period_years = (
+        _sanitize_control_period(control_period_value)
+        if enabled and control_override
+        else None
+    )
     coverage_selection = coverage_selection_raw or coverage_default_display
     coverage_regions = _normalize_coverage_selection(coverage_selection)
     if not enabled:
