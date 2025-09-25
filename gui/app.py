@@ -4050,6 +4050,7 @@ def main() -> None:
             return
         st.session_state.pop("confirm_run", None)
         st.session_state.pop("cancel_run", None)
+
     dispatch_use_network = bool(
         dispatch_settings.enabled and dispatch_settings.mode == 'network'
     )
@@ -4073,16 +4074,52 @@ def main() -> None:
         'module_config': copy.deepcopy(run_config.get('modules', {})),
     }
 
-    if isinstance(pending_run, Mapping):
-        pending_params = pending_run.get('params')
-        if not isinstance(pending_params, Mapping) or pending_params != current_run_payload:
+    def _build_summary_from_payload(payload: Mapping[str, Any]) -> list[tuple[str, Any]]:
+        summary_builder = globals().get("_build_run_summary")
+        if callable(summary_builder):
+            try:
+                return summary_builder(payload, config_label=config_label)
+            except Exception:  # pragma: no cover - defensive guard
+                LOGGER.exception("Unable to build run summary")
+        return []
+
+    if run_clicked:
+        _clear_confirmation_button_state()
+        if assumption_errors or module_errors:
+            st.error(
+                "Resolve the configuration issues above before running the simulation."
+            )
             st.session_state.pop('pending_run', None)
+            st.session_state.pop('show_confirm_modal', None)
             pending_run = None
-            st.session_state['show_confirm_modal'] = False
             show_confirm_modal = False
-            _clear_confirmation_button_state()
+        else:
+            run_inputs_payload = copy.deepcopy(current_run_payload)
+            summary_details = _build_summary_from_payload(run_inputs_payload)
+            st.session_state['pending_run'] = {
+                'params': run_inputs_payload,
+                'summary': summary_details,
+            }
+            st.session_state['show_confirm_modal'] = True
+            pending_run = st.session_state['pending_run']
+            show_confirm_modal = True
+
+    pending_run_value = st.session_state.get('pending_run')
+    pending_run = pending_run_value if isinstance(pending_run_value, Mapping) else None
+    show_confirm_modal = bool(st.session_state.get('show_confirm_modal'))
+    run_in_progress = bool(st.session_state.get('run_in_progress'))
 
     if isinstance(pending_run, Mapping) and show_confirm_modal and not run_in_progress:
+        pending_params = pending_run.get('params') if isinstance(pending_run, Mapping) else None
+        if isinstance(pending_params, Mapping) and pending_params != current_run_payload:
+            updated_payload = copy.deepcopy(current_run_payload)
+            st.session_state['pending_run'] = {
+                'params': updated_payload,
+                'summary': _build_summary_from_payload(updated_payload),
+            }
+            pending_run = st.session_state['pending_run']
+            pending_params = pending_run.get('params') if isinstance(pending_run, Mapping) else None
+
         # -------------------------
         # Confirm Run Dialog Handling
         # -------------------------
@@ -4144,6 +4181,7 @@ def main() -> None:
         if cancel_clicked:
             st.session_state.pop("pending_run", None)
             st.session_state.pop("show_confirm_modal", None)
+            st.session_state.pop("confirmed_run_params", None)
             st.session_state["run_in_progress"] = False
             _clear_confirmation_button_state()
             pending_run = None
@@ -4151,7 +4189,6 @@ def main() -> None:
             run_in_progress = False
 
         elif confirm_clicked:
-            pending_params = pending_run.get("params") if isinstance(pending_run, Mapping) else None
             if isinstance(pending_params, Mapping):
                 run_inputs = dict(pending_params)
                 st.session_state["confirmed_run_params"] = run_inputs
@@ -4165,60 +4202,10 @@ def main() -> None:
             pending_run = None
             show_confirm_modal = False
 
-    # Refresh pending run reference after any confirm/cancel handling
-    pending_run_value = st.session_state.get("pending_run")
+    pending_run_value = st.session_state.get('pending_run')
     pending_run = pending_run_value if isinstance(pending_run_value, Mapping) else None
-    show_confirm_modal = bool(st.session_state.get("show_confirm_modal"))
-    run_in_progress = bool(st.session_state.get("run_in_progress"))
-
-    # Trigger showing modal if a run is pending
-    if isinstance(pending_run, Mapping) and not show_confirm_modal and not run_in_progress:
-        show_confirm_modal = True
-        st.session_state["show_confirm_modal"] = True
-
-    # Handle run click to build pending run payload
-    if run_clicked:
-        if assumption_errors or module_errors:
-            st.error(
-                "Resolve the configuration issues above before running the simulation."
-            )
-        else:
-            run_inputs_payload = copy.deepcopy(current_run_payload) or {
-                "config_source": copy.deepcopy(run_config),
-                "start_year": int(start_year_val),
-                "end_year": int(end_year_val),
-                "carbon_policy_enabled": bool(carbon_settings.enabled),
-                "enable_floor": bool(carbon_settings.enable_floor),
-                "enable_ccr": bool(carbon_settings.enable_ccr),
-                "ccr1_enabled": bool(carbon_settings.ccr1_enabled),
-                "ccr2_enabled": bool(carbon_settings.ccr2_enabled),
-                "allowance_banking_enabled": bool(carbon_settings.banking_enabled),
-                "coverage_regions": list(carbon_settings.coverage_regions),
-                "control_period_years": carbon_settings.control_period_years,
-                "carbon_price_enabled": bool(carbon_settings.price_enabled),
-                "carbon_price_value": float(carbon_settings.price_per_ton),
-                "carbon_price_schedule": dict(carbon_settings.price_schedule),
-                "dispatch_use_network": bool(
-                    dispatch_settings.enabled and dispatch_settings.mode == "network"
-                ),
-                "module_config": copy.deepcopy(run_config.get("modules", {})),
-            }
-
-            summary_builder = globals().get("_build_run_summary")
-            if callable(summary_builder):
-                summary_details = summary_builder(
-                    run_inputs_payload, config_label=config_label
-                )
-            else:  # defensive fallback
-                summary_details = []
-
-        st.session_state["pending_run"] = {
-            "params": run_inputs_payload,
-            "summary": summary_details,
-        }
-        pending_run = st.session_state["pending_run"]
-        st.session_state["show_confirm_modal"] = True
-        show_confirm_modal = True
+    show_confirm_modal = bool(st.session_state.get('show_confirm_modal'))
+    run_in_progress = bool(st.session_state.get('run_in_progress'))
 
     dispatch_use_network = bool(
         dispatch_settings.enabled and dispatch_settings.mode == "network"
