@@ -2247,6 +2247,7 @@ def _build_default_frames(
     *,
     carbon_policy_enabled: bool = True,
     banking_enabled: bool = True,
+    carbon_price_schedule: Mapping[int, float] | Mapping[str, Any] | None = None,
 ) -> FramesType:
     frames_cls = FramesType
     demand_records = [
@@ -2263,6 +2264,7 @@ def _build_default_frames(
         base_frames,
         carbon_policy_enabled=carbon_policy_enabled,
         banking_enabled=banking_enabled,
+        carbon_price_schedule=carbon_price_schedule,
     )
 
 
@@ -2990,6 +2992,10 @@ def run_policy_simulation(
     )
 
     merged_modules["carbon_price"] = price_cfg.as_dict()
+    price_schedule_map = {
+        int(year): float(value) for year, value in price_cfg.schedule.items()
+    }
+    price_active = bool(price_cfg.active and price_schedule_map)
     normalized_regions: list[Any] = []
     if cap_regions is not None:
         seen_labels: set[str] = set()
@@ -3048,17 +3054,23 @@ def run_policy_simulation(
     config["start_year"] = int(years[0])
     config["end_year"] = int(years[-1])
 
+    carbon_price_for_frames: Mapping[int, float] | None = (
+        price_schedule_map if price_active else None
+    )
+
     if frames is None:
         frames_obj = _build_default_frames(
             years,
             carbon_policy_enabled=bool(carbon_policy_enabled),
             banking_enabled=bool(allowance_banking_enabled),
+            carbon_price_schedule=carbon_price_for_frames,
         )
     else:
         frames_obj = Frames.coerce(
             frames,
             carbon_policy_enabled=bool(carbon_policy_enabled),
             banking_enabled=bool(allowance_banking_enabled),
+            carbon_price_schedule=carbon_price_for_frames,
         )
 
     try:
@@ -3067,100 +3079,110 @@ def run_policy_simulation(
         LOGGER.exception("Unable to normalise demand frame for requested years")
         return {"error": str(exc)}
 
-    if normalized_regions:
-        region_label_map: dict[str, Any] = {str(region): region for region in normalized_regions}
+    region_label_map: dict[str, Any] = {str(region): region for region in normalized_regions}
 
-        def _ingest_region_values(values: Sequence[Any] | pd.Series | None) -> None:
-            if values is None:
-                return
-            if isinstance(values, pd.Series):
-                iterable = values.dropna().unique()
-            else:
-                iterable = values
-            for value in iterable:
-                if value is None:
-                    continue
-                if pd.isna(value):
-                    continue
-                region_label_map.setdefault(str(value), value)
-
-        demand_region_labels: set[str] = set()
-        try:
-            demand_df = frames_obj.demand()
-        except Exception:
-            demand_df = None
-        if demand_df is not None and not demand_df.empty:
-            _ingest_region_values(demand_df["region"])
-            demand_region_labels = {str(region) for region in demand_df["region"].unique()}
-
-        existing_coverage_df: pd.DataFrame | None = None
-        for frame_name in ("units", "coverage"):
-            try:
-                frame_candidate = frames_obj.optional_frame(frame_name)
-            except Exception:
-                frame_candidate = None
-            if frame_candidate is not None and not frame_candidate.empty and "region" in frame_candidate.columns:
-                _ingest_region_values(frame_candidate["region"])
-                if frame_name == "coverage":
-                    existing_coverage_df = frame_candidate.copy()
-
-        if not demand_region_labels:
-            demand_region_labels = set(region_label_map)
-
-        normalized_existing: pd.DataFrame | None = None
-        existing_keys: set[tuple[str, int]] = set()
-        if existing_coverage_df is not None and not existing_coverage_df.empty:
-            normalized_existing = existing_coverage_df.copy()
-            if not isinstance(normalized_existing.index, pd.RangeIndex):
-                normalized_existing = normalized_existing.reset_index(drop=True)
-            index_names = getattr(normalized_existing.index, "names", None) or []
-            if "region" not in normalized_existing.columns and "region" in index_names:
-                normalized_existing = normalized_existing.reset_index()
-            if "region" not in normalized_existing.columns:
-                normalized_existing = normalized_existing.assign(region=pd.Series(dtype=object))
-            if "year" not in normalized_existing.columns:
-                normalized_existing = normalized_existing.assign(year=-1)
-            if "covered" not in normalized_existing.columns:
-                normalized_existing = normalized_existing.assign(covered=False)
-            normalized_existing = normalized_existing.loc[:, ["region", "year", "covered"]]
-            normalized_existing["year"] = pd.to_numeric(
-                normalized_existing["year"], errors="coerce"
-            ).fillna(-1).astype(int)
-            normalized_existing["covered"] = normalized_existing["covered"].astype(bool)
-            existing_keys = {
-                (str(region), int(year))
-                for region, year in zip(normalized_existing["region"], normalized_existing["year"])
-            }
-
-        coverage_records: list[dict[str, Any]] = []
-        selected_labels = {str(region) for region in normalized_regions}
-        for label in sorted({*demand_region_labels, *selected_labels, *region_label_map.keys()}):
-            key = (label, -1)
-            if key in existing_keys:
-                continue
-            region_value = region_label_map.get(label)
-            if region_value is None:
-                try:
-                    region_value = int(label)
-                except (TypeError, ValueError):
-                    region_value = label
-            coverage_records.append(
-                {
-                    "region": region_value,
-                    "year": -1,
-                    "covered": label in selected_labels,
-                }
-            )
-
-        if coverage_records:
-            coverage_df = pd.DataFrame(coverage_records, columns=["region", "year", "covered"])
+    def _ingest_region_values(values: Sequence[Any] | pd.Series | None) -> None:
+        if values is None:
+            return
+        if isinstance(values, pd.Series):
+            iterable = values.dropna().unique()
         else:
-            coverage_df = pd.DataFrame(columns=["region", "year", "covered"])
-        if normalized_existing is not None:
-            coverage_df = pd.concat([normalized_existing, coverage_df], ignore_index=True)
-        coverage_df = coverage_df.sort_values(["region", "year"]).reset_index(drop=True)
-        frames_obj = frames_obj.with_frame("coverage", coverage_df)
+            iterable = values
+        for value in iterable:
+            if value is None:
+                continue
+            if pd.isna(value):
+                continue
+            region_label_map.setdefault(str(value), value)
 
+    demand_region_labels: set[str] = set()
+    try:
+        demand_df = frames_obj.demand()
+    except Exception:
+        demand_df = None
+    if demand_df is not None and not demand_df.empty:
+        _ingest_region_values(demand_df["region"])
+        demand_region_labels = {str(region) for region in demand_df["region"].unique()}
+
+    existing_coverage_df: pd.DataFrame | None = None
+    for frame_name in ("units", "coverage"):
+        try:
+            frame_candidate = frames_obj.optional_frame(frame_name)
+        except Exception:
+            frame_candidate = None
+        if frame_candidate is not None and not frame_candidate.empty and "region" in frame_candidate.columns:
+            _ingest_region_values(frame_candidate["region"])
+            if frame_name == "coverage":
+                existing_coverage_df = frame_candidate.copy()
+
+    coverage_selection = list(normalized_coverage or [])
+    cover_all = coverage_selection == ["All"]
+    coverage_labels = (
+        {str(label) for label in coverage_selection if str(label) and str(label) != "All"}
+        if not cover_all
+        else set()
+    )
+    for label in coverage_labels:
+        region_label_map.setdefault(label, label)
+
+    if not demand_region_labels:
+        demand_region_labels = set(region_label_map) or set(coverage_labels)
+
+    normalized_existing: pd.DataFrame | None = None
+    existing_keys: set[tuple[str, int]] = set()
+    if existing_coverage_df is not None and not existing_coverage_df.empty:
+        normalized_existing = existing_coverage_df.copy()
+        if not isinstance(normalized_existing.index, pd.RangeIndex):
+            normalized_existing = normalized_existing.reset_index(drop=True)
+        index_names = getattr(normalized_existing.index, "names", None) or []
+        if "region" not in normalized_existing.columns and "region" in index_names:
+            normalized_existing = normalized_existing.reset_index()
+        if "region" not in normalized_existing.columns:
+            normalized_existing = normalized_existing.assign(region=pd.Series(dtype=object))
+        if "year" not in normalized_existing.columns:
+            normalized_existing = normalized_existing.assign(year=-1)
+        if "covered" not in normalized_existing.columns:
+            normalized_existing = normalized_existing.assign(covered=False)
+        normalized_existing = normalized_existing.loc[:, ["region", "year", "covered"]]
+        normalized_existing["year"] = pd.to_numeric(
+            normalized_existing["year"], errors="coerce"
+        ).fillna(-1).astype(int)
+        normalized_existing["covered"] = normalized_existing["covered"].astype(bool)
+        existing_keys = {
+            (str(region), int(year))
+            for region, year in zip(normalized_existing["region"], normalized_existing["year"])
+        }
+
+    coverage_records: list[dict[str, Any]] = []
+    label_candidates = {*demand_region_labels, *coverage_labels, *region_label_map.keys()}
+    for label in sorted(label_candidates):
+        key = (label, -1)
+        if key in existing_keys:
+            continue
+        region_value = region_label_map.get(label)
+        if region_value is None:
+            try:
+                region_value = int(label)
+            except (TypeError, ValueError):
+                region_value = label
+        coverage_records.append(
+            {
+                "region": region_value,
+                "year": -1,
+                "covered": True if cover_all else label in coverage_labels,
+            }
+        )
+
+    if coverage_records:
+        coverage_df = pd.DataFrame(coverage_records, columns=["region", "year", "covered"])
+    else:
+        coverage_df = pd.DataFrame(columns=["region", "year", "covered"])
+    if normalized_existing is not None:
+        coverage_df = pd.concat([normalized_existing, coverage_df], ignore_index=True)
+    coverage_df = coverage_df.sort_values(["region", "year"]).reset_index(drop=True)
+    frames_obj = frames_obj.with_frame("coverage", coverage_df)
+
+    if normalized_regions:
         config_regions = list(dict.fromkeys(list(config.get("regions", [])) + normalized_regions))
         config["regions"] = config_regions
 
@@ -3206,9 +3228,6 @@ def run_policy_simulation(
         and carbon_policy_cfg.enable_ccr
         and (carbon_policy_cfg.ccr1_enabled or carbon_policy_cfg.ccr2_enabled)
     )
-    price_schedule_map = dict(price_cfg.schedule)
-    price_active = price_cfg.active
-
     try:
         outputs = runner(
             frames_obj,
@@ -3853,6 +3872,9 @@ def main() -> None:
                     selected_years or [start_year_val],
                     carbon_policy_enabled=carbon_settings.enabled,
                     banking_enabled=carbon_settings.banking_enabled,
+                    carbon_price_schedule=(
+                        carbon_settings.price_schedule if carbon_settings.price_enabled else None
+                    ),
                 )
             except Exception as exc:  # pragma: no cover - defensive UI path
                 frames_for_run = None
@@ -3932,6 +3954,9 @@ def main() -> None:
                 selected_years or [start_year_val],
                 carbon_policy_enabled=bool(carbon_settings.enabled),
                 banking_enabled=bool(carbon_settings.banking_enabled),
+                carbon_price_schedule=(
+                    carbon_settings.price_schedule if carbon_settings.price_enabled else None
+                ),
             )
         except Exception as exc:  # pragma: no cover - defensive UI path
             frames_for_run = None
