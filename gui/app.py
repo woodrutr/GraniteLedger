@@ -3421,6 +3421,7 @@ def run_policy_simulation(
             banking_enabled=bool(allowance_banking_enabled),
             carbon_price_schedule=carbon_price_for_frames,
         )
+        demand_years: set[int] = set(years)
     else:
         frames_obj = Frames.coerce(
             frames,
@@ -3428,6 +3429,25 @@ def run_policy_simulation(
             banking_enabled=bool(allowance_banking_enabled),
             carbon_price_schedule=carbon_price_for_frames,
         )
+        try:
+            demand_years = {int(year) for year in frames_obj.demand()["year"].unique()}
+        except Exception as exc:
+            LOGGER.exception("Unable to read demand data from supplied frames")
+            return {"error": f"Invalid demand data: {exc}"}
+
+    requested_years = {int(year) for year in years}
+    if frames is not None and demand_years and requested_years:
+        if not demand_years.intersection(requested_years):
+            sorted_requested = ", ".join(str(year) for year in sorted(requested_years))
+            sorted_available = ", ".join(str(year) for year in sorted(demand_years))
+            return {
+                "error": (
+                    "No demand data is available for the requested simulation years. "
+                    f"Demand data covers years [{sorted_available}], but the run requested "
+                    f"[{sorted_requested}]. Update the configuration or provide start_year/"
+                    "end_year values that match the demand data."
+                )
+            }
 
     try:
         frames_obj = _ensure_years_in_demand(frames_obj, years)

@@ -218,6 +218,16 @@ def test_backend_control_period_override_applies(monkeypatch):
     _cleanup_temp_dir(result)
 
 
+def test_backend_errors_when_demand_years_do_not_overlap():
+    config = _baseline_config()
+    frames = _frames_for_years([2030, 2031])
+
+    result = run_policy_simulation(config, frames=frames)
+
+    assert "error" in result
+    assert "Demand data covers years" in result["error"]
+
+
 def test_backend_dispatch_and_carbon_modules(monkeypatch):
     real_runner = importlib.import_module("engine.run_loop").run_end_to_end_from_frames
     captured: dict[str, object] = {}
