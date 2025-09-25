@@ -2567,6 +2567,102 @@ def _render_transmission_controls(
 # -------------------------
 # Runner
 # -------------------------
+def _build_run_summary(
+    params: Mapping[str, Any] | None,
+    *,
+    config_label: str | None = None,
+) -> list[tuple[str, str]]:
+    summary: list[tuple[str, str]] = []
+
+    if config_label:
+        summary.append(("Configuration", config_label))
+
+    if not isinstance(params, Mapping):
+        return summary
+
+    def _coerce_int(value: object) -> int | None:
+        try:
+            return int(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return None
+
+    def _enabled_label(flag: object, *, true: str = "Enabled", false: str = "Disabled") -> str:
+        return true if bool(flag) else false
+
+    start_year = _coerce_int(params.get("start_year"))
+    end_year = _coerce_int(params.get("end_year"))
+
+    if start_year is not None and end_year is not None:
+        if start_year == end_year:
+            summary.append(("Simulation years", str(start_year)))
+        else:
+            total_years = max(0, end_year - start_year + 1)
+            years_label = f"{start_year}–{end_year}"
+            if total_years > 0:
+                years_label = f"{years_label} ({total_years} year(s))"
+            summary.append(("Simulation years", years_label))
+    elif start_year is not None:
+        summary.append(("Simulation start year", str(start_year)))
+    elif end_year is not None:
+        summary.append(("Simulation end year", str(end_year)))
+
+    carbon_enabled = params.get("carbon_policy_enabled")
+    summary.append(("Carbon policy", _enabled_label(carbon_enabled)))
+
+    if carbon_enabled:
+        summary.append(("Price floor", _enabled_label(params.get("enable_floor"))))
+        ccr_enabled = params.get("enable_ccr")
+        summary.append(("Cost containment reserve", _enabled_label(ccr_enabled)))
+        if ccr_enabled:
+            ccr_triggers: list[str] = []
+            if params.get("ccr1_enabled"):
+                ccr_triggers.append("CCR1")
+            if params.get("ccr2_enabled"):
+                ccr_triggers.append("CCR2")
+            if ccr_triggers:
+                summary.append(("CCR triggers", ", ".join(ccr_triggers)))
+        summary.append(
+            (
+                "Allowance banking",
+                _enabled_label(params.get("allowance_banking_enabled"), true="Allowed", false="Not allowed"),
+            )
+        )
+        control_period = _coerce_int(params.get("control_period_years"))
+        if control_period:
+            summary.append(("Control period", f"{control_period} year(s)"))
+
+    dispatch_network = params.get("dispatch_use_network")
+    if dispatch_network is not None:
+        summary.append(
+            (
+                "Electricity dispatch",
+                "Network" if bool(dispatch_network) else "Zonal",
+            )
+        )
+
+    module_config = params.get("module_config")
+    if isinstance(module_config, Mapping):
+        enabled_modules: list[str] = []
+        disabled_modules: list[str] = []
+        for raw_name, settings in module_config.items():
+            name = str(raw_name)
+            if isinstance(settings, Mapping):
+                enabled = settings.get("enabled", True)
+            else:
+                enabled = bool(settings)
+            label = name.replace("_", " ").strip().title() or name
+            if bool(enabled):
+                enabled_modules.append(label)
+            else:
+                disabled_modules.append(label)
+        if enabled_modules:
+            summary.append(("Modules enabled", ", ".join(sorted(enabled_modules))))
+        if disabled_modules:
+            summary.append(("Modules disabled", ", ".join(sorted(disabled_modules))))
+
+    return summary
+
+
 def run_policy_simulation(
     config_source: Any | None,
     *,
