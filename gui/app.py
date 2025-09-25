@@ -4117,7 +4117,12 @@ def main() -> None:
             pending_run = None
             show_confirm_modal = False
 
-# Trigger showing modal if a run is pending
+    # Refresh pending run reference after any confirm/cancel handling
+    pending_run = st.session_state.get("pending_run")
+    if not isinstance(pending_run, Mapping):
+        pending_run = None
+
+    # Trigger showing modal if a run is pending
     if isinstance(pending_run, Mapping) and not show_confirm_modal and not run_in_progress:
         show_confirm_modal = True
         st.session_state["show_confirm_modal"] = True
