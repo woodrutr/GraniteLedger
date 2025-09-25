@@ -234,6 +234,8 @@ class CarbonModuleSettings:
     price_schedule: dict[int, float] = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
 
+
+@dataclass
 class CarbonPolicyConfig:
     """Normalized carbon allowance policy configuration for engine runs."""
 
@@ -4447,6 +4449,9 @@ def main() -> None:
 
         if run_result is not None:
             st.session_state['last_result'] = run_result
+            # Ensure any pending confirmation state is cleared after completion
+            st.session_state.pop('pending_run', None)
+            st.session_state.pop('show_confirm_modal', None)
             result = run_result
 
     outputs_container = st.container()
