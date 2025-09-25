@@ -6,6 +6,7 @@ The GUI assumes that core dependencies such as :mod:`pandas` are installed.
 from __future__ import annotations
 
 import copy
+import inspect
 import io
 import importlib.util
 import logging
@@ -1164,6 +1165,7 @@ def _render_carbon_policy_section(
     modules = run_config.setdefault("modules", {})
     defaults = modules.get("carbon_policy", {}) or {}
     price_defaults = modules.get("carbon_price", {}) or {}
+    dispatch_defaults = modules.get("electricity_dispatch", {}) or {}
 
     # -------------------------
     # Defaults
@@ -1248,6 +1250,12 @@ def _render_carbon_policy_section(
             return
         st.session_state["carbon_module_last_changed"] = key
 
+    deep_pricing_allowed = bool(dispatch_defaults.get("deep_carbon_pricing", False))
+    if st is not None:
+        deep_pricing_allowed = bool(
+            st.session_state.get("dispatch_deep_carbon", deep_pricing_allowed)
+        )
+
     session_enabled_default = enabled_default
     session_price_default = price_enabled_default
     last_changed = None
@@ -1259,7 +1267,7 @@ def _render_carbon_policy_section(
         session_price_default = bool(
             st.session_state.get("carbon_price_enable", price_enabled_default)
         )
-        if session_enabled_default and session_price_default:
+        if session_enabled_default and session_price_default and not deep_pricing_allowed:
             if last_changed == "cap":
                 session_price_default = False
             else:
@@ -1451,7 +1459,7 @@ def _render_carbon_policy_section(
     # Errors and Return
     # -------------------------
     errors: list[str] = []
-    if enabled and price_enabled:
+    if enabled and price_enabled and not deep_pricing_allowed:
         errors.append("Cannot enable both carbon cap and carbon price simultaneously.")
 
     cap_region_values: list[Any] = []
@@ -1545,6 +1553,7 @@ def _render_dispatch_section(
         mode_default = "single"
     capacity_default = bool(defaults.get("capacity_expansion", True))
     reserve_default = bool(defaults.get("reserve_margins", True))
+    deep_default = bool(defaults.get("deep_carbon_pricing", False))
 
     enabled = container.toggle(
         "Enable electricity dispatch",
@@ -1555,6 +1564,7 @@ def _render_dispatch_section(
     mode_value = mode_default
     capacity_expansion = capacity_default
     reserve_margins = reserve_default
+    deep_carbon_pricing = deep_default
     errors: list[str] = []
 
     mode_options = {"single": "Single region", "network": "Networked"}
@@ -1580,6 +1590,16 @@ def _render_dispatch_section(
             value=reserve_default,
             disabled=not enabled,
             key="dispatch_reserve",
+        )
+        deep_carbon_pricing = panel.toggle(
+            "Enable deep carbon pricing",
+            value=deep_default,
+            disabled=not enabled,
+            key="dispatch_deep_carbon",
+            help=(
+                "Allows simultaneous use of allowance clearing prices and exogenous "
+                "carbon prices when solving dispatch."
+            ),
         )
 
         if enabled:
@@ -1607,12 +1627,14 @@ def _render_dispatch_section(
 
     if not enabled:
         mode_value = mode_value or "single"
+        deep_carbon_pricing = False
 
     modules["electricity_dispatch"] = {
         "enabled": bool(enabled),
         "mode": mode_value or "single",
         "capacity_expansion": bool(capacity_expansion),
         "reserve_margins": bool(reserve_margins),
+        "deep_carbon_pricing": bool(deep_carbon_pricing),
     }
 
     return DispatchModuleSettings(
@@ -1620,6 +1642,7 @@ def _render_dispatch_section(
         mode=mode_value or "single",
         capacity_expansion=bool(capacity_expansion),
         reserve_margins=bool(reserve_margins),
+        deep_carbon_pricing=bool(deep_carbon_pricing),
         errors=errors,
     )
 
@@ -3260,6 +3283,7 @@ def run_policy_simulation(
     carbon_price_value: float | None = None,
     carbon_price_schedule: Mapping[int, float] | Mapping[str, Any] | None = None,
     dispatch_use_network: bool = False,
+    deep_carbon_pricing: bool = False,
     module_config: Mapping[str, Any] | None = None,
     frames: FramesType | Mapping[str, pd.DataFrame] | None = None,
     assumption_notes: Iterable[str] | None = None,
@@ -3305,7 +3329,10 @@ def run_policy_simulation(
         years=years,
     )
 
-    if price_cfg.active:
+    if price_cfg.active and bool(carbon_policy_enabled) and not deep_carbon_pricing:
+        return {"error": "Cannot enable both carbon cap and carbon price simultaneously."}
+
+    if price_cfg.active and not deep_carbon_pricing:
         carbon_policy_cfg.disable_for_price()
 
     normalized_coverage = _normalize_coverage_selection(
@@ -3378,6 +3405,7 @@ def run_policy_simulation(
 
     dispatch_record = merged_modules.setdefault("electricity_dispatch", {})
     dispatch_record["use_network"] = bool(dispatch_use_network)
+    dispatch_record["deep_carbon_pricing"] = bool(deep_carbon_pricing)
 
     def _coerce_year_range(start: int | None, end: int | None) -> list[int]:
         if start is None and end is None:
@@ -3573,6 +3601,29 @@ def run_policy_simulation(
     frames_obj = frames_obj.with_frame('policy', policy_frame)
 
     runner = _ensure_engine_runner()
+    supports_deep = True
+    try:
+        signature = inspect.signature(runner)
+    except (TypeError, ValueError):  # pragma: no cover - builtin or C-accelerated callables
+        supports_deep = True
+    else:
+        params = signature.parameters
+        if "deep_carbon_pricing" in params:
+            supports_deep = True
+        else:
+            supports_deep = any(
+                parameter.kind is inspect.Parameter.VAR_KEYWORD
+                for parameter in params.values()
+            )
+
+    if not supports_deep and deep_carbon_pricing:
+        return {
+            "error": (
+                "Deep carbon pricing requires an updated engine. "
+                "Please upgrade engine.run_loop.run_end_to_end_from_frames."
+            )
+        }
+
     enable_floor_flag = bool(policy_enabled and carbon_policy_cfg.enable_floor)
     enable_ccr_flag = bool(
         policy_enabled
@@ -3580,15 +3631,20 @@ def run_policy_simulation(
         and (carbon_policy_cfg.ccr1_enabled or carbon_policy_cfg.ccr2_enabled)
     )
     try:
+        run_kwargs = {
+            "years": years,
+            "price_initial": 0.0,
+            "enable_floor": enable_floor_flag,
+            "enable_ccr": enable_ccr_flag,
+            "use_network": bool(dispatch_use_network),
+            "carbon_price_schedule": price_schedule_map if price_active else None,
+            "progress_cb": progress_cb,
+        }
+        if supports_deep:
+            run_kwargs["deep_carbon_pricing"] = bool(deep_carbon_pricing)
         outputs = runner(
             frames_obj,
-            years=years,
-            price_initial=0.0,
-            enable_floor=enable_floor_flag,
-            enable_ccr=enable_ccr_flag,
-            use_network=bool(dispatch_use_network),
-            carbon_price_schedule=price_schedule_map if price_active else None,
-            progress_cb=progress_cb,
+            **run_kwargs,
         )
     except Exception as exc:  # pragma: no cover - defensive guard
         LOGGER.exception('Policy simulation failed')
@@ -4106,6 +4162,7 @@ def main() -> None:
         mode='single',
         capacity_expansion=False,
         reserve_margins=False,
+        deep_carbon_pricing=False,
     )
     incentives_settings = IncentivesModuleSettings(
         enabled=False,
@@ -4278,6 +4335,7 @@ def main() -> None:
     dispatch_use_network = bool(
         dispatch_settings.enabled and dispatch_settings.mode == "network"
     )
+    dispatch_deep_carbon = bool(dispatch_settings.deep_carbon_pricing)
 
     current_run_payload: dict[str, Any] = {
         "config_source": copy.deepcopy(run_config),
@@ -4311,6 +4369,7 @@ def main() -> None:
             else {}
         ),
         "dispatch_use_network": dispatch_use_network,
+        "dispatch_deep_carbon": bool(dispatch_settings.deep_carbon_pricing),
         "module_config": copy.deepcopy(run_config.get("modules", {})),
         "frames": frames_for_run,
         "assumption_notes": list(assumption_notes),
@@ -4450,6 +4509,7 @@ def main() -> None:
     dispatch_use_network = bool(
         dispatch_settings.enabled and dispatch_settings.mode == 'network'
     )
+    dispatch_deep_carbon = bool(dispatch_settings.deep_carbon_pricing)
 
     if run_inputs is not None:
         run_config = copy.deepcopy(run_inputs.get('config_source', run_config))
@@ -4457,6 +4517,9 @@ def main() -> None:
         end_year_val = int(run_inputs.get('end_year', end_year_val))
         dispatch_use_network = bool(
             run_inputs.get('dispatch_use_network', dispatch_use_network)
+        )
+        dispatch_deep_carbon = bool(
+            run_inputs.get('dispatch_deep_carbon', dispatch_deep_carbon)
         )
 
     result = st.session_state.get('last_result')
@@ -4533,56 +4596,66 @@ def main() -> None:
                 )
 
             try:
-                run_result = run_policy_simulation(
-                    inputs_for_run.get('config_source', run_config),
-                    start_year=inputs_for_run.get('start_year', start_year_val),
-                    end_year=inputs_for_run.get('end_year', end_year_val),
-                    carbon_policy_enabled=bool(
+                config_source_for_run = inputs_for_run.get('config_source', run_config)
+                deep_carbon_flag = bool(
+                    inputs_for_run.get('dispatch_deep_carbon', dispatch_deep_carbon)
+                )
+                run_parameters = {
+                    'start_year': inputs_for_run.get('start_year', start_year_val),
+                    'end_year': inputs_for_run.get('end_year', end_year_val),
+                    'carbon_policy_enabled': bool(
                         inputs_for_run.get('carbon_policy_enabled', carbon_settings.enabled)
                     ),
-                    enable_floor=bool(
+                    'enable_floor': bool(
                         inputs_for_run.get('enable_floor', carbon_settings.enable_floor)
                     ),
-                    enable_ccr=bool(inputs_for_run.get('enable_ccr', carbon_settings.enable_ccr)),
-                    ccr1_enabled=bool(
+                    'enable_ccr': bool(
+                        inputs_for_run.get('enable_ccr', carbon_settings.enable_ccr)
+                    ),
+                    'ccr1_enabled': bool(
                         inputs_for_run.get('ccr1_enabled', carbon_settings.ccr1_enabled)
                     ),
-                    ccr2_enabled=bool(
+                    'ccr2_enabled': bool(
                         inputs_for_run.get('ccr2_enabled', carbon_settings.ccr2_enabled)
                     ),
-                    allowance_banking_enabled=bool(
+                    'allowance_banking_enabled': bool(
                         inputs_for_run.get('allowance_banking_enabled', carbon_settings.banking_enabled)
                     ),
-                    initial_bank=float(
+                    'initial_bank': float(
                         inputs_for_run.get('initial_bank', carbon_settings.initial_bank)
                     ),
-                    coverage_regions=inputs_for_run.get(
+                    'coverage_regions': inputs_for_run.get(
                         'coverage_regions', carbon_settings.coverage_regions
                     ),
-                    control_period_years=inputs_for_run.get(
+                    'control_period_years': inputs_for_run.get(
                         'control_period_years', carbon_settings.control_period_years
                     ),
-                    cap_regions=inputs_for_run.get(
+                    'cap_regions': inputs_for_run.get(
                         'cap_regions', carbon_settings.cap_regions
                     ),
-                    carbon_price_enabled=inputs_for_run.get(
+                    'carbon_price_enabled': inputs_for_run.get(
                         'carbon_price_enabled', carbon_settings.price_enabled
                     ),
-                    carbon_price_value=inputs_for_run.get(
+                    'carbon_price_value': inputs_for_run.get(
                         'carbon_price_value', carbon_settings.price_per_ton
                     ),
-                    carbon_price_schedule=inputs_for_run.get(
+                    'carbon_price_schedule': inputs_for_run.get(
                         'carbon_price_schedule', carbon_settings.price_schedule
                     ),
-                    dispatch_use_network=bool(
+                    'dispatch_use_network': bool(
                         inputs_for_run.get('dispatch_use_network', dispatch_use_network)
                     ),
-                    module_config=inputs_for_run.get(
+                    'module_config': inputs_for_run.get(
                         'module_config', run_config.get('modules', {})
                     ),
-                    frames=frames_for_execution,
-                    assumption_notes=assumption_notes_for_run,
-                    progress_cb=_update_progress,
+                    'frames': frames_for_execution,
+                    'assumption_notes': assumption_notes_for_run,
+                    'progress_cb': _update_progress,
+                    'deep_carbon_pricing': deep_carbon_flag,
+                }
+                run_result = run_policy_simulation(
+                    config_source_for_run,
+                    **run_parameters,
                 )
             except Exception as exc:  # pragma: no cover - defensive guard
                 LOGGER.exception('Policy simulation failed during execution')
