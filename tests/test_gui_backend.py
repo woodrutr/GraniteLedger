@@ -384,6 +384,8 @@ def test_backend_coverage_selection_builds_frame(monkeypatch):
     )
     assert north_flag is True
     assert south_flag is False
+    carbon_cfg = result["module_config"].get("carbon_policy", {})
+    assert carbon_cfg.get("regions") == ["north"]
 
     _cleanup_temp_dir(result)
 
