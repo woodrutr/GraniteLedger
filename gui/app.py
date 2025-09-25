@@ -100,6 +100,7 @@ DEFAULT_CONFIG_PATH = Path(PROJECT_ROOT, "src", "common", "run_config.toml")
 _DEFAULT_LOAD_MWH = 1_000_000.0
 _LARGE_ALLOWANCE_SUPPLY = 1e12
 _GENERAL_REGIONS_NORMALIZED_KEY = "general_regions_normalized_selection"
+_ALL_REGIONS_LABEL = "All regions"
 _T = TypeVar("_T")
 
 SIDEBAR_SECTIONS: list[tuple[str, bool]] = [
@@ -602,7 +603,87 @@ def _normalize_region_labels(
     return normalized
 
 
+def _normalize_coverage_selection(selection: Any) -> list[str]:
+    """Return a normalised list of coverage region labels."""
+
+    if isinstance(selection, Mapping):
+        iterable: Iterable[Any] = selection.values()
+    elif isinstance(selection, (str, bytes)) or not isinstance(selection, Iterable):
+        iterable = [selection]
+    else:
+        iterable = selection
+
+    normalized: list[str] = []
+    for entry in iterable:
+        if entry is None:
+            continue
+        text = str(entry).strip()
+        if not text:
+            continue
+        lowered = text.lower()
+        if lowered in {"all", "all regions"}:
+            return ["All"]
+        if text not in normalized:
+            normalized.append(text)
+
+    if not normalized:
+        return ["All"]
+    return normalized
+
+
 # -------------------------
+# Dataclasses
+# -------------------------
+@dataclass
+class GeneralConfigResult:
+    config_label: str
+    config_source: Any
+    run_config: dict[str, Any]
+    candidate_years: list[int]
+    start_year: int
+    end_year: int
+    selected_years: list[int]
+    regions: list[int | str]
+
+
+@dataclass
+class CarbonModuleSettings:
+    enabled: bool
+    enable_floor: bool
+    enable_ccr: bool
+    ccr1_enabled: bool
+    ccr2_enabled: bool
+    banking_enabled: bool
+    coverage_regions: list[str]
+    control_period_years: int | None
+    errors: list[str] = field(default_factory=list)
+
+
+@dataclass
+class DispatchModuleSettings:
+    enabled: bool
+    mode: str
+    capacity_expansion: bool
+    reserve_margins: bool
+    errors: list[str] = field(default_factory=list)
+
+
+@dataclass
+class IncentivesModuleSettings:
+    enabled: bool
+    production_credits: list[dict[str, Any]]
+    investment_credits: list[dict[str, Any]]
+    errors: list[str] = field(default_factory=list)
+
+
+@dataclass
+class OutputsModuleSettings:
+    enabled: bool
+    directory: str
+    resolved_path: Path
+    show_csv_downloads: bool
+    errors: list[str] = field(default_factory=list)
+
 # General Config UI
 # -------------------------
 def _render_general_config_section(
@@ -810,6 +891,7 @@ def _render_general_config_section(
 def _render_carbon_policy_section(
     container: Any,
     run_config: dict[str, Any],
+    region_options: Iterable[int | str] | None = None,
 ) -> CarbonModuleSettings:
     """Render the carbon policy section wrapper."""
     # You can decide whether to call render_carbon_module_controls here
@@ -829,12 +911,35 @@ def render_carbon_module_controls(run_config: dict[str, Any], container) -> Carb
     ccr1_default = bool(defaults.get("ccr1_enabled", True))
     ccr2_default = bool(defaults.get("ccr2_enabled", True))
     banking_default = bool(defaults.get("allowance_banking_enabled", True))
+    coverage_default = _normalize_coverage_selection(
+        defaults.get("coverage_regions", ["All"])
+    )
     control_default_raw = defaults.get("control_period_years")
     try:
         control_default = int(control_default_raw)
     except (TypeError, ValueError):
         control_default = 3
     control_override_default = control_default_raw is not None
+    region_labels: list[str] = []
+    if region_options is not None:
+        for entry in region_options:
+            label = str(entry).strip()
+            if not label:
+                label = "default"
+            if label not in region_labels:
+                region_labels.append(label)
+    if not region_labels:
+        region_labels = ["default"]
+
+    coverage_choices = [_ALL_REGIONS_LABEL] + sorted(region_labels, key=str)
+    if coverage_default == ["All"]:
+        coverage_default_display = [_ALL_REGIONS_LABEL]
+    else:
+        coverage_default_display = [
+            label for label in coverage_default if label in coverage_choices
+        ]
+        if not coverage_default_display:
+            coverage_default_display = [_ALL_REGIONS_LABEL]
 
     price_enabled_default = bool(price_defaults.get("enabled", False))
     price_value_raw = price_defaults.get("price_per_ton", price_defaults.get("price", 0.0))
@@ -908,12 +1013,14 @@ def render_carbon_module_controls(run_config: dict[str, Any], container) -> Carb
         ccr1_enabled=ccr1_enabled,
         ccr2_enabled=ccr2_enabled,
         banking_enabled=banking_enabled,
+        coverage_regions=coverage_default_display,
         control_period_years=control_period_years,
         price_per_ton=price_per_ton,
         price_schedule=price_schedule,
         errors=errors,
     )
 
+    coverage_selection_raw: list[str] | None = None
     with _sidebar_panel(container, enabled) as panel:
         enable_floor = panel.checkbox(
             "Enable minimum reserve price",
@@ -960,6 +1067,17 @@ def render_carbon_module_controls(run_config: dict[str, Any], container) -> Carb
             key="carbon_control_years",
             disabled=not (enabled and control_override),
         )
+        coverage_selection_raw = panel.multiselect(
+            "Regions covered by carbon cap",
+            options=coverage_choices,
+            default=coverage_default_display,
+            disabled=not enabled,
+            key="carbon_coverage_regions",
+            help=(
+                "Select the regions subject to the cap. Choose “All regions” to apply "
+                "the carbon policy across every region."
+            ),
+        )
 
     with _sidebar_panel(container, price_enabled) as price_panel:
         price_per_ton_value = price_panel.number_input(
@@ -973,6 +1091,8 @@ def render_carbon_module_controls(run_config: dict[str, Any], container) -> Carb
         )
 
     control_period_years = int(control_period_value) if enabled and control_override else None
+    coverage_selection = coverage_selection_raw or coverage_default_display
+    coverage_regions = _normalize_coverage_selection(coverage_selection)
     if not enabled:
         enable_floor = False
         enable_ccr = False
@@ -992,6 +1112,7 @@ def render_carbon_module_controls(run_config: dict[str, Any], container) -> Carb
         "ccr1_enabled": bool(ccr1_enabled),
         "ccr2_enabled": bool(ccr2_enabled),
         "allowance_banking_enabled": bool(banking_enabled),
+        "coverage_regions": coverage_regions,
         "control_period_years": control_period_years,
     }
 
@@ -1023,6 +1144,7 @@ def render_carbon_module_controls(run_config: dict[str, Any], container) -> Carb
         ccr1_enabled=bool(ccr1_enabled),
         ccr2_enabled=bool(ccr2_enabled),
         banking_enabled=bool(banking_enabled),
+        coverage_regions=coverage_regions,
         control_period_years=control_period_years,
         price_per_ton=float(price_per_ton_value),
         price_schedule=dict(price_schedule_default),
@@ -1969,6 +2091,66 @@ def _build_policy_frame(
     return pd.DataFrame(records)
 
 
+def _available_regions_from_frames(frames: FramesType) -> list[str]:
+    """Return an ordered list of region labels present in ``frames``."""
+
+    regions: list[str] = []
+
+    try:
+        demand = frames.demand()
+        if not demand.empty and 'region' in demand.columns:
+            for value in demand['region']:
+                label = str(value)
+                if label not in regions:
+                    regions.append(label)
+    except Exception:  # pragma: no cover - defensive guard
+        pass
+
+    try:
+        units = frames.units()
+        if not units.empty and 'region' in units.columns:
+            for value in units['region']:
+                label = str(value)
+                if label not in regions:
+                    regions.append(label)
+    except Exception:  # pragma: no cover - defensive guard
+        pass
+
+    if not regions:
+        regions = ['default']
+
+    return regions
+
+
+def _build_coverage_frame(
+    frames: FramesType,
+    coverage_regions: Iterable[str] | None,
+) -> pd.DataFrame | None:
+    """Construct a coverage table aligning regions with enabled status."""
+
+    if coverage_regions is None:
+        return None
+
+    normalized = _normalize_coverage_selection(coverage_regions)
+    cover_all = normalized == ["All"]
+
+    regions = _available_regions_from_frames(frames)
+    ordered = list(dict.fromkeys(regions))
+    for label in normalized:
+        if label != "All" and label not in ordered:
+            ordered.append(label)
+
+    records = [
+        {
+            'region': region,
+            'covered': True if cover_all else region in normalized,
+        }
+        for region in ordered
+    ]
+
+    return pd.DataFrame(records)
+
+
 def _default_units() -> pd.DataFrame:
     data = [
         {
@@ -2684,6 +2866,7 @@ def run_policy_simulation(
     ccr1_enabled: bool = True,
     ccr2_enabled: bool = True,
     allowance_banking_enabled: bool = True,
+    coverage_regions: Iterable[str] | None = None,
     control_period_years: int | None = None,
     carbon_price_enabled: bool | None = None,
     carbon_price_value: float | None = None,
@@ -2720,6 +2903,32 @@ def run_policy_simulation(
         control_period_years=control_period_years,
     )
 
+    normalized_coverage = _normalize_coverage_selection(
+        coverage_regions
+        if coverage_regions is not None
+        else merged_modules.get("carbon_policy", {}).get("coverage_regions", ["All"])
+    )
+
+    policy_enabled = bool(carbon_policy_enabled)
+    floor_flag = bool(enable_floor and policy_enabled)
+    ccr_flag = bool(enable_ccr and policy_enabled)
+    banking_flag = bool(allowance_banking_enabled and policy_enabled)
+
+    carbon_record = merged_modules.setdefault("carbon_policy", {})
+    carbon_record.update(
+        {
+            "enabled": policy_enabled,
+            "enable_floor": floor_flag,
+            "enable_ccr": ccr_flag,
+            "ccr1_enabled": bool(ccr1_enabled) if ccr_flag else False,
+            "ccr2_enabled": bool(ccr2_enabled) if ccr_flag else False,
+            "allowance_banking_enabled": banking_flag,
+            "coverage_regions": normalized_coverage,
+            "control_period_years": control_period_years if policy_enabled else None,
+        }
+    )
+
+    # Carbon price config
     price_cfg = CarbonPriceConfig.from_mapping(
         merged_modules.get("carbon_price"),
         enabled=carbon_price_enabled,
@@ -2746,6 +2955,7 @@ def run_policy_simulation(
     merged_modules["carbon_policy"] = carbon_policy_cfg.as_dict()
     merged_modules["carbon_price"] = price_cfg.as_dict()
 
+    # Dispatch settings
     dispatch_record = merged_modules.setdefault("electricity_dispatch", {})
     dispatch_enabled = bool(dispatch_record.get("enabled")) or bool(dispatch_use_network)
     dispatch_record["enabled"] = dispatch_enabled
@@ -2787,6 +2997,10 @@ def run_policy_simulation(
         )
         frames_obj = frames_obj.with_frame("policy", policy_frame)
 
+        coverage_frame = _build_coverage_frame(frames_obj, normalized_coverage)
+        if coverage_frame is not None:
+            frames_obj = frames_obj.with_frame("coverage", coverage_frame)
+
         outputs = runner(
             frames_obj,
             years=years,
@@ -2820,6 +3034,7 @@ def run_policy_simulation(
         LOGGER.exception("Policy simulation failed")
         return {"error": str(exc)}
 
+      
 def _extract_result_frame(
     result: Mapping[str, Any],
     key: str,
@@ -3237,6 +3452,7 @@ def main() -> None:
         ccr1_enabled=False,
         ccr2_enabled=False,
         banking_enabled=False,
+        coverage_regions=["All"],
         control_period_years=None,
         price_per_ton=0.0,
         price_schedule={},
@@ -3292,7 +3508,11 @@ def main() -> None:
 
             carbon_label, carbon_expanded = SIDEBAR_SECTIONS[1]
             carbon_expander = st.expander(carbon_label, expanded=carbon_expanded)
-            carbon_settings = _render_carbon_policy_section(carbon_expander, run_config)
+            carbon_settings = _render_carbon_policy_section(
+                carbon_expander,
+                run_config,
+                region_options=general_result.regions,
+            )
             module_errors.extend(carbon_settings.errors)
 
             try:
@@ -3470,6 +3690,7 @@ def main() -> None:
                 'ccr1_enabled': bool(carbon_settings.ccr1_enabled),
                 'ccr2_enabled': bool(carbon_settings.ccr2_enabled),
                 'allowance_banking_enabled': bool(carbon_settings.banking_enabled),
+                'coverage_regions': list(carbon_settings.coverage_regions),
                 'control_period_years': carbon_settings.control_period_years,
                 'carbon_price_enabled': bool(carbon_settings.price_enabled),
                 'carbon_price_value': float(carbon_settings.price_per_ton),
@@ -3608,6 +3829,9 @@ def main() -> None:
                 ),
                 allowance_banking_enabled=bool(
                     inputs_for_run.get('allowance_banking_enabled', carbon_settings.banking_enabled)
+                ),
+                coverage_regions=inputs_for_run.get(
+                    'coverage_regions', carbon_settings.coverage_regions
                 ),
                 control_period_years=inputs_for_run.get(
                     'control_period_years', carbon_settings.control_period_years
