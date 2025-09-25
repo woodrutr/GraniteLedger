@@ -40,6 +40,13 @@ try:
 except ModuleNotFoundError:  # fallback for packaged app execution
     PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
+from gui.module_settings import (
+    CarbonModuleSettings,
+    DispatchModuleSettings,
+    IncentivesModuleSettings,
+    OutputsModuleSettings,
+)
+
 # Region metadata helpers (robust to running as a script)
 try:
     from gui.region_metadata import (
