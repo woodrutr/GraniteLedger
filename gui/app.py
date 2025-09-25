@@ -960,37 +960,31 @@ def render_carbon_module_controls(
         if not coverage_default_display:
             coverage_default_display = [_ALL_REGIONS_LABEL]
 
-    price_enabled_default = bool(price_defaults.get("enabled", False))
-    price_value_raw = price_defaults.get("price_per_ton", price_defaults.get("price", 0.0))
-    price_default = _coerce_float(price_value_raw, default=0.0)
-    price_schedule_default = _normalize_price_schedule(price_defaults.get("price_schedule"))
+    price_schedule_default = _normalize_price_schedule(
+        price_defaults.get("price_schedule")
+    )
 
-    # Normalize region labels
-    region_labels: list[str] = []
-    if region_options is not None:
-        for entry in region_options:
-            label = str(entry).strip()
-            if not label:
-                label = "default"
-            if label not in region_labels:
-                region_labels.append(label)
-    if not region_labels:
-        region_labels = ["default"]
+    return build_carbon_policy_ui(
+        container,
+        enabled_default=enabled_default,
+        price_defaults=price_defaults,
+        enable_floor_default=enable_floor_default,
+        enable_ccr_default=enable_ccr_default,
+        ccr1_default=ccr1_default,
+        ccr2_default=ccr2_default,
+        banking_default=banking_default,
+        bank_default=bank_default,
+        control_override_default=control_override_default,
+        control_default=control_default,
+        coverage_choices=coverage_choices,
+        coverage_default_display=coverage_default_display,
+        price_schedule_default=price_schedule_default,
+    )
 
-    coverage_choices = [_ALL_REGIONS_LABEL] + sorted(region_labels, key=str)
-    if coverage_default == ["All"]:
-        coverage_default_display = [_ALL_REGIONS_LABEL]
-    else:
-        coverage_default_display = [
-            label for label in coverage_default if label in coverage_choices
-        ]
-        if not coverage_default_display:
-            coverage_default_display = [_ALL_REGIONS_LABEL]
 
 def build_carbon_policy_ui(
     container,
-    run_config,
-    defaults,
+    *,
     enabled_default: bool,
     price_defaults: dict[str, Any],
     enable_floor_default: bool,
@@ -1013,7 +1007,6 @@ def build_carbon_policy_ui(
     price_enabled_default = bool(price_defaults.get("enabled", False))
     price_value_raw = price_defaults.get("price_per_ton", price_defaults.get("price", 0.0))
     price_default = _coerce_float(price_value_raw, default=0.0)
-    price_schedule_default = _normalize_price_schedule(price_defaults.get("price_schedule"))
 
     bank_value_default = bank_default
     if st is not None:  # pragma: no cover - UI path
