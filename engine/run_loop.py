@@ -1,6 +1,7 @@
 """Annual fixed-point integration between dispatch and allowance market."""
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from typing import Any, Callable, Iterable, Mapping, Sequence, cast
 
@@ -24,6 +25,9 @@ from policy.allowance_supply import AllowanceSupply
 from io_loader import Frames
 
 
+LOGGER = logging.getLogger(__name__)
+
+
 ProgressCallback = Callable[[str, Mapping[str, object]], None]
 
 
@@ -34,6 +38,25 @@ def _ensure_pandas() -> None:
         raise ImportError(
             "pandas is required for engine.run_loop; install it with `pip install pandas`."
         )
+
+
+def effective_carbon_price(
+    allowance_price: float, exogenous_price: float, deep: bool
+) -> float:
+    """Return the effective marginal carbon price based on configuration."""
+
+    try:
+        allowance_component = float(allowance_price)
+    except (TypeError, ValueError):
+        allowance_component = 0.0
+    try:
+        exogenous_component = float(exogenous_price)
+    except (TypeError, ValueError):
+        exogenous_component = 0.0
+
+    if deep:
+        return allowance_component + exogenous_component
+    return max(allowance_component, exogenous_component)
 
 
 def _coerce_years(policy: Any, years: Iterable[int] | None) -> list[Any]:
@@ -723,6 +746,7 @@ def _dispatch_from_frames(
     | Mapping[str, Any]
     | float
     | None = None,
+    deep_carbon_pricing: bool = False,
 ) -> Callable[[Any, float, float], object]:
 
     """Build a dispatch callback that solves using the frame container."""
@@ -854,15 +878,31 @@ def _dispatch_from_frames(
         frames_for_year = _scaled_frames(year, weight)
         schedule_price = _price_for(year)
         extra_price = _normalize_extra_price(carbon_price)
-        effective_allowance_cost = float(allowance_cost) + schedule_price + extra_price
+        allowance_component = float(allowance_cost)
+        exogenous_component = schedule_price + extra_price
+
+        if deep_carbon_pricing:
+            dispatch_allowance_cost = allowance_component
+            dispatch_carbon_price = exogenous_component
+        else:
+            dispatch_allowance_cost = effective_carbon_price(
+                allowance_component, exogenous_component, deep=False
+            )
+            dispatch_carbon_price = 0.0
 
         if use_network:
             raw_result = solve_network_from_frames(
-                frames_for_year, year, effective_allowance_cost
+                frames_for_year,
+                year,
+                dispatch_allowance_cost,
+                carbon_price=dispatch_carbon_price,
             )
         else:
             raw_result = solve_single(
-                year, effective_allowance_cost, frames=frames_for_year
+                year,
+                dispatch_allowance_cost,
+                frames=frames_for_year,
+                carbon_price=dispatch_carbon_price,
             )
 
         return _scale_result(raw_result, weight)
@@ -883,6 +923,7 @@ def run_fixed_point_from_frames(
     | Mapping[str, Any]
     | float
     | None = None,
+    deep_carbon_pricing: bool = False,
 ) -> dict[int, dict]:
     """Run the annual fixed-point integration using in-memory frames."""
 
@@ -898,6 +939,7 @@ def run_fixed_point_from_frames(
         use_network=use_network,
         period_weights=period_weights,
         carbon_price_schedule=carbon_price_schedule,
+        deep_carbon_pricing=deep_carbon_pricing,
     )
 
     def dispatch_model(year: int, allowance_cost: float) -> float:
@@ -976,6 +1018,12 @@ def _build_engine_outputs(
 
         entry["periods"].append(period)
         entry["price_last"] = price
+        allowance_price_last = float(summary.get("p_co2_allowance", price))
+        exogenous_price_last = float(summary.get("p_co2_exogenous", 0.0))
+        effective_price_last = float(summary.get("p_co2_effective", price))
+        entry["allowance_price_last"] = allowance_price_last
+        entry["exogenous_price_last"] = exogenous_price_last
+        entry["effective_price_last"] = effective_price_last
         iterations_value = summary.get("iterations", 0)
         try:
             iterations_int = int(iterations_value)
@@ -1044,6 +1092,9 @@ def _build_engine_outputs(
         bank_final = float(entry.get("bank_final", entry.get("bank_new_last", 0.0)))
         obligation_final = float(entry.get("obligation_last", 0.0))
         price_value = float(entry.get("price_last", 0.0))
+        allowance_value = float(entry.get("allowance_price_last", price_value))
+        exogenous_value = float(entry.get("exogenous_price_last", 0.0))
+        effective_value = float(entry.get("effective_price_last", price_value))
         iterations_value = int(entry.get("iterations_max", 0))
         shortage_flag = bool(entry.get("shortage_any", False))
         finalized = bool(entry.get("finalized", False))
@@ -1052,6 +1103,9 @@ def _build_engine_outputs(
             {
                 "year": year,
                 "p_co2": price_value,
+                "p_co2_allowance": allowance_value,
+                "p_co2_exogenous": exogenous_value,
+                "p_co2_effective": effective_value,
                 "iterations": iterations_value,
                 "emissions_tons": float(entry.get("emissions_sum", 0.0)),
                 "available_allowances": minted,
@@ -1159,6 +1213,7 @@ def run_end_to_end_from_frames(
     price_cap: float = 1000.0,
     use_network: bool = False,
     carbon_price_schedule: Mapping[int, float] | Mapping[str, Any] | float | None = None,
+    deep_carbon_pricing: bool = False,
     progress_cb: ProgressCallback | None = None,
 ) -> EngineOutputs:
     """Run the integrated dispatch and allowance engine returning structured outputs.
@@ -1180,6 +1235,7 @@ def run_end_to_end_from_frames(
         use_network=use_network,
         period_weights=period_weights,
         carbon_price_schedule=carbon_price_schedule,
+        deep_carbon_pricing=deep_carbon_pricing,
     )
     years_sequence = list(years_sequence)
     total_years = len(years_sequence)
@@ -1229,12 +1285,17 @@ def run_end_to_end_from_frames(
 
         if not policy_enabled_global:
             dispatch_result = dispatch_solver(
-                year, 0.0, carbon_price=carbon_price_value
+                year, 0.0, carbon_price=0.0
             )
             emissions = _extract_emissions(dispatch_result)
             summary_disabled: dict[str, object] = {
                 'year': year,
                 'p_co2': float(carbon_price_value),
+                'p_co2_allowance': 0.0,
+                'p_co2_exogenous': float(carbon_price_value),
+                'p_co2_effective': effective_carbon_price(
+                    0.0, float(carbon_price_value), deep_carbon_pricing
+                ),
                 'available_allowances': float(emissions),
                 'allowances_total': float(emissions),
                 'bank_prev': 0.0,
@@ -1332,8 +1393,30 @@ def run_end_to_end_from_frames(
             annual_surrender_frac=surrender_frac,
             carry_pct=carry_pct,
             banking_enabled=banking_enabled_year,
-            carbon_price=carbon_price_value,
+            carbon_price=0.0,
             progress_cb=progress_cb,
+        )
+
+        try:
+            allowance_price = float(summary.get('p_co2', 0.0))
+        except (TypeError, ValueError):
+            allowance_price = 0.0
+        exogenous_price = float(carbon_price_value)
+        effective_price = effective_carbon_price(
+            allowance_price, exogenous_price, deep_carbon_pricing
+        )
+
+        summary['p_co2_allowance'] = allowance_price
+        summary['p_co2_exogenous'] = exogenous_price
+        summary['p_co2_effective'] = effective_price
+
+        LOGGER.debug(
+            "Year %s allowance price %.4f, exogenous price %.4f, effective price %.4f (deep=%s)",
+            year,
+            allowance_price,
+            exogenous_price,
+            effective_price,
+            deep_carbon_pricing,
         )
 
         emissions = float(summary.get('emissions', 0.0))
