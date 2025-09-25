@@ -194,6 +194,7 @@ _T = TypeVar("_T")
 
 _RUNNER_SIGNATURE: inspect.Signature | None = None
 _RUNNER_ACCEPTS_VAR_KEYWORDS: bool | None = None
+_RUNNER_SIGNATURE_CACHE_RUNNER: Callable[..., Any] | None = None
 _RUNNER_KEYWORD_SUPPORT: dict[str, bool] = {}
 
 
@@ -813,7 +814,14 @@ def _ensure_streamlit() -> None:
 
 
 def _cache_runner_signature(runner: Callable[..., Any]) -> None:
-    global _RUNNER_SIGNATURE, _RUNNER_ACCEPTS_VAR_KEYWORDS
+    global _RUNNER_SIGNATURE, _RUNNER_ACCEPTS_VAR_KEYWORDS, _RUNNER_SIGNATURE_CACHE_RUNNER, _RUNNER_KEYWORD_SUPPORT
+
+    if _RUNNER_SIGNATURE_CACHE_RUNNER is not runner:
+        _RUNNER_SIGNATURE_CACHE_RUNNER = runner
+        _RUNNER_SIGNATURE = None
+        _RUNNER_ACCEPTS_VAR_KEYWORDS = None
+        _RUNNER_KEYWORD_SUPPORT.clear()
+
     if _RUNNER_SIGNATURE is not None or _RUNNER_ACCEPTS_VAR_KEYWORDS is not None:
         return
     try:
@@ -830,11 +838,11 @@ def _cache_runner_signature(runner: Callable[..., Any]) -> None:
 
 
 def _runner_supports_keyword(runner: Callable[..., Any], name: str) -> bool:
+    _cache_runner_signature(runner)
+
     support = _RUNNER_KEYWORD_SUPPORT.get(name)
     if support is not None:
         return support
-
-    _cache_runner_signature(runner)
 
     if _RUNNER_ACCEPTS_VAR_KEYWORDS or _RUNNER_SIGNATURE is None:
         support = True
@@ -4080,10 +4088,15 @@ def run_policy_simulation(
         if "deep_carbon_pricing" in params:
             supports_deep = True
         else:
-            supports_deep = any(
+            has_var_kwargs = any(
                 parameter.kind is inspect.Parameter.VAR_KEYWORD
                 for parameter in params.values()
             )
+            if has_var_kwargs:
+                supports_deep = True
+            else:
+                modern_keywords = {"tol", "max_iter", "relaxation", "price_cap"}
+                supports_deep = not modern_keywords.issubset(params.keys())
 
     if not supports_deep and deep_carbon_pricing:
         return {
