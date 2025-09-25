@@ -142,8 +142,10 @@ def test_imports_increase_with_carbon_price() -> None:
         }
     )
 
-    low_price = solve_from_frames(frames, 2030, allowance_cost=0.0)
-    high_price = solve_from_frames(frames, 2030, allowance_cost=40.0)
+    low_price = solve_from_frames(frames, 2030, allowance_cost=0.0, carbon_price=0.0)
+    high_price = solve_from_frames(
+        frames, 2030, allowance_cost=0.0, carbon_price=40.0
+    )
 
     assert low_price.imports_to_covered == pytest.approx(0.0, abs=1e-6)
     assert high_price.imports_to_covered > low_price.imports_to_covered
