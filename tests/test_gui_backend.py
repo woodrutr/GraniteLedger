@@ -158,6 +158,52 @@ def test_backend_policy_toggle_affects_price():
     _cleanup_temp_dir(disabled)
 
 
+def test_backend_handles_renamed_engine_outputs(monkeypatch):
+    config = _baseline_config()
+    frames = _frames_for_years([2025])
+
+    annual = pd.DataFrame([{"year": 2025, "p_co2": 12.0}])
+    emissions = pd.DataFrame([{"year": 2025, "region": "default", "emissions_tons": 1.0}])
+    prices = pd.DataFrame([{"year": 2025, "region": "default", "price": 45.0}])
+    flows = pd.DataFrame(
+        [{"year": 2025, "from_region": "A", "to_region": "B", "flow_mwh": 10.0}]
+    )
+
+    class FakeOutputs:
+        def __init__(self) -> None:
+            self.annual_results = annual
+            self.emissions = emissions
+            self.dispatch_price_by_region = prices
+            self.network_flows = flows
+
+        def to_csv(self, outdir):
+            outdir = Path(outdir)
+            outdir.mkdir(parents=True, exist_ok=True)
+            self.annual_results.to_csv(outdir / "annual.csv", index=False)
+            self.emissions.to_csv(outdir / "emissions_by_region.csv", index=False)
+            self.dispatch_price_by_region.to_csv(outdir / "price_by_region.csv", index=False)
+            self.network_flows.to_csv(outdir / "flows.csv", index=False)
+
+    def fake_runner(*args, **kwargs):
+        return FakeOutputs()
+
+    monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: fake_runner)
+
+    result = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2025,
+        frames=frames,
+    )
+
+    pd.testing.assert_frame_equal(result["annual"], annual)
+    pd.testing.assert_frame_equal(result["emissions_by_region"], emissions)
+    pd.testing.assert_frame_equal(result["price_by_region"], prices)
+    pd.testing.assert_frame_equal(result["flows"], flows)
+
+    _cleanup_temp_dir(result)
+
+
 def test_backend_disabled_toggle_propagates_flags(monkeypatch):
     real_runner = importlib.import_module("engine.run_loop").run_end_to_end_from_frames
     captured: dict[str, object] = {}
