@@ -4017,7 +4017,6 @@ def _reset_run_state_on_reload() -> None:
         st.session_state[_SESSION_RUN_TOKEN_KEY] = _CURRENT_SESSION_RUN_TOKEN
         st.session_state['run_in_progress'] = False
         st.session_state.pop('pending_run', None)
-        st.session_state.pop('show_confirm_modal', None)
 
 
 def _advance_script_iteration() -> int:
@@ -4051,7 +4050,6 @@ def _recover_stuck_run_state(current_iteration: int) -> None:
         LOGGER.warning('Detected stale run_in_progress flag; resetting run state')
         st.session_state['run_in_progress'] = False
         st.session_state.pop('pending_run', None)
-        st.session_state.pop('show_confirm_modal', None)
         st.session_state.pop(_ACTIVE_RUN_ITERATION_KEY, None)
 
 
@@ -4463,8 +4461,6 @@ def main() -> None:
         show_csv_downloads=False,
     )
     run_clicked = False
-    pending_run: Mapping[str, Any] | None = None
-    show_confirm_modal = False
     run_in_progress = False
 
     
@@ -4622,20 +4618,7 @@ def main() -> None:
     execute_run = False
     run_inputs: dict[str, Any] | None = None
 
-    pending_run_value = st.session_state.get("pending_run")
-    pending_run = pending_run_value if isinstance(pending_run_value, Mapping) else None
-    show_confirm_modal = bool(st.session_state.get("show_confirm_modal"))
     run_in_progress = bool(st.session_state.get("run_in_progress"))
-
-    def _supports_streamlit_dialogs() -> bool:
-        version_str = getattr(st, "__version__", "0")
-        try:
-            major, minor, *_ = version_str.split(".")
-            return int(major) > 1 or (int(major) == 1 and int(minor) >= 31)
-        except Exception:
-            return hasattr(st, "dialog")
-
-    dialog_supported = _supports_streamlit_dialogs()
 
     def _collect_run_blocking_errors() -> list[str]:
         blocking: list[str] = []
@@ -4646,14 +4629,6 @@ def main() -> None:
             if text and text not in blocking:
                 blocking.append(text)
         return blocking
-
-    def _clear_confirmation_button_state() -> None:
-        try:
-            _ensure_streamlit()
-        except ModuleNotFoundError:
-            return
-        st.session_state.pop("confirm_run", None)
-        st.session_state.pop("cancel_run", None)
 
     # Build the payload that actually drives the engine
     dispatch_use_network = bool(
@@ -4695,15 +4670,6 @@ def main() -> None:
         "assumption_notes": list(assumption_notes),
     }
 
-    def _build_summary_from_payload(payload: Mapping[str, Any]) -> list[tuple[str, Any]]:
-        builder = globals().get("_build_run_summary")
-        if callable(builder):
-            try:
-                return builder(payload, config_label=config_label)
-            except Exception:  # pragma: no cover
-                LOGGER.exception("Unable to build run summary")
-        return []
-
     def _clone_run_payload(source: Mapping[str, Any]) -> dict[str, Any]:
         base = {k: v for k, v in source.items() if k != "frames"}
         try:
@@ -4713,119 +4679,25 @@ def main() -> None:
         cloned["frames"] = source.get("frames")
         return cloned
 
-    # Handle Run button -> create pending run + show confirm
+    # Handle Run button -> validate and immediately execute
     if run_clicked:
-        _clear_confirmation_button_state()
         if run_in_progress:
             st.info("A simulation is already in progress. Wait for it to finish before starting another run.")
-        elif _collect_run_blocking_errors():
-            st.error("Resolve the configuration issues above before running the simulation.")
-            st.session_state.pop("pending_run", None)
-            st.session_state.pop("show_confirm_modal", None)
-            pending_run = None
-            show_confirm_modal = False
         else:
-            payload = _clone_run_payload(current_run_payload)
-            st.session_state["pending_run"] = {
-                "params": payload,
-                "summary": _build_summary_from_payload(payload),
-            }
-            st.session_state["show_confirm_modal"] = True
-            pending_run = st.session_state["pending_run"]
-            show_confirm_modal = True
-
-    # If we have a pending run but modal is not shown, show it
-    if isinstance(pending_run, Mapping) and not show_confirm_modal and not run_in_progress:
-        st.session_state["show_confirm_modal"] = True
-        show_confirm_modal = True
-
-    # Confirm/cancel modal workflow
-    if isinstance(pending_run, Mapping) and show_confirm_modal and not run_in_progress:
-        # Keep payload fresh with current UI selections
-        refreshed_payload = _clone_run_payload(current_run_payload)
-        st.session_state["pending_run"] = {
-            "params": refreshed_payload,
-            "summary": _build_summary_from_payload(refreshed_payload),
-        }
-        pending_run = st.session_state["pending_run"]
-        pending_params = refreshed_payload
-
-        use_dialog = dialog_supported and hasattr(st, "dialog")
-
-        def _render_confirm_modal() -> tuple[bool, bool]:
-            st.markdown("You are about to run the model with the following configuration:")
-            summary_details = pending_run.get("summary", [])
-            if isinstance(summary_details, list) and summary_details:
-                st.markdown("\n".join(f"- **{k}:** {v}" for k, v in summary_details))
-            else:
-                st.markdown("*No configuration details available.*")
-
-            st.markdown("**Do you want to continue and run the model?**")
-            c1, c2 = st.columns(2)
-            ok = c1.button("Confirm Run", type="primary", key="confirm_run")
-            cancel = c2.button("Cancel", key="cancel_run")
-
-            confirm_state = bool(st.session_state.get("confirm_run"))
-            cancel_state = bool(st.session_state.get("cancel_run"))
-            return ok or confirm_state, cancel or cancel_state
-
-        confirm_clicked = False
-        cancel_clicked = False
-
-        if use_dialog:
-            clicks: dict[str, bool] = {"confirm": False, "cancel": False}
-
-            @st.dialog("Confirm model run")
-            def _show_confirm_dialog() -> None:
-                ok, cancel = _render_confirm_modal()
-                clicks["confirm"] = ok
-                clicks["cancel"] = cancel
-
-            _show_confirm_dialog()
-            confirm_clicked = clicks["confirm"]
-            cancel_clicked = clicks["cancel"]
-        else:
-            with st.expander("Confirm model run"):
-                confirm_clicked, cancel_clicked = _render_confirm_modal()
-
-        if cancel_clicked:
-            st.session_state.pop("pending_run", None)
-            st.session_state.pop("show_confirm_modal", None)
-            st.session_state.pop(_ACTIVE_RUN_ITERATION_KEY, None)
-            st.session_state["run_in_progress"] = False
-            _clear_confirmation_button_state()
-            pending_run = None
-            show_confirm_modal = False
-            run_in_progress = False
-            _trigger_streamlit_rerun()
-
-        elif confirm_clicked:
             blocking = _collect_run_blocking_errors()
             if blocking:
                 st.error("Resolve the configuration issues above before running the simulation.")
                 st.session_state["run_blocking_errors"] = blocking
-                st.session_state.pop("pending_run", None)
-                st.session_state.pop("show_confirm_modal", None)
                 st.session_state["run_in_progress"] = False
-                _clear_confirmation_button_state()
-                pending_run = None
-                show_confirm_modal = False
-                run_in_progress = False
             else:
-                # Transition to execution
-                run_inputs = dict(pending_params)
+                # Transition to execution immediately when the button is clicked
+                run_inputs = _clone_run_payload(current_run_payload)
                 execute_run = True
+                st.session_state.pop("run_blocking_errors", None)
                 st.session_state["run_in_progress"] = True
                 st.session_state[_ACTIVE_RUN_ITERATION_KEY] = st.session_state.get(
                     _ACTIVE_RUN_ITERATION_KEY, 0
                 )
-                st.session_state.pop("pending_run", None)
-                st.session_state.pop("show_confirm_modal", None)
-                _clear_confirmation_button_state()
-                pending_run = None
-                show_confirm_modal = False
-                run_in_progress = True
-
     # Sync dispatch flag for downstream logic
     dispatch_use_network = bool(
         dispatch_settings.enabled and dispatch_settings.mode == "network"
@@ -4879,7 +4751,6 @@ def main() -> None:
             st.session_state[_ACTIVE_RUN_ITERATION_KEY] = st.session_state.get(
                 _ACTIVE_RUN_ITERATION_KEY, 0
             )
-            st.session_state.pop("show_confirm_modal", None)
             _cleanup_session_temp_dirs()
 
             progress_state = _reset_progress_state()
