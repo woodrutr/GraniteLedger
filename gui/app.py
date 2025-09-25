@@ -379,6 +379,189 @@ class CarbonPolicyConfig:
 
 
 @dataclass
+class RunProgressState:
+    """State container for tracking and rendering run progress."""
+
+    stage: str = "idle"
+    message: str = ""
+    percent_complete: int = 0
+    total_years: int = 1
+    current_index: int = -1
+    current_year: Any | None = None
+    log: list[str] = field(default_factory=list)
+
+    def reset(self) -> None:
+        """Return the tracker to an initial idle state."""
+
+        self.stage = "idle"
+        self.message = ""
+        self.percent_complete = 0
+        self.total_years = 1
+        self.current_index = -1
+        self.current_year = None
+        self.log.clear()
+
+
+def _ensure_progress_state() -> RunProgressState:
+    """Return the progress tracker stored in the current Streamlit session."""
+
+    if st is None:
+        raise ModuleNotFoundError(STREAMLIT_REQUIRED_MESSAGE)
+
+    state = st.session_state.get("_run_progress_state")
+    if isinstance(state, RunProgressState):
+        return state
+
+    tracker = RunProgressState()
+    st.session_state["_run_progress_state"] = tracker
+    return tracker
+
+
+def _reset_progress_state() -> RunProgressState:
+    """Reset the session progress tracker and return it."""
+
+    tracker = _ensure_progress_state()
+    tracker.reset()
+    return tracker
+
+
+def _bounded_percent(value: float | int) -> int:
+    """Clamp a numeric percent to the inclusive range [0, 100]."""
+
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, min(100, int(round(numeric))))
+
+
+def _progress_update_from_stage(
+    stage: str,
+    payload: Mapping[str, object],
+    state: RunProgressState,
+) -> tuple[str, int]:
+    """Derive a status message and completion percent for the given progress stage."""
+
+    def _as_int(value: object, default: int = 0) -> int:
+        try:
+            return int(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return default
+
+    def _as_float(value: object) -> float | None:
+        try:
+            if value is None:
+                return None
+            return float(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return None
+
+    message = state.message or ""
+    percent = state.percent_complete
+
+    if stage == "run_start":
+        total = _as_int(payload.get("total_years"), 0)
+        if total <= 0:
+            total = 1
+        state.total_years = total
+        state.current_index = -1
+        state.current_year = None
+        message = f"Preparing simulation for {total} year(s)…"
+        percent = 0
+    elif stage == "year_start":
+        index = _as_int(payload.get("index"), 0)
+        total = max(state.total_years, 1)
+        year_val = payload.get("year")
+        state.current_index = index
+        state.current_year = year_val
+        fraction = max(0.0, min(1.0, index / total))
+        percent = int(round(fraction * 100))
+        year_display = str(year_val) if year_val is not None else "N/A"
+        message = f"Simulating year {year_display} ({index + 1} of {total})"
+    elif stage == "iteration":
+        iteration = _as_int(payload.get("iteration"), 0)
+        year_val = payload.get("year", state.current_year)
+        year_display = str(year_val) if year_val is not None else "N/A"
+        price_val = _as_float(payload.get("price"))
+        if price_val is not None:
+            message = (
+                f"Year {year_display}: iteration {iteration} "
+                f"(price ≈ {price_val:,.2f})"
+            )
+        else:
+            message = f"Year {year_display}: iteration {iteration}"
+    elif stage == "year_complete":
+        index = _as_int(payload.get("index"), state.current_index)
+        total = max(state.total_years, 1)
+        year_val = payload.get("year", state.current_year)
+        state.current_index = index
+        state.current_year = year_val
+        fraction = max(0.0, min(1.0, (index + 1) / total))
+        percent = int(round(fraction * 100))
+        price_val = _as_float(payload.get("price"))
+        year_display = str(year_val) if year_val is not None else str(index + 1)
+        if price_val is not None:
+            message = (
+                f"Completed year {year_display} of {total} "
+                f"(price {price_val:,.2f})"
+            )
+        else:
+            message = f"Completed year {year_display} of {total}"
+    else:
+        message = f"{stage.replace('_', ' ').title()}…"
+
+    return message, _bounded_percent(percent)
+
+
+def _record_progress_log(state: RunProgressState, message: str, stage: str) -> None:
+    """Append a readable entry to the progress log, coalescing noisy updates."""
+
+    if not message:
+        return
+
+    if stage == "iteration":
+        if state.log and "iteration" in state.log[-1]:
+            state.log[-1] = message
+        else:
+            state.log.append(message)
+    else:
+        state.log.append(message)
+
+    max_entries = 60
+    if len(state.log) > max_entries:
+        state.log[:] = state.log[-max_entries:]
+
+
+def _progress_log_markdown(entries: Sequence[str]) -> str:
+    """Render the most recent progress entries as a markdown bullet list."""
+
+    recent = list(entries)[-12:]
+    return "\n".join(f"- {entry}" for entry in recent)
+
+
+def _sync_progress_ui(
+    state: RunProgressState,
+    message_placeholder,
+    progress_bar,
+    log_placeholder,
+) -> None:
+    """Synchronize the rendered progress widgets with the stored state."""
+
+    message = state.message.strip()
+    if message:
+        message_placeholder.write(message)
+    else:
+        message_placeholder.caption("Run a simulation to view progress updates.")
+
+    progress_bar.progress(_bounded_percent(state.percent_complete))
+
+    if state.log:
+        log_placeholder.markdown(_progress_log_markdown(state.log))
+    else:
+        log_placeholder.caption("Progress updates will appear here during the run.")
+
+
+@dataclass
 class CarbonPriceConfig:
     """Normalized carbon price configuration for engine runs."""
 
@@ -4281,6 +4464,22 @@ def main() -> None:
     inputs_for_run: Mapping[str, Any] = run_inputs or {}
     run_result: Mapping[str, Any] | None = None
 
+    progress_state = _ensure_progress_state()
+    progress_section = st.container()
+    with progress_section:
+        st.subheader('Run progress')
+        progress_bar_widget = st.progress(
+            _bounded_percent(progress_state.percent_complete)
+        )
+        progress_message_placeholder = st.empty()
+        progress_log_placeholder = st.empty()
+    _sync_progress_ui(
+        progress_state,
+        progress_message_placeholder,
+        progress_bar_widget,
+        progress_log_placeholder,
+    )
+
     if execute_run:
         frames_for_execution = inputs_for_run.get('frames', frames_for_run)
         if frames_for_execution is None:
@@ -4295,89 +4494,43 @@ def main() -> None:
         elif assumption_notes_value not in (None, ''):
             assumption_notes_for_run = [str(assumption_notes_value)]
 
-        progress_text = None
-        progress_bar = None
-
         try:
             st.session_state['run_in_progress'] = True
             st.session_state.pop('show_confirm_modal', None)
             _cleanup_session_temp_dirs()
-            progress_text = st.empty()
-            progress_bar = st.progress(0)
-            progress_state: dict[str, Any] = {
-                'total_years': 1,
-                'current_index': -1,
-                'current_year': None,
-            }
+            progress_state = _reset_progress_state()
+            progress_state.stage = 'initializing'
+            progress_state.message = 'Initializing simulation…'
+            progress_state.percent_complete = 0
+            _record_progress_log(progress_state, progress_state.message, progress_state.stage)
+            _sync_progress_ui(
+                progress_state,
+                progress_message_placeholder,
+                progress_bar_widget,
+                progress_log_placeholder,
+            )
 
             def _update_progress(stage: str, payload: Mapping[str, object]) -> None:
-                def _as_int(value: object, default: int = 0) -> int:
-                    try:
-                        return int(value)  # type: ignore[arg-type]
-                    except (TypeError, ValueError):
-                        return default
-
-                def _as_float(value: object) -> float | None:
-                    try:
-                        if value is None:
-                            return None
-                        return float(value)  # type: ignore[arg-type]
-                    except (TypeError, ValueError):
-                        return None
-
-                if stage == 'run_start':
-                    total = _as_int(payload.get('total_years'), 0)
-                    if total <= 0:
-                        total = 1
-                    progress_state['total_years'] = total
-                    progress_state['current_index'] = -1
-                    progress_state['current_year'] = None
-                    progress_bar.progress(0)
-                    progress_text.text(f'Preparing simulation for {total} year(s)...')
+                try:
+                    message, percent = _progress_update_from_stage(
+                        stage,
+                        payload,
+                        progress_state,
+                    )
+                except Exception:  # pragma: no cover - defensive guard
+                    LOGGER.exception('Unable to interpret progress update for stage %s', stage)
                     return
 
-                if stage == 'year_start':
-                    index = _as_int(payload.get('index'), 0)
-                    year_val = payload.get('year')
-                    total = max(progress_state.get('total_years', 1), 1)
-                    progress_state['current_index'] = index
-                    progress_state['current_year'] = year_val
-                    completed_fraction = max(0.0, min(1.0, index / total))
-                    progress_bar.progress(int(completed_fraction * 100))
-                    year_display = str(year_val) if year_val is not None else 'N/A'
-                    progress_text.text(f'Simulating year {year_display} ({index + 1} of {total})')
-                    return
-
-                if stage == 'iteration':
-                    year_val = payload.get('year', progress_state.get('current_year'))
-                    iteration = _as_int(payload.get('iteration'), 0)
-                    price_val = _as_float(payload.get('price'))
-                    year_display = str(year_val) if year_val is not None else 'N/A'
-                    if price_val is not None:
-                        progress_text.text(
-                            f'Year {year_display}: iteration {iteration} (price ≈ {price_val:,.2f})'
-                        )
-                    else:
-                        progress_text.text(f'Year {year_display}: iteration {iteration}')
-                    return
-
-                if stage == 'year_complete':
-                    index = _as_int(payload.get('index'), progress_state.get('current_index', -1))
-                    total = max(progress_state.get('total_years', 1), 1)
-                    progress_state['current_index'] = index
-                    year_val = payload.get('year', progress_state.get('current_year'))
-                    progress_state['current_year'] = year_val
-                    completed_fraction = max(0.0, min(1.0, (index + 1) / total))
-                    progress_bar.progress(min(100, int(completed_fraction * 100)))
-                    price_val = _as_float(payload.get('price'))
-                    year_display = str(year_val) if year_val is not None else str(index + 1)
-                    if price_val is not None:
-                        progress_text.text(
-                            f'Completed year {year_display} of {total} (price {price_val:,.2f})'
-                        )
-                    else:
-                        progress_text.text(f'Completed year {year_display} of {total}')
-                    return
+                progress_state.stage = stage
+                progress_state.message = message
+                progress_state.percent_complete = percent
+                _record_progress_log(progress_state, message, stage)
+                _sync_progress_ui(
+                    progress_state,
+                    progress_message_placeholder,
+                    progress_bar_widget,
+                    progress_log_placeholder,
+                )
 
             try:
                 run_result = run_policy_simulation(
@@ -4438,11 +4591,26 @@ def main() -> None:
             LOGGER.exception('Policy simulation failed before execution could complete')
             run_result = {'error': str(exc)}
         finally:
-            if progress_bar is not None:
-                progress_bar.empty()
-            if progress_text is not None:
-                progress_text.empty()
             st.session_state['run_in_progress'] = False
+            if isinstance(run_result, Mapping):
+                if 'error' in run_result:
+                    progress_state.stage = 'error'
+                    progress_state.message = f"Simulation failed: {run_result['error']}"
+                else:
+                    progress_state.stage = 'complete'
+                    progress_state.percent_complete = 100
+                    progress_state.message = 'Simulation complete. Outputs updated below.'
+            else:
+                progress_state.stage = 'error'
+                progress_state.message = 'Simulation ended before producing results.'
+
+            _record_progress_log(progress_state, progress_state.message, progress_state.stage)
+            _sync_progress_ui(
+                progress_state,
+                progress_message_placeholder,
+                progress_bar_widget,
+                progress_log_placeholder,
+            )
 
         if isinstance(run_result, Mapping) and 'temp_dir' in run_result:
             st.session_state['temp_dirs'] = [str(run_result['temp_dir'])]
