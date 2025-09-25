@@ -45,6 +45,13 @@ from gui.region_metadata import (
     region_alias_map,
     region_display_label,
 )
+from gui.module_settings import (
+    CarbonModuleSettings,
+    DispatchModuleSettings,
+    GeneralConfigResult,
+    IncentivesModuleSettings,
+    OutputsModuleSettings,
+)
 
 if importlib.util.find_spec("streamlit") is not None:  # pragma: no cover - optional dependency
     import streamlit as st  # type: ignore[import-not-found]
@@ -145,40 +152,6 @@ SIDEBAR_STYLE = """
 """
 
 _download_directory_fallback_used = False
-
-@dataclass
-class GeneralConfigResult:
-    """Container for user-selected general configuration settings."""
-
-    config_label: str
-    config_source: Any
-    run_config: dict[str, Any]
-    candidate_years: list[int]
-    start_year: int
-    end_year: int
-    selected_years: list[int]
-    regions: list[int | str]
-
-
-@dataclass
-class CarbonModuleSettings:
-    """Record of carbon policy sidebar selections."""
-
-    enabled: bool
-    price_enabled: bool
-    enable_floor: bool
-    enable_ccr: bool
-    ccr1_enabled: bool
-    ccr2_enabled: bool
-    banking_enabled: bool
-    coverage_regions: list[str]
-    control_period_years: int | None
-    price_per_ton: float
-    initial_bank: float = 0.0
-    cap_regions: list[Any] = field(default_factory=list)
-    price_schedule: dict[int, float] = field(default_factory=dict)
-    errors: list[str] = field(default_factory=list)
-
 
 @dataclass
 class CarbonPolicyConfig:
@@ -381,38 +354,6 @@ def _merge_module_dicts(*sections: Mapping[str, Any] | None) -> dict[str, dict[s
             else:
                 merged[key] = {'value': settings}
     return merged
-
-
-@dataclass
-class DispatchModuleSettings:
-    """Record of electricity dispatch sidebar selections."""
-
-    enabled: bool
-    mode: str
-    capacity_expansion: bool
-    reserve_margins: bool
-    errors: list[str] = field(default_factory=list)
-
-
-@dataclass
-class IncentivesModuleSettings:
-    """Record of incentives sidebar selections."""
-
-    enabled: bool
-    production_credits: list[dict[str, Any]]
-    investment_credits: list[dict[str, Any]]
-    errors: list[str] = field(default_factory=list)
-
-
-@dataclass
-class OutputsModuleSettings:
-    """Record of outputs sidebar selections."""
-
-    enabled: bool
-    directory: str
-    resolved_path: Path
-    show_csv_downloads: bool
-    errors: list[str] = field(default_factory=list)
 
 
 # -------------------------
@@ -652,46 +593,6 @@ def _normalize_coverage_selection(selection: Any) -> list[str]:
         return ["All"]
     return normalized
 
-
-# -------------------------
-# Dataclasses
-# -------------------------
-@dataclass
-class GeneralConfigResult:
-    config_label: str
-    config_source: Any
-    run_config: dict[str, Any]
-    candidate_years: list[int]
-    start_year: int
-    end_year: int
-    selected_years: list[int]
-    regions: list[int | str]
-
-
-@dataclass
-class DispatchModuleSettings:
-    enabled: bool
-    mode: str
-    capacity_expansion: bool
-    reserve_margins: bool
-    errors: list[str] = field(default_factory=list)
-
-
-@dataclass
-class IncentivesModuleSettings:
-    enabled: bool
-    production_credits: list[dict[str, Any]]
-    investment_credits: list[dict[str, Any]]
-    errors: list[str] = field(default_factory=list)
-
-
-@dataclass
-class OutputsModuleSettings:
-    enabled: bool
-    directory: str
-    resolved_path: Path
-    show_csv_downloads: bool
-    errors: list[str] = field(default_factory=list)
 
 # General Config UI
 # -------------------------
@@ -3959,8 +3860,10 @@ def main() -> None:
         'ccr1_enabled': bool(carbon_settings.ccr1_enabled),
         'ccr2_enabled': bool(carbon_settings.ccr2_enabled),
         'allowance_banking_enabled': bool(carbon_settings.banking_enabled),
+        'coverage_regions': list(carbon_settings.coverage_regions),
         'initial_bank': float(carbon_settings.initial_bank),
         'control_period_years': carbon_settings.control_period_years,
+        'cap_regions': list(carbon_settings.cap_regions),
         'carbon_price_enabled': bool(carbon_settings.price_enabled),
         'carbon_price_value': float(carbon_settings.price_per_ton),
         'carbon_price_schedule': dict(carbon_settings.price_schedule),
@@ -4072,8 +3975,10 @@ def main() -> None:
                     'ccr1_enabled': bool(carbon_settings.ccr1_enabled),
                     'ccr2_enabled': bool(carbon_settings.ccr2_enabled),
                     'allowance_banking_enabled': bool(carbon_settings.banking_enabled),
+                    'initial_bank': float(carbon_settings.initial_bank),
                     'coverage_regions': list(carbon_settings.coverage_regions),
                     'control_period_years': carbon_settings.control_period_years,
+                    'cap_regions': list(carbon_settings.cap_regions),
                     'carbon_price_enabled': bool(carbon_settings.price_enabled),
                     'carbon_price_value': float(carbon_settings.price_per_ton),
                     'carbon_price_schedule': dict(carbon_settings.price_schedule),
