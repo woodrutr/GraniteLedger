@@ -12,6 +12,8 @@ import logging
 import re
 import shutil
 import sys
+import os
+import shutil
 import tempfile
 from collections.abc import Iterable, Mapping
 from contextlib import contextmanager
@@ -2641,12 +2643,64 @@ def _ensure_years_in_demand(frames: FramesType, years: Iterable[int]) -> FramesT
     return frames.with_frame("demand", demand_updated)
 
 
+def _temporary_output_directory(prefix: str = "bluesky_gui_") -> Path:
+    """Create a writable temporary directory for engine CSV outputs.
+
+    Some execution environments (notably restricted containers) provide a
+    read-only ``/tmp``.  ``tempfile.mkdtemp`` raises :class:`PermissionError`
+    in those cases which previously caused CSV exports to silently fail.  To
+    keep the download buttons working we attempt a small set of candidate
+    locations and fall back to a project specific directory under the current
+    working directory or the user's home directory.
+    """
+
+    candidates: list[Path] = []
+
+    override = os.environ.get("GRANITELEDGER_TMPDIR")
+    if override:
+        candidates.append(Path(override).expanduser())
+
+    candidates.append(Path(tempfile.gettempdir()))
+    candidates.append(Path.cwd() / ".graniteledger" / "tmp")
+
+    home = Path.home()
+    if home:
+        candidates.append(home / ".graniteledger" / "tmp")
+
+    tried: list[tuple[Path, Exception]] = []
+    seen: set[Path] = set()
+    for base_dir in candidates:
+        if base_dir in seen:
+            continue
+        seen.add(base_dir)
+
+        try:
+            base_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            tried.append((base_dir, exc))
+            continue
+
+        try:
+            return Path(tempfile.mkdtemp(prefix=prefix, dir=str(base_dir)))
+        except OSError as exc:
+            tried.append((base_dir, exc))
+            continue
+
+    error_detail = "; ".join(f"{path}: {exc}" for path, exc in tried) or "no candidates available"
+    raise RuntimeError(f"Unable to create temporary output directory ({error_detail}).")
+
+
 def _write_outputs_to_temp(outputs) -> tuple[Path, dict[str, bytes]]:
-    temp_dir = Path(tempfile.mkdtemp(prefix="bluesky_gui_"))
+    temp_dir = _temporary_output_directory()
     # Expect outputs to expose to_csv(target_dir)
     if hasattr(outputs, "to_csv"):
-        outputs.to_csv(temp_dir)
+        try:
+            outputs.to_csv(temp_dir)
+        except Exception:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            raise
     else:
+        shutil.rmtree(temp_dir, ignore_errors=True)
         raise TypeError("Runner outputs object does not implement to_csv(Path).")
     csv_files: dict[str, bytes] = {}
     for csv_path in temp_dir.glob("*.csv"):
