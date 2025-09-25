@@ -21,7 +21,13 @@ class DummyDispatchResult(dict):
 
 
 def _linear_dispatch(emission_params: dict[int, tuple[float, float]]):
-    def dispatch(year: int, price: float) -> DummyDispatchResult:
+    def dispatch(
+        year: int,
+        price: float,
+        *,
+        carbon_price: float | None = None,
+    ) -> DummyDispatchResult:
+        _ = carbon_price  # carbon price adjustments are ignored in this stub
         base, slope = emission_params[int(year)]
         emissions = max(base - slope * price, 0.0)
         return DummyDispatchResult(emissions)
@@ -48,6 +54,7 @@ def _run_supply_simulation(
         *,
         use_network=False,
         period_weights=None,
+        carbon_price_schedule=None,
     ):
         return dispatch
 
