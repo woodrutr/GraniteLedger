@@ -4764,7 +4764,10 @@ def main() -> None:
             c1, c2 = st.columns(2)
             ok = c1.button("Confirm Run", type="primary", key="confirm_run")
             cancel = c2.button("Cancel", key="cancel_run")
-            return ok, cancel
+
+            confirm_state = bool(st.session_state.get("confirm_run"))
+            cancel_state = bool(st.session_state.get("cancel_run"))
+            return ok or confirm_state, cancel or cancel_state
 
         confirm_clicked = False
         cancel_clicked = False
