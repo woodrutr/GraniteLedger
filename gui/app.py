@@ -42,6 +42,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for packaged app exec
 
 try:
     from gui.region_metadata import (
+        DEFAULT_REGION_METADATA,
         canonical_region_label,
         canonical_region_value,
         region_alias_map,
@@ -52,6 +53,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when run as a script
     # ``gui`` is not importable via normal absolute imports.  Import directly in
     # that scenario so the module remains runnable without ``streamlit run``.
     from region_metadata import (  # type: ignore[import-not-found]
+        DEFAULT_REGION_METADATA,
         canonical_region_label,
         canonical_region_value,
         region_alias_map,
@@ -992,6 +994,12 @@ def render_carbon_module_controls(
         if not label:
             return
         coverage_labels.add(label)
+
+    # Always include the default 25-region dataset in the coverage options so the
+    # multiselect remains comprehensive even when the base configuration only
+    # lists a subset of regions.
+    for default_region in DEFAULT_REGION_METADATA:
+        _register_coverage_value(default_region)
 
     if region_options is not None:
         for entry in region_options:
