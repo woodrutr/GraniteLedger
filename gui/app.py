@@ -3937,6 +3937,40 @@ def main() -> None:
     run_inputs: dict[str, Any] | None = None
     pending_run = st.session_state.get('pending_run')
     show_confirm_modal = bool(st.session_state.get('show_confirm_modal'))
+    dispatch_use_network = bool(
+        dispatch_settings.enabled and dispatch_settings.mode == 'network'
+    )
+
+    current_run_payload = {
+        'config_source': copy.deepcopy(run_config),
+        'start_year': int(start_year_val),
+        'end_year': int(end_year_val),
+        'carbon_policy_enabled': bool(carbon_settings.enabled),
+        'enable_floor': bool(carbon_settings.enable_floor),
+        'enable_ccr': bool(carbon_settings.enable_ccr),
+        'ccr1_enabled': bool(carbon_settings.ccr1_enabled),
+        'ccr2_enabled': bool(carbon_settings.ccr2_enabled),
+        'allowance_banking_enabled': bool(carbon_settings.banking_enabled),
+        'control_period_years': carbon_settings.control_period_years,
+        'carbon_price_enabled': bool(carbon_settings.price_enabled),
+        'carbon_price_value': float(carbon_settings.price_per_ton),
+        'carbon_price_schedule': dict(carbon_settings.price_schedule),
+        'dispatch_use_network': dispatch_use_network,
+        'module_config': copy.deepcopy(run_config.get('modules', {})),
+    }
+
+    if isinstance(pending_run, Mapping):
+        pending_params = pending_run.get('params')
+        if not isinstance(pending_params, Mapping):
+            st.session_state.pop('pending_run', None)
+            pending_run = None
+            st.session_state['show_confirm_modal'] = False
+            show_confirm_modal = False
+        elif pending_params != current_run_payload:
+            st.session_state.pop('pending_run', None)
+            pending_run = None
+            st.session_state['show_confirm_modal'] = False
+            show_confirm_modal = False
 
     if isinstance(pending_run, Mapping) and show_confirm_modal:
         # Pick dialog if available (Streamlit >= 1.31), else use expander
@@ -4001,32 +4035,32 @@ def main() -> None:
     if isinstance(pending_run, Mapping) and not show_confirm_modal:
         show_confirm_modal = True
         st.session_state['show_confirm_modal'] = True
-
     if run_clicked:
         if assumption_errors or module_errors:
             st.error('Resolve the configuration issues above before running the simulation.')
         else:
-            run_inputs_payload = {
-                'config_source': copy.deepcopy(run_config),
-                'start_year': int(start_year_val),
-                'end_year': int(end_year_val),
-                'carbon_policy_enabled': bool(carbon_settings.enabled),
-                'enable_floor': bool(carbon_settings.enable_floor),
-                'enable_ccr': bool(carbon_settings.enable_ccr),
-                'ccr1_enabled': bool(carbon_settings.ccr1_enabled),
-                'ccr2_enabled': bool(carbon_settings.ccr2_enabled),
-                'allowance_banking_enabled': bool(carbon_settings.banking_enabled),
-                'coverage_regions': list(carbon_settings.coverage_regions),
-                'control_period_years': carbon_settings.control_period_years,
-                'cap_regions': list(carbon_settings.cap_regions),
-                'carbon_price_enabled': bool(carbon_settings.price_enabled),
-                'carbon_price_value': float(carbon_settings.price_per_ton),
-                'carbon_price_schedule': dict(carbon_settings.price_schedule),
-                'dispatch_use_network': bool(
-                    dispatch_settings.enabled and dispatch_settings.mode == 'network'
-                ),
-                'module_config': copy.deepcopy(run_config.get('modules', {})),
-            }
+            run_inputs_payload = copy.deepcopy(current_run_payload)
+            if not run_inputs_payload:
+                run_inputs_payload = {
+                    'config_source': copy.deepcopy(run_config),
+                    'start_year': int(start_year_val),
+                    'end_year': int(end_year_val),
+                    'carbon_policy_enabled': bool(carbon_settings.enabled),
+                    'enable_floor': bool(carbon_settings.enable_floor),
+                    'enable_ccr': bool(carbon_settings.enable_ccr),
+                    'ccr1_enabled': bool(carbon_settings.ccr1_enabled),
+                    'ccr2_enabled': bool(carbon_settings.ccr2_enabled),
+                    'allowance_banking_enabled': bool(carbon_settings.banking_enabled),
+                    'coverage_regions': list(carbon_settings.coverage_regions),
+                    'control_period_years': carbon_settings.control_period_years,
+                    'carbon_price_enabled': bool(carbon_settings.price_enabled),
+                    'carbon_price_value': float(carbon_settings.price_per_ton),
+                    'carbon_price_schedule': dict(carbon_settings.price_schedule),
+                    'dispatch_use_network': bool(
+                        dispatch_settings.enabled and dispatch_settings.mode == 'network'
+                    ),
+                    'module_config': copy.deepcopy(run_config.get('modules', {})),
+                }
 
             summary_builder = globals().get('_build_run_summary')
             summary_details: list[tuple[str, str]]
@@ -4042,9 +4076,11 @@ def main() -> None:
             pending_run = st.session_state['pending_run']
             st.session_state['show_confirm_modal'] = True
             show_confirm_modal = True
+
     dispatch_use_network = bool(
         dispatch_settings.enabled and dispatch_settings.mode == 'network'
     )
+
 
     if run_inputs is not None:
         run_config = copy.deepcopy(run_inputs.get('config_source', run_config))
