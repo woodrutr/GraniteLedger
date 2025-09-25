@@ -2,6 +2,7 @@ import importlib
 import io
 import shutil
 from collections.abc import Mapping
+from pathlib import Path
 
 import pytest
 
@@ -48,6 +49,45 @@ def _cleanup_temp_dir(result: dict) -> None:
     temp_dir = result.get("temp_dir")
     if temp_dir:
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_write_outputs_to_temp_falls_back_when_default_unwritable(monkeypatch):
+    from gui import app as gui_app
+
+    class DummyOutputs:
+        def __init__(self) -> None:
+            self.saved_to: Path | None = None
+
+        def to_csv(self, target: Path) -> None:
+            self.saved_to = Path(target)
+            csv_path = self.saved_to / "dummy.csv"
+            csv_path.write_text("value")
+
+    fallback_base = Path.cwd() / ".graniteledger" / "tmp"
+
+    monkeypatch.delenv("GRANITELEDGER_TMPDIR", raising=False)
+    monkeypatch.setattr(gui_app.tempfile, "gettempdir", lambda: "/unwritable")
+
+    def fake_mkdtemp(prefix: str, dir: str | None = None) -> str:
+        if dir == "/unwritable":
+            raise PermissionError("read-only filesystem")
+        assert dir == str(fallback_base)
+        target_dir = Path(dir) / "fallback"
+        target_dir.mkdir(parents=True, exist_ok=False)
+        return str(target_dir)
+
+    monkeypatch.setattr(gui_app.tempfile, "mkdtemp", fake_mkdtemp)
+
+    outputs = DummyOutputs()
+    temp_dir, csv_files = gui_app._write_outputs_to_temp(outputs)
+
+    try:
+        assert outputs.saved_to == temp_dir
+        assert temp_dir == fallback_base / "fallback"
+        assert csv_files == {"dummy.csv": b"value"}
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        shutil.rmtree(fallback_base, ignore_errors=True)
 
 
 def test_backend_generates_outputs(tmp_path):
@@ -116,6 +156,52 @@ def test_backend_policy_toggle_affects_price():
 
     _cleanup_temp_dir(enabled)
     _cleanup_temp_dir(disabled)
+
+
+def test_backend_handles_renamed_engine_outputs(monkeypatch):
+    config = _baseline_config()
+    frames = _frames_for_years([2025])
+
+    annual = pd.DataFrame([{"year": 2025, "p_co2": 12.0}])
+    emissions = pd.DataFrame([{"year": 2025, "region": "default", "emissions_tons": 1.0}])
+    prices = pd.DataFrame([{"year": 2025, "region": "default", "price": 45.0}])
+    flows = pd.DataFrame(
+        [{"year": 2025, "from_region": "A", "to_region": "B", "flow_mwh": 10.0}]
+    )
+
+    class FakeOutputs:
+        def __init__(self) -> None:
+            self.annual_results = annual
+            self.emissions = emissions
+            self.dispatch_price_by_region = prices
+            self.network_flows = flows
+
+        def to_csv(self, outdir):
+            outdir = Path(outdir)
+            outdir.mkdir(parents=True, exist_ok=True)
+            self.annual_results.to_csv(outdir / "annual.csv", index=False)
+            self.emissions.to_csv(outdir / "emissions_by_region.csv", index=False)
+            self.dispatch_price_by_region.to_csv(outdir / "price_by_region.csv", index=False)
+            self.network_flows.to_csv(outdir / "flows.csv", index=False)
+
+    def fake_runner(*args, **kwargs):
+        return FakeOutputs()
+
+    monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: fake_runner)
+
+    result = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2025,
+        frames=frames,
+    )
+
+    pd.testing.assert_frame_equal(result["annual"], annual)
+    pd.testing.assert_frame_equal(result["emissions_by_region"], emissions)
+    pd.testing.assert_frame_equal(result["price_by_region"], prices)
+    pd.testing.assert_frame_equal(result["flows"], flows)
+
+    _cleanup_temp_dir(result)
 
 
 def test_backend_disabled_toggle_propagates_flags(monkeypatch):
@@ -216,6 +302,16 @@ def test_backend_control_period_override_applies(monkeypatch):
     assert carbon_cfg.get("control_period_years") == 4
 
     _cleanup_temp_dir(result)
+
+
+def test_backend_errors_when_demand_years_do_not_overlap():
+    config = _baseline_config()
+    frames = _frames_for_years([2030, 2031])
+
+    result = run_policy_simulation(config, frames=frames)
+
+    assert "error" in result
+    assert "Demand data covers years" in result["error"]
 
 
 def test_backend_dispatch_and_carbon_modules(monkeypatch):
