@@ -6,6 +6,7 @@ The GUI assumes that core dependencies such as :mod:`pandas` are installed.
 from __future__ import annotations
 
 import copy
+import itertools
 import io
 import importlib.util
 import logging
@@ -4267,6 +4268,25 @@ def main() -> None:
     show_confirm_modal = bool(st.session_state.get('show_confirm_modal'))
     run_in_progress = bool(st.session_state.get('run_in_progress'))
 
+    def _supports_streamlit_dialogs() -> bool:
+        version_str = getattr(st, "__version__", "0")
+        try:
+            major, minor, *_ = version_str.split(".")
+            return int(major) > 1 or (int(major) == 1 and int(minor) >= 31)
+        except Exception:
+            return hasattr(st, "dialog")
+
+    dialog_supported = _supports_streamlit_dialogs()
+
+    def _collect_run_blocking_errors() -> list[str]:
+        blocking: list[str] = []
+        for message in itertools.chain(assumption_errors, module_errors):
+            if message:
+                text = str(message).strip()
+                if text and text not in blocking:
+                    blocking.append(text)
+        return blocking
+
     def _clear_confirmation_button_state() -> None:
         try:
             _ensure_streamlit()
@@ -4377,13 +4397,7 @@ def main() -> None:
         pending_run = st.session_state['pending_run']
         pending_params = refreshed_payload
 
-        streamlit_version = getattr(st, "__version__", "0")
-        use_dialog = False
-        try:
-            major, minor, *_ = streamlit_version.split(".")
-            use_dialog = int(major) > 1 or (int(major) == 1 and int(minor) >= 31)
-        except Exception:
-            use_dialog = hasattr(st, "dialog")
+        use_dialog = dialog_supported and hasattr(st, "dialog")
 
         def _render_confirm_modal() -> tuple[bool, bool]:
             """Render confirm/cancel buttons and summary text for the pending run."""
@@ -4436,15 +4450,46 @@ def main() -> None:
             show_confirm_modal = False
             run_in_progress = False
         elif confirm_clicked:
-            run_inputs = dict(pending_params)
-            execute_run = True
-            st.session_state['run_in_progress'] = True
-            st.session_state.pop('pending_run', None)
-            st.session_state.pop('show_confirm_modal', None)
-            _clear_confirmation_button_state()
-            pending_run = None
-            show_confirm_modal = False
-            run_in_progress = True
+            blocking_errors = _collect_run_blocking_errors()
+            if blocking_errors:
+                st.session_state['run_blocking_errors'] = blocking_errors
+                st.session_state.pop('pending_run', None)
+                st.session_state.pop('show_confirm_modal', None)
+                st.session_state['run_in_progress'] = False
+                _clear_confirmation_button_state()
+                pending_run = None
+                show_confirm_modal = False
+                run_in_progress = False
+            else:
+                run_inputs = dict(pending_params)
+                execute_run = True
+                st.session_state['run_in_progress'] = True
+                st.session_state.pop('pending_run', None)
+                st.session_state.pop('show_confirm_modal', None)
+                st.session_state.pop('run_blocking_errors', None)
+                _clear_confirmation_button_state()
+                pending_run = None
+                show_confirm_modal = False
+                run_in_progress = True
+
+    blocking_messages = st.session_state.get('run_blocking_errors')
+    if isinstance(blocking_messages, Sequence) and blocking_messages:
+        def _render_blocking_errors_dialog() -> None:
+            st.error('Resolve the following issues before running the simulation:')
+            for issue in blocking_messages:
+                st.markdown(f'- {issue}')
+            if st.button('Close', key='dismiss_run_blockers'):
+                st.session_state.pop('run_blocking_errors', None)
+
+        if dialog_supported and hasattr(st, 'dialog'):
+            @st.dialog('Run blocked by configuration errors')
+            def _show_blocking_dialog() -> None:
+                _render_blocking_errors_dialog()
+
+            _show_blocking_dialog()
+        else:
+            with st.expander('Resolve configuration issues to run the model'):
+                _render_blocking_errors_dialog()
 
     # Sync dispatch toggle for downstream logic
     dispatch_use_network = bool(
@@ -4494,9 +4539,11 @@ def main() -> None:
         elif assumption_notes_value not in (None, ''):
             assumption_notes_for_run = [str(assumption_notes_value)]
 
+        st.session_state['run_in_progress'] = True
+        st.session_state.pop('show_confirm_modal', None)
+        run_failure: Exception | None = None
+
         try:
-            st.session_state['run_in_progress'] = True
-            st.session_state.pop('show_confirm_modal', None)
             _cleanup_session_temp_dirs()
             progress_state = _reset_progress_state()
             progress_state.stage = 'initializing'
@@ -4585,25 +4632,17 @@ def main() -> None:
                     progress_cb=_update_progress,
                 )
             except Exception as exc:  # pragma: no cover - defensive guard
+                run_failure = exc
                 LOGGER.exception('Policy simulation failed during execution')
-                run_result = {'error': str(exc)}
+                raise
         except Exception as exc:  # pragma: no cover - defensive guard
-            LOGGER.exception('Policy simulation failed before execution could complete')
-            run_result = {'error': str(exc)}
-        finally:
-            st.session_state['run_in_progress'] = False
-            if isinstance(run_result, Mapping):
-                if 'error' in run_result:
-                    progress_state.stage = 'error'
-                    progress_state.message = f"Simulation failed: {run_result['error']}"
-                else:
-                    progress_state.stage = 'complete'
-                    progress_state.percent_complete = 100
-                    progress_state.message = 'Simulation complete. Outputs updated below.'
-            else:
-                progress_state.stage = 'error'
-                progress_state.message = 'Simulation ended before producing results.'
-
+            if run_failure is None:
+                run_failure = exc
+                LOGGER.exception('Policy simulation failed before execution could complete')
+            progress_state.stage = 'error'
+            progress_state.message = f'Simulation failed: {run_failure}'
+            if not isinstance(progress_state.percent_complete, (int, float)):
+                progress_state.percent_complete = 0
             _record_progress_log(progress_state, progress_state.message, progress_state.stage)
             _sync_progress_ui(
                 progress_state,
@@ -4611,16 +4650,30 @@ def main() -> None:
                 progress_bar_widget,
                 progress_log_placeholder,
             )
-
-        if isinstance(run_result, Mapping) and 'temp_dir' in run_result:
-            st.session_state['temp_dirs'] = [str(run_result['temp_dir'])]
-
-        if run_result is not None:
-            st.session_state['last_result'] = run_result
-            # Ensure any pending confirmation state is cleared after completion
             st.session_state.pop('pending_run', None)
             st.session_state.pop('show_confirm_modal', None)
-            result = run_result
+            st.session_state.pop('last_result', None)
+            raise
+        else:
+            progress_state.stage = 'complete'
+            progress_state.percent_complete = 100
+            progress_state.message = 'Simulation complete. Outputs updated below.'
+            _record_progress_log(progress_state, progress_state.message, progress_state.stage)
+            _sync_progress_ui(
+                progress_state,
+                progress_message_placeholder,
+                progress_bar_widget,
+                progress_log_placeholder,
+            )
+            if isinstance(run_result, Mapping) and 'temp_dir' in run_result:
+                st.session_state['temp_dirs'] = [str(run_result['temp_dir'])]
+            if run_result is not None:
+                st.session_state['last_result'] = run_result
+                st.session_state.pop('pending_run', None)
+                st.session_state.pop('show_confirm_modal', None)
+                result = run_result
+        finally:
+            st.session_state['run_in_progress'] = False
 
     outputs_container = st.container()
     with outputs_container:
