@@ -27,7 +27,11 @@ _REGION_PRICES: Dict[str, float] = {
 }
 
 
-def solve(year: int, allowance_cost: float) -> DispatchResult:
+def solve(
+    year: int,
+    allowance_cost: float,
+    carbon_price: float = 0.0,
+) -> DispatchResult:
     """Return a deterministic dispatch result.
 
     Parameters
@@ -37,10 +41,14 @@ def solve(year: int, allowance_cost: float) -> DispatchResult:
         generation by fuel.
     allowance_cost:
         Carbon allowance price in dollars per ton. Emissions respond linearly
-        using ``E = max(0, a - b * allowance_cost)``.
+        to the combined effect of ``allowance_cost`` and ``carbon_price`` using
+        ``E = max(0, a - b * (allowance_cost + carbon_price))``.
+    carbon_price:
+        Exogenous carbon price applied to all emissions in dollars per ton.
     """
 
-    emissions = max(0.0, EMISSIONS_INTERCEPT - EMISSIONS_SLOPE * allowance_cost)
+    effective_price = float(allowance_cost) + float(carbon_price)
+    emissions = max(0.0, EMISSIONS_INTERCEPT - EMISSIONS_SLOPE * effective_price)
 
     # Keep the generation mix dynamic across years while maintaining the same
     # proportions between fuels.

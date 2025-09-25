@@ -171,7 +171,10 @@ def test_clear_year_matches_bisection_solver(emissions, enable_ccr):
         enable_ccr=bool(policy.ccr1_enabled or policy.ccr2_enabled),
     )
 
-    def dispatch_stub(_year: int, _price: float) -> dict[str, float]:
+    def dispatch_stub(
+        _year: int, _price: float, carbon_price: float = 0.0
+    ) -> dict[str, float]:
+        assert carbon_price >= 0.0  # unused but ensures signature compatibility
         return {"emissions_tons": float(emissions)}
 
     summary = _solve_allowance_market_year(

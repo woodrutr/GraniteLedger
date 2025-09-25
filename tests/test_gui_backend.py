@@ -29,6 +29,7 @@ def _baseline_config() -> dict:
             "annual_surrender_frac": 1.0,
             "carry_pct": 1.0,
             "full_compliance_years": [2026],
+            "control_period_years": 2,
             "resolution": "annual",
         },
     }
@@ -157,6 +158,66 @@ def test_backend_disabled_toggle_propagates_flags(monkeypatch):
     _cleanup_temp_dir(result)
 
 
+def test_backend_control_period_defaults_to_config(monkeypatch):
+    real_runner = importlib.import_module("engine.run_loop").run_end_to_end_from_frames
+    captured: dict[str, object] = {}
+
+    def capturing_runner(frames, **kwargs):
+        policy = frames.policy().to_policy()
+        captured["control"] = policy.control_period_length
+        return real_runner(frames, **kwargs)
+
+    monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: capturing_runner)
+
+    config = _baseline_config()
+    frames = _frames_for_years([2025, 2026])
+
+    result = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2026,
+        frames=frames,
+        control_period_years=None,
+    )
+
+    assert "error" not in result
+    assert captured.get("control") == 2
+    carbon_cfg = result["module_config"]["carbon_policy"]
+    assert carbon_cfg.get("control_period_years") is None
+
+    _cleanup_temp_dir(result)
+
+
+def test_backend_control_period_override_applies(monkeypatch):
+    real_runner = importlib.import_module("engine.run_loop").run_end_to_end_from_frames
+    captured: dict[str, object] = {}
+
+    def capturing_runner(frames, **kwargs):
+        policy = frames.policy().to_policy()
+        captured["control"] = policy.control_period_length
+        return real_runner(frames, **kwargs)
+
+    monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: capturing_runner)
+
+    config = _baseline_config()
+    frames = _frames_for_years([2025, 2026])
+
+    result = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2026,
+        frames=frames,
+        control_period_years=4,
+    )
+
+    assert "error" not in result
+    assert captured.get("control") == 4
+    carbon_cfg = result["module_config"]["carbon_policy"]
+    assert carbon_cfg.get("control_period_years") == 4
+
+    _cleanup_temp_dir(result)
+
+
 def test_backend_dispatch_and_carbon_modules(monkeypatch):
     real_runner = importlib.import_module("engine.run_loop").run_end_to_end_from_frames
     captured: dict[str, object] = {}
@@ -212,6 +273,7 @@ def test_backend_carbon_price_disables_cap(monkeypatch):
     def capturing_runner(frames, **kwargs):
         policy = frames.policy().to_policy()
         captured["carbon_enabled"] = policy.enabled
+        captured["control"] = policy.control_period_length
         captured["price_schedule"] = kwargs.get("carbon_price_schedule")
         return real_runner(frames, **kwargs)
 
@@ -235,12 +297,14 @@ def test_backend_carbon_price_disables_cap(monkeypatch):
 
     assert "error" not in result
     assert captured.get("carbon_enabled") is False
+    assert captured.get("control") is None
     schedule = captured.get("price_schedule")
     assert isinstance(schedule, Mapping)
     assert schedule.get(2026) == pytest.approx(37.0)
 
     carbon_cfg = result["module_config"].get("carbon_policy", {})
     assert carbon_cfg.get("enabled") is False
+    assert carbon_cfg.get("control_period_years") is None
     price_cfg = result["module_config"].get("carbon_price", {})
     assert price_cfg.get("enabled") is True
     assert price_cfg.get("price_per_ton") == pytest.approx(37.0)
@@ -384,6 +448,8 @@ def test_backend_coverage_selection_builds_frame(monkeypatch):
     )
     assert north_flag is True
     assert south_flag is False
+    carbon_cfg = result["module_config"].get("carbon_policy", {})
+    assert carbon_cfg.get("regions") == ["north"]
 
     _cleanup_temp_dir(result)
 
