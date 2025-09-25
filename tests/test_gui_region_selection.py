@@ -1,6 +1,7 @@
 """Tests for region selection normalization behavior in the GUI."""
 
 from gui.app import _normalize_region_labels
+from gui.region_metadata import canonical_region_value, region_display_label
 
 
 def test_normalize_removes_individuals_when_all_selected_after_individuals():
@@ -35,3 +36,13 @@ def test_normalize_leaves_all_only_selection_unchanged():
     selection = ['All']
 
     assert _normalize_region_labels(selection, previous) == ['All']
+
+
+def test_canonical_region_value_accepts_alias():
+    assert canonical_region_value('NYISO') == 9
+
+
+def test_region_display_label_contains_code_and_iso():
+    label = region_display_label(9)
+    assert 'NYUP' in label
+    assert 'NYISO' in label
