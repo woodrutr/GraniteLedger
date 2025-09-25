@@ -3813,6 +3813,7 @@ def main() -> None:
     st.write('Upload a run configuration and execute the annual allowance market engine.')
     st.session_state.setdefault('last_result', None)
     st.session_state.setdefault('temp_dirs', [])
+    st.session_state.setdefault('run_in_progress', False)
 
     module_errors: list[str] = []
     assumption_notes: list[str] = []
@@ -4002,6 +4003,7 @@ def main() -> None:
     run_inputs: dict[str, Any] | None = None
     pending_run = st.session_state.get('pending_run')
     show_confirm_modal = bool(st.session_state.get('show_confirm_modal'))
+    run_in_progress = bool(st.session_state.get('run_in_progress'))
     dispatch_use_network = bool(
         dispatch_settings.enabled and dispatch_settings.mode == 'network'
     )
@@ -4037,17 +4039,6 @@ def main() -> None:
             st.session_state['show_confirm_modal'] = False
             show_confirm_modal = False
 
-    def _request_streamlit_rerun() -> None:
-        try:
-            _ensure_streamlit()
-        except ModuleNotFoundError:  # pragma: no cover - GUI dependency missing
-            return
-        rerun_callable = getattr(st, "rerun", None)
-        if not callable(rerun_callable):
-            rerun_callable = getattr(st, "experimental_rerun", None)
-        if callable(rerun_callable):  # pragma: no cover - UI side-effect
-            rerun_callable()
-
     def _clear_confirmation_button_state() -> None:
         try:
             _ensure_streamlit()
@@ -4056,7 +4047,7 @@ def main() -> None:
         st.session_state.pop("confirm_run", None)
         st.session_state.pop("cancel_run", None)
 
-    if isinstance(pending_run, Mapping) and show_confirm_modal:
+    if isinstance(pending_run, Mapping) and show_confirm_modal and not run_in_progress:
         # Pick dialog if available (Streamlit >= 1.31), else use expander
         streamlit_version = getattr(st, "__version__", "0")
         use_dialog = False
@@ -4103,23 +4094,24 @@ def main() -> None:
 
         if cancel_clicked:
             st.session_state.pop('pending_run', None)
-            st.session_state['show_confirm_modal'] = False
+            st.session_state.pop('show_confirm_modal', None)
+            st.session_state['run_in_progress'] = False
             _clear_confirmation_button_state()
             pending_run = None
             show_confirm_modal = False
-            _request_streamlit_rerun()
         elif confirm_clicked:
             pending_params = pending_run.get('params')
             if isinstance(pending_params, Mapping):
-                st.session_state['confirmed_run_params'] = dict(pending_params)
+                run_inputs = dict(pending_params)
+                execute_run = True
+                st.session_state['run_in_progress'] = True
             st.session_state.pop('pending_run', None)
-            st.session_state['show_confirm_modal'] = False
+            st.session_state.pop('show_confirm_modal', None)
             _clear_confirmation_button_state()
             pending_run = None
             show_confirm_modal = False
-            _request_streamlit_rerun()
 
-    if isinstance(pending_run, Mapping) and not show_confirm_modal:
+    if isinstance(pending_run, Mapping) and not show_confirm_modal and not run_in_progress:
         show_confirm_modal = True
         st.session_state['show_confirm_modal'] = True
     if run_clicked:
@@ -4168,11 +4160,6 @@ def main() -> None:
         dispatch_settings.enabled and dispatch_settings.mode == 'network'
     )
 
-    confirmed_run_params = st.session_state.pop('confirmed_run_params', None)
-    if isinstance(confirmed_run_params, Mapping):
-        run_inputs = dict(confirmed_run_params)
-        execute_run = True
-
     if run_inputs is not None:
         run_config = copy.deepcopy(run_inputs.get('config_source', run_config))
         start_year_val = int(run_inputs.get('start_year', start_year_val))
@@ -4186,6 +4173,8 @@ def main() -> None:
     inputs_for_run: Mapping[str, Any] = run_inputs or {}
 
     if execute_run:
+        st.session_state['run_in_progress'] = True
+        st.session_state.pop('show_confirm_modal', None)
         _cleanup_session_temp_dirs()
         progress_text = st.empty()
         progress_bar = st.progress(0)
@@ -4320,6 +4309,7 @@ def main() -> None:
         finally:
             progress_bar.empty()
             progress_text.empty()
+            st.session_state['run_in_progress'] = False
 
         if 'temp_dir' in result:
             st.session_state['temp_dirs'] = [str(result['temp_dir'])]
@@ -4328,7 +4318,10 @@ def main() -> None:
     outputs_container = st.container()
     with outputs_container:
         st.subheader('Model outputs')
-        _render_outputs_panel(result)
+        if st.session_state.get('run_in_progress'):
+            st.info('Simulation in progress... progress updates appear above.')
+        else:
+            _render_outputs_panel(result)
 
     if isinstance(result, Mapping):
         if 'error' in result:
