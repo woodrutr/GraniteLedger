@@ -40,11 +40,21 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - fallback for packaged app execution
     PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
-from gui.region_metadata import (
-    canonical_region_value,
-    region_alias_map,
-    region_display_label,
-)
+try:
+    from gui.region_metadata import (
+        canonical_region_value,
+        region_alias_map,
+        region_display_label,
+    )
+except ModuleNotFoundError:  # pragma: no cover - fallback when run as a script
+    # ``python gui/app.py`` executes the file outside of the package context, so
+    # ``gui`` is not importable via normal absolute imports.  Import directly in
+    # that scenario so the module remains runnable without ``streamlit run``.
+    from region_metadata import (  # type: ignore[import-not-found]
+        canonical_region_value,
+        region_alias_map,
+        region_display_label,
+    )
 
 if importlib.util.find_spec("streamlit") is not None:  # pragma: no cover - optional dependency
     import streamlit as st  # type: ignore[import-not-found]
