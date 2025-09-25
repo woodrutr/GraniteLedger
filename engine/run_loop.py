@@ -1037,6 +1037,36 @@ def _build_engine_outputs(
     )
 
 
+def _coerce_price_schedule(
+    schedule: Mapping[int, float] | Mapping[str, Any] | float | None,
+) -> dict[int, float]:
+    """Normalise ``schedule`` into a mapping keyed by integer years."""
+
+    if schedule is None:
+        return {}
+
+    if isinstance(schedule, Mapping):
+        normalised: dict[int, float] = {}
+        for key, value in schedule.items():
+            try:
+                year = int(key)
+            except (TypeError, ValueError):
+                continue
+            try:
+                price = float(value)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                continue
+            normalised[year] = price
+        return normalised
+
+    try:
+        value = float(schedule)
+    except (TypeError, ValueError):
+        return {}
+
+    return {None: value}  # type: ignore[index]
+
+
 def run_end_to_end_from_frames(
     frames: Frames | Mapping[str, pd.DataFrame],
     *,
@@ -1049,6 +1079,7 @@ def run_end_to_end_from_frames(
     enable_ccr: bool = True,
     price_cap: float = 1000.0,
     use_network: bool = False,
+    carbon_price_schedule: Mapping[int, float] | Mapping[str, Any] | float | None = None,
     progress_cb: ProgressCallback | None = None,
 ) -> EngineOutputs:
     """Run the integrated dispatch and allowance engine returning structured outputs.
@@ -1090,6 +1121,19 @@ def run_end_to_end_from_frames(
 
     cp_track: dict[str, dict[str, float | list[int] | None]] = {}
 
+    price_schedule = _coerce_price_schedule(carbon_price_schedule)
+
+    def _price_for_year(period: Any) -> float:
+        try:
+            year_int = int(period)
+        except (TypeError, ValueError):
+            year_int = None
+        if year_int is not None and year_int in price_schedule:
+            return float(price_schedule[year_int])
+        if None in price_schedule:
+            return float(price_schedule[None])
+        return 0.0
+
     for idx, year in enumerate(years_sequence):
         if progress_cb is not None:
             progress_cb(
@@ -1102,11 +1146,12 @@ def run_end_to_end_from_frames(
             )
 
         if not policy_enabled_global:
-            dispatch_result = dispatch_solver(year, 0.0)
+            price = _price_for_year(year)
+            dispatch_result = dispatch_solver(year, price)
             emissions = _extract_emissions(dispatch_result)
             summary_disabled: dict[str, object] = {
                 'year': year,
-                'p_co2': 0.0,
+                'p_co2': float(price),
                 'available_allowances': float(emissions),
                 'allowances_total': float(emissions),
                 'bank_prev': 0.0,
@@ -1136,7 +1181,7 @@ def run_end_to_end_from_frames(
                         "index": idx,
                         "total_years": total_years,
                         "shortage": False,
-                        "price": 0.0,
+                        "price": float(price),
                         "iterations": 0,
                     },
                 )
