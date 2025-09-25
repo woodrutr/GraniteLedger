@@ -964,7 +964,7 @@ def render_carbon_module_controls(
         price_defaults.get("price_schedule")
     )
 
-    return build_carbon_policy_ui(
+    settings = build_carbon_policy_ui(
         container,
         enabled_default=enabled_default,
         price_defaults=price_defaults,
@@ -980,6 +980,32 @@ def render_carbon_module_controls(
         coverage_default_display=coverage_default_display,
         price_schedule_default=price_schedule_default,
     )
+
+    carbon_record = modules.setdefault("carbon_policy", {})
+    carbon_record.update(
+        {
+            "enabled": bool(settings.enabled),
+            "enable_floor": bool(settings.enable_floor),
+            "enable_ccr": bool(settings.enable_ccr),
+            "ccr1_enabled": bool(settings.ccr1_enabled),
+            "ccr2_enabled": bool(settings.ccr2_enabled),
+            "allowance_banking_enabled": bool(settings.banking_enabled),
+            "coverage_regions": list(settings.coverage_regions),
+            "control_period_years": settings.control_period_years,
+            "bank0": float(settings.initial_bank),
+        }
+    )
+
+    price_record = modules.setdefault("carbon_price", {})
+    price_record.update(
+        {
+            "enabled": bool(settings.price_enabled),
+            "price_per_ton": float(settings.price_per_ton),
+            "price_schedule": dict(settings.price_schedule),
+        }
+    )
+
+    return settings
 
 
 def build_carbon_policy_ui(
