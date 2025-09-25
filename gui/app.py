@@ -903,10 +903,19 @@ def _render_carbon_policy_section(
 ) -> CarbonModuleSettings:
     """Render the carbon policy section wrapper."""
     # You can decide whether to call render_carbon_module_controls here
-    return render_carbon_module_controls(run_config, container)
+    return render_carbon_module_controls(
+        run_config,
+        container,
+        region_options=region_options,
+    )
 
 
-def render_carbon_module_controls(run_config: dict[str, Any], container) -> CarbonModuleSettings:
+def render_carbon_module_controls(
+    run_config: dict[str, Any],
+    container,
+    *,
+    region_options: Iterable[int | str] | None = None,
+) -> CarbonModuleSettings:
     """Render the carbon policy module controls."""
 
     modules = run_config.setdefault("modules", {})
