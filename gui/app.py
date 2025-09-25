@@ -6,6 +6,7 @@ The GUI assumes that core dependencies such as :mod:`pandas` are installed.
 from __future__ import annotations
 
 import copy
+import itertools
 import io
 import importlib.util
 import logging
@@ -4353,122 +4354,45 @@ def main() -> None:
     show_confirm_modal = False
     run_in_progress = False
 
+    
+    
     with st.sidebar:
-        st.markdown(SIDEBAR_STYLE, unsafe_allow_html=True)
+    st.markdown(SIDEBAR_STYLE, unsafe_allow_html=True)
 
-        last_result_mapping = st.session_state.get('last_result')
-        if not isinstance(last_result_mapping, Mapping):
-            last_result_mapping = None
+    last_result_mapping = st.session_state.get("last_result")
+    if not isinstance(last_result_mapping, Mapping):
+        last_result_mapping = None
 
-        (inputs_tab,) = st.tabs(['Inputs'])
+    (inputs_tab,) = st.tabs(["Inputs"])
 
-        with inputs_tab:
-            general_label, general_expanded = SIDEBAR_SECTIONS[0]
-            general_expander = st.expander(general_label, expanded=general_expanded)
-            general_result = _render_general_config_section(
-                general_expander,
-                default_source=DEFAULT_CONFIG_PATH,
-                default_label=DEFAULT_CONFIG_PATH.name,
-                default_config=default_config_data,
-            )
-            run_config = general_result.run_config
-            config_label = general_result.config_label
-            candidate_years = general_result.candidate_years
-            start_year_val = general_result.start_year
-            end_year_val = general_result.end_year
-            selected_years = general_result.selected_years
+    with inputs_tab:
+        # -------- General --------
+        general_label, general_expanded = SIDEBAR_SECTIONS[0]
+        general_expander = st.expander(general_label, expanded=general_expanded)
+        general_result = _render_general_config_section(
+            general_expander,
+            default_source=DEFAULT_CONFIG_PATH,
+            default_label=DEFAULT_CONFIG_PATH.name,
+            default_config=default_config_data,
+        )
+        run_config = general_result.run_config
+        config_label = general_result.config_label
+        candidate_years = general_result.candidate_years
+        start_year_val = general_result.start_year
+        end_year_val = general_result.end_year
+        selected_years = general_result.selected_years
 
-            carbon_label, carbon_expanded = SIDEBAR_SECTIONS[1]
-            carbon_expander = st.expander(carbon_label, expanded=carbon_expanded)
-            carbon_settings = _render_carbon_policy_section(
-                carbon_expander,
-                run_config,
-                region_options=general_result.regions,
-            )
-            module_errors.extend(carbon_settings.errors)
+        # -------- Carbon --------
+        carbon_label, carbon_expanded = SIDEBAR_SECTIONS[1]
+        carbon_expander = st.expander(carbon_label, expanded=carbon_expanded)
+        carbon_settings = _render_carbon_policy_section(
+            carbon_expander,
+            run_config,
+            region_options=general_result.regions,
+        )
+        module_errors.extend(carbon_settings.errors)
 
-            try:
-                frames_for_run = _build_default_frames(
-                    selected_years or [start_year_val],
-                    carbon_policy_enabled=carbon_settings.enabled,
-                    banking_enabled=carbon_settings.banking_enabled,
-                    carbon_price_schedule=(
-                        carbon_settings.price_schedule if carbon_settings.price_enabled else None
-                    ),
-                )
-            except Exception as exc:  # pragma: no cover - defensive UI path
-                frames_for_run = None
-                st.warning(f'Unable to prepare default assumption tables: {exc}')
-
-            dispatch_label, dispatch_expanded = SIDEBAR_SECTIONS[2]
-            dispatch_expander = st.expander(dispatch_label, expanded=dispatch_expanded)
-            dispatch_settings = _render_dispatch_section(dispatch_expander, run_config, frames_for_run)
-            module_errors.extend(dispatch_settings.errors)
-
-            incentives_label, incentives_expanded = SIDEBAR_SECTIONS[3]
-            incentives_expander = st.expander(incentives_label, expanded=incentives_expanded)
-            incentives_settings = _render_incentives_section(
-                incentives_expander,
-                run_config,
-                frames_for_run,
-            )
-            module_errors.extend(incentives_settings.errors)
-
-            outputs_label, outputs_expanded = SIDEBAR_SECTIONS[4]
-            outputs_expander = st.expander(outputs_label, expanded=outputs_expanded)
-            outputs_settings = _render_outputs_section(
-                outputs_expander,
-                run_config,
-                last_result_mapping,
-            )
-            module_errors.extend(outputs_settings.errors)
-
-            st.divider()
-            inputs_header = st.container()
-            inputs_header.subheader('Assumption overrides')
-            inputs_header.caption('Adjust core assumption tables or upload CSV files to override the defaults.')
-            if frames_for_run is not None:
-                demand_tab, units_tab, fuels_tab, transmission_tab = st.tabs(
-                    ['Demand', 'Units', 'Fuels', 'Transmission']
-                )
-                with demand_tab:
-                    frames_for_run, notes, errors = _render_demand_controls(
-                        frames_for_run, selected_years
-                    )
-                    assumption_notes.extend(notes)
-                    assumption_errors.extend(errors)
-                with units_tab:
-                    frames_for_run, notes, errors = _render_units_controls(frames_for_run)
-                    assumption_notes.extend(notes)
-                    assumption_errors.extend(errors)
-                with fuels_tab:
-                    frames_for_run, notes, errors = _render_fuels_controls(frames_for_run)
-                    assumption_notes.extend(notes)
-                    assumption_errors.extend(errors)
-                with transmission_tab:
-                    frames_for_run, notes, errors = _render_transmission_controls(frames_for_run)
-                    assumption_notes.extend(notes)
-                    assumption_errors.extend(errors)
-
-                if assumption_errors:
-                    st.warning('Resolve the highlighted assumption issues before running the simulation.')
-            else:
-                st.info(
-                    'Default assumption tables are unavailable due to a previous error. '
-                    'Resolve the issue above to edit inputs through the GUI.'
-                )
-
-            run_clicked = st.button('Run Model', type='primary', width="stretch")
-
-    try:
-        selected_years = _select_years(candidate_years, start_year_val, end_year_val)
-    except Exception:
-        selected_years = selected_years or []
-    if not selected_years:
-        step = 1 if end_year_val >= start_year_val else -1
-        selected_years = list(range(start_year_val, end_year_val + step, step))
-
-    if frames_for_run is None:
+        # Prepare default frames (defensive)
         try:
             frames_for_run = _build_default_frames(
                 selected_years or [start_year_val],
@@ -4478,259 +4402,351 @@ def main() -> None:
                     carbon_settings.price_schedule if carbon_settings.price_enabled else None
                 ),
             )
-        except Exception as exc:  # pragma: no cover - defensive UI path
+        except Exception as exc:  # pragma: no cover
             frames_for_run = None
-            st.warning(f'Unable to prepare default assumption tables: {exc}')
+            st.warning(f"Unable to prepare default assumption tables: {exc}")
 
-    if module_errors:
-        st.warning('Resolve the module configuration issues highlighted in the sidebar before running the simulation.')
+        # -------- Dispatch --------
+        dispatch_label, dispatch_expanded = SIDEBAR_SECTIONS[2]
+        dispatch_expander = st.expander(dispatch_label, expanded=dispatch_expanded)
+        dispatch_settings = _render_dispatch_section(dispatch_expander, run_config, frames_for_run)
+        module_errors.extend(dispatch_settings.errors)
 
-    execute_run = False
-    run_inputs: dict[str, Any] | None = None
+        # -------- Incentives --------
+        incentives_label, incentives_expanded = SIDEBAR_SECTIONS[3]
+        incentives_expander = st.expander(incentives_label, expanded=incentives_expanded)
+        incentives_settings = _render_incentives_section(
+            incentives_expander,
+            run_config,
+            frames_for_run,
+        )
+        module_errors.extend(incentives_settings.errors)
 
-    pending_run_value = st.session_state.get('pending_run')
-    pending_run = pending_run_value if isinstance(pending_run_value, Mapping) else None
-    show_confirm_modal = bool(st.session_state.get('show_confirm_modal'))
-    run_in_progress = bool(st.session_state.get('run_in_progress'))
+        # -------- Outputs --------
+        outputs_label, outputs_expanded = SIDEBAR_SECTIONS[4]
+        outputs_expander = st.expander(outputs_label, expanded=outputs_expanded)
+        outputs_settings = _render_outputs_section(
+            outputs_expander,
+            run_config,
+            last_result_mapping,
+        )
+        module_errors.extend(outputs_settings.errors)
 
-    def _clear_confirmation_button_state() -> None:
-        try:
-            _ensure_streamlit()
-        except ModuleNotFoundError:  # pragma: no cover - GUI dependency missing
-            return
-        st.session_state.pop("confirm_run", None)
-        st.session_state.pop("cancel_run", None)
+        # -------- Assumptions --------
+        st.divider()
+        inputs_header = st.container()
+        inputs_header.subheader("Assumption overrides")
+        inputs_header.caption(
+            "Adjust core assumption tables or upload CSV files to override the defaults."
+        )
+        if frames_for_run is not None:
+            demand_tab, units_tab, fuels_tab, transmission_tab = st.tabs(
+                ["Demand", "Units", "Fuels", "Transmission"]
+            )
+            with demand_tab:
+                frames_for_run, notes, errors = _render_demand_controls(
+                    frames_for_run, selected_years
+                )
+                assumption_notes.extend(notes)
+                assumption_errors.extend(errors)
+            with units_tab:
+                frames_for_run, notes, errors = _render_units_controls(frames_for_run)
+                assumption_notes.extend(notes)
+                assumption_errors.extend(errors)
+            with fuels_tab:
+                frames_for_run, notes, errors = _render_fuels_controls(frames_for_run)
+                assumption_notes.extend(notes)
+                assumption_errors.extend(errors)
+            with transmission_tab:
+                frames_for_run, notes, errors = _render_transmission_controls(frames_for_run)
+                assumption_notes.extend(notes)
+                assumption_errors.extend(errors)
 
-    confirmed_params = st.session_state.pop('_confirmed_run_params', None)
-    if isinstance(confirmed_params, Mapping):
-        run_inputs = dict(confirmed_params)
-        execute_run = True
-        st.session_state['run_in_progress'] = True
-        run_in_progress = True
-        pending_run = None
-        show_confirm_modal = False
-        st.session_state.pop('pending_run', None)
-        st.session_state.pop('show_confirm_modal', None)
-        _clear_confirmation_button_state()
+            if assumption_errors:
+                st.warning(
+                    "Resolve the highlighted assumption issues before running the simulation."
+                )
+        else:
+            st.info(
+                "Default assumption tables are unavailable due to a previous error. "
+                "Resolve the issue above to edit inputs through the GUI."
+            )
 
-    dispatch_use_network = bool(
-        dispatch_settings.enabled and dispatch_settings.mode == "network"
+        run_clicked = st.button("Run Model", type="primary", use_container_width=True)
+
+# Finalize selected years defensively
+try:
+    selected_years = _select_years(candidate_years, start_year_val, end_year_val)
+except Exception:
+    selected_years = selected_years or []
+if not selected_years:
+    step = 1 if end_year_val >= start_year_val else -1
+    selected_years = list(range(start_year_val, end_year_val + step, step))
+
+# Ensure frames if earlier failed
+if frames_for_run is None:
+    try:
+        frames_for_run = _build_default_frames(
+            selected_years or [start_year_val],
+            carbon_policy_enabled=bool(carbon_settings.enabled),
+            banking_enabled=bool(carbon_settings.banking_enabled),
+            carbon_price_schedule=(
+                carbon_settings.price_schedule if carbon_settings.price_enabled else None
+            ),
+        )
+    except Exception as exc:  # pragma: no cover
+        frames_for_run = None
+        st.warning(f"Unable to prepare default assumption tables: {exc}")
+
+if module_errors:
+    st.warning(
+        "Resolve the module configuration issues highlighted in the sidebar before running the simulation."
     )
 
-    current_run_payload: dict[str, Any] = {
-        "config_source": copy.deepcopy(run_config),
-        "start_year": int(start_year_val),
-        "end_year": int(end_year_val),
-        "carbon_policy_enabled": bool(carbon_settings.enabled),
-        "enable_floor": bool(carbon_settings.enable_floor),
-        "enable_ccr": bool(carbon_settings.enable_ccr),
-        "ccr1_enabled": bool(carbon_settings.ccr1_enabled),
-        "ccr2_enabled": bool(carbon_settings.ccr2_enabled),
-        "ccr1_price": float(carbon_settings.ccr1_price)
-        if carbon_settings.ccr1_price is not None
-        else None,
-        "ccr2_price": float(carbon_settings.ccr2_price)
-        if carbon_settings.ccr2_price is not None
-        else None,
-        "ccr1_escalator_pct": float(carbon_settings.ccr1_escalator_pct),
-        "ccr2_escalator_pct": float(carbon_settings.ccr2_escalator_pct),
-        "allowance_banking_enabled": bool(carbon_settings.banking_enabled),
-        "coverage_regions": list(carbon_settings.coverage_regions),
-        "cap_regions": list(carbon_settings.cap_regions),
-        "initial_bank": float(carbon_settings.initial_bank),
-        "control_period_years": carbon_settings.control_period_years,
-        "carbon_price_enabled": bool(carbon_settings.price_enabled),
-        "carbon_price_value": float(carbon_settings.price_per_ton)
-        if carbon_settings.price_enabled
-        else 0.0,
-        "carbon_price_schedule": (
-            dict(carbon_settings.price_schedule)
-            if carbon_settings.price_enabled
-            else {}
-        ),
-        "dispatch_use_network": dispatch_use_network,
-        "module_config": copy.deepcopy(run_config.get("modules", {})),
-        "frames": frames_for_run,
-        "assumption_notes": list(assumption_notes),
-    }
+# ---- Run orchestration state ----
+execute_run = False
+run_inputs: dict[str, Any] | None = None
 
-    def _build_summary_from_payload(payload: Mapping[str, Any]) -> list[tuple[str, Any]]:
-        summary_builder = globals().get("_build_run_summary")
-        if callable(summary_builder):
-            try:
-                return summary_builder(payload, config_label=config_label)
-            except Exception:  # pragma: no cover - defensive guard
-                LOGGER.exception("Unable to build run summary")
-        return []
+pending_run_value = st.session_state.get("pending_run")
+pending_run = pending_run_value if isinstance(pending_run_value, Mapping) else None
+show_confirm_modal = bool(st.session_state.get("show_confirm_modal"))
+run_in_progress = bool(st.session_state.get("run_in_progress"))
 
-    def _clone_run_payload(source: Mapping[str, Any]) -> dict[str, Any]:
-        base = {key: value for key, value in source.items() if key != 'frames'}
+def _supports_streamlit_dialogs() -> bool:
+    version_str = getattr(st, "__version__", "0")
+    try:
+        major, minor, *_ = version_str.split(".")
+        return int(major) > 1 or (int(major) == 1 and int(minor) >= 31)
+    except Exception:
+        return hasattr(st, "dialog")
+
+dialog_supported = _supports_streamlit_dialogs()
+
+def _collect_run_blocking_errors() -> list[str]:
+    blocking: list[str] = []
+    for message in itertools.chain(assumption_errors, module_errors):
+        if not message:
+            continue
+        text = str(message).strip()
+        if text and text not in blocking:
+            blocking.append(text)
+    return blocking
+
+def _clear_confirmation_button_state() -> None:
+    try:
+        _ensure_streamlit()
+    except ModuleNotFoundError:
+        return
+    st.session_state.pop("confirm_run", None)
+    st.session_state.pop("cancel_run", None)
+
+# Build the payload that actually drives the engine
+dispatch_use_network = bool(
+    dispatch_settings.enabled and dispatch_settings.mode == "network"
+)
+
+current_run_payload: dict[str, Any] = {
+    "config_source": copy.deepcopy(run_config),
+    "start_year": int(start_year_val),
+    "end_year": int(end_year_val),
+    "carbon_policy_enabled": bool(carbon_settings.enabled),
+    "enable_floor": bool(carbon_settings.enable_floor),
+    "enable_ccr": bool(carbon_settings.enable_ccr),
+    "ccr1_enabled": bool(carbon_settings.ccr1_enabled),
+    "ccr2_enabled": bool(carbon_settings.ccr2_enabled),
+    "ccr1_price": float(carbon_settings.ccr1_price)
+    if carbon_settings.ccr1_price is not None
+    else None,
+    "ccr2_price": float(carbon_settings.ccr2_price)
+    if carbon_settings.ccr2_price is not None
+    else None,
+    "ccr1_escalator_pct": float(carbon_settings.ccr1_escalator_pct),
+    "ccr2_escalator_pct": float(carbon_settings.ccr2_escalator_pct),
+    "allowance_banking_enabled": bool(carbon_settings.banking_enabled),
+    "coverage_regions": list(carbon_settings.coverage_regions),
+    "cap_regions": list(getattr(carbon_settings, "cap_regions", [])),
+    "initial_bank": float(carbon_settings.initial_bank),
+    "control_period_years": carbon_settings.control_period_years,
+    "carbon_price_enabled": bool(carbon_settings.price_enabled),
+    "carbon_price_value": float(carbon_settings.price_per_ton)
+    if carbon_settings.price_enabled
+    else 0.0,
+    "carbon_price_schedule": (
+        dict(carbon_settings.price_schedule) if carbon_settings.price_enabled else {}
+    ),
+    "dispatch_use_network": dispatch_use_network,
+    "module_config": copy.deepcopy(run_config.get("modules", {})),
+    "frames": frames_for_run,
+    "assumption_notes": list(assumption_notes),
+}
+
+def _build_summary_from_payload(payload: Mapping[str, Any]) -> list[tuple[str, Any]]:
+    builder = globals().get("_build_run_summary")
+    if callable(builder):
         try:
-            cloned = copy.deepcopy(base)
-        except Exception:  # pragma: no cover - fallback for non-copyable entries
-            cloned = dict(base)
-        cloned['frames'] = source.get('frames')
-        return cloned
+            return builder(payload, config_label=config_label)
+        except Exception:  # pragma: no cover
+            LOGGER.exception("Unable to build run summary")
+    return []
 
-    pending_run_value = st.session_state.get('pending_run')
-    pending_run = pending_run_value if isinstance(pending_run_value, Mapping) else None
-    show_confirm_modal = bool(st.session_state.get('show_confirm_modal'))
-    run_in_progress = bool(st.session_state.get('run_in_progress'))
+def _clone_run_payload(source: Mapping[str, Any]) -> dict[str, Any]:
+    base = {k: v for k, v in source.items() if k != "frames"}
+    try:
+        cloned = copy.deepcopy(base)
+    except Exception:  # pragma: no cover
+        cloned = dict(base)
+    cloned["frames"] = source.get("frames")
+    return cloned
 
-    if run_clicked:
-        _clear_confirmation_button_state()
-        if run_in_progress:
-            st.info(
-                'A simulation is already in progress. Wait for it to finish before starting another run.'
-            )
-        elif assumption_errors or module_errors:
-            st.error(
-                'Resolve the configuration issues above before running the simulation.'
-            )
-            st.session_state.pop('pending_run', None)
-            st.session_state.pop('show_confirm_modal', None)
-            pending_run = None
-            show_confirm_modal = False
-        else:
-            payload = _clone_run_payload(current_run_payload)
-            st.session_state['pending_run'] = {
-                'params': payload,
-                'summary': _build_summary_from_payload(payload),
-            }
-            st.session_state['show_confirm_modal'] = True
-            pending_run = st.session_state['pending_run']
-            show_confirm_modal = True
-
-    if isinstance(pending_run, Mapping) and not show_confirm_modal and not run_in_progress:
-        st.session_state['show_confirm_modal'] = True
+# Handle Run button -> create pending run + show confirm
+if run_clicked:
+    _clear_confirmation_button_state()
+    if run_in_progress:
+        st.info("A simulation is already in progress. Wait for it to finish before starting another run.")
+    elif _collect_run_blocking_errors():
+        st.error("Resolve the configuration issues above before running the simulation.")
+        st.session_state.pop("pending_run", None)
+        st.session_state.pop("show_confirm_modal", None)
+        pending_run = None
+        show_confirm_modal = False
+    else:
+        payload = _clone_run_payload(current_run_payload)
+        st.session_state["pending_run"] = {
+            "params": payload,
+            "summary": _build_summary_from_payload(payload),
+        }
+        st.session_state["show_confirm_modal"] = True
+        pending_run = st.session_state["pending_run"]
         show_confirm_modal = True
 
-    if isinstance(pending_run, Mapping) and show_confirm_modal and not run_in_progress:
-        # Keep the pending payload in sync with the current UI selections
-        refreshed_payload = _clone_run_payload(current_run_payload)
-        st.session_state['pending_run'] = {
-            'params': refreshed_payload,
-            'summary': _build_summary_from_payload(refreshed_payload),
-        }
-        pending_run = st.session_state['pending_run']
-        pending_params = refreshed_payload
+# If we have a pending run but modal is not shown, show it
+if isinstance(pending_run, Mapping) and not show_confirm_modal and not run_in_progress:
+    st.session_state["show_confirm_modal"] = True
+    show_confirm_modal = True
 
-        streamlit_version = getattr(st, "__version__", "0")
-        use_dialog = False
-        try:
-            major, minor, *_ = streamlit_version.split(".")
-            use_dialog = int(major) > 1 or (int(major) == 1 and int(minor) >= 31)
-        except Exception:
-            use_dialog = hasattr(st, "dialog")
+# Confirm/cancel modal workflow
+if isinstance(pending_run, Mapping) and show_confirm_modal and not run_in_progress:
+    # Keep payload fresh with current UI selections
+    refreshed_payload = _clone_run_payload(current_run_payload)
+    st.session_state["pending_run"] = {
+        "params": refreshed_payload,
+        "summary": _build_summary_from_payload(refreshed_payload),
+    }
+    pending_run = st.session_state["pending_run"]
+    pending_params = refreshed_payload
 
-        def _render_confirm_modal() -> tuple[bool, bool]:
-            """Render confirm/cancel buttons and summary text for the pending run."""
+    use_dialog = dialog_supported and hasattr(st, "dialog")
 
-            st.markdown(
-                'You are about to run the model with the following configuration:'
-            )
-            summary_details = pending_run.get('summary', [])
-            if isinstance(summary_details, list) and summary_details:
-                summary_lines = '\n'.join(
-                    f'- **{label}:** {value}' for label, value in summary_details
-                )
-                st.markdown(summary_lines)
-            else:
-                st.markdown('*No configuration details available.*')
-
-            st.markdown('**Do you want to continue and run the model?**')
-            confirm_col, cancel_col = st.columns(2)
-            confirm_clicked = confirm_col.button(
-                'Confirm Run', type='primary', key='confirm_run'
-            )
-            cancel_clicked = cancel_col.button('Cancel', key='cancel_run')
-            return confirm_clicked, cancel_clicked
-
-        confirm_clicked = False
-        cancel_clicked = False
-
-        if use_dialog and hasattr(st, 'dialog'):
-            clicks: dict[str, bool] = {'confirm': False, 'cancel': False}
-
-            @st.dialog('Confirm model run')
-            def _show_confirm_dialog() -> None:
-                confirm, cancel = _render_confirm_modal()
-                clicks['confirm'] = confirm
-                clicks['cancel'] = cancel
-
-            _show_confirm_dialog()
-            confirm_clicked = clicks['confirm']
-            cancel_clicked = clicks['cancel']
+    def _render_confirm_modal() -> tuple[bool, bool]:
+        st.markdown("You are about to run the model with the following configuration:")
+        summary_details = pending_run.get("summary", [])
+        if isinstance(summary_details, list) and summary_details:
+            st.markdown("\n".join(f"- **{k}:** {v}" for k, v in summary_details))
         else:
-            with st.expander('Confirm model run'):
-                confirm_clicked, cancel_clicked = _render_confirm_modal()
+            st.markdown("*No configuration details available.*")
 
-        if cancel_clicked:
-            st.session_state.pop('pending_run', None)
-            st.session_state.pop('show_confirm_modal', None)
-            st.session_state.pop(_ACTIVE_RUN_ITERATION_KEY, None)
-            st.session_state['run_in_progress'] = False
+        st.markdown("**Do you want to continue and run the model?**")
+        c1, c2 = st.columns(2)
+        ok = c1.button("Confirm Run", type="primary", key="confirm_run")
+        cancel = c2.button("Cancel", key="cancel_run")
+        return ok, cancel
+
+    confirm_clicked = False
+    cancel_clicked = False
+
+    if use_dialog:
+        clicks: dict[str, bool] = {"confirm": False, "cancel": False}
+
+        @st.dialog("Confirm model run")
+        def _show_confirm_dialog() -> None:
+            ok, cancel = _render_confirm_modal()
+            clicks["confirm"] = ok
+            clicks["cancel"] = cancel
+
+        _show_confirm_dialog()
+        confirm_clicked = clicks["confirm"]
+        cancel_clicked = clicks["cancel"]
+    else:
+        with st.expander("Confirm model run"):
+            confirm_clicked, cancel_clicked = _render_confirm_modal()
+
+    if cancel_clicked:
+        st.session_state.pop("pending_run", None)
+        st.session_state.pop("show_confirm_modal", None)
+        st.session_state.pop(_ACTIVE_RUN_ITERATION_KEY, None)
+        st.session_state["run_in_progress"] = False
+        _clear_confirmation_button_state()
+        pending_run = None
+        show_confirm_modal = False
+        run_in_progress = False
+        _trigger_streamlit_rerun()
+
+    elif confirm_clicked:
+        blocking = _collect_run_blocking_errors()
+        if blocking:
+            st.error("Resolve the configuration issues above before running the simulation.")
+            st.session_state["run_blocking_errors"] = blocking
+            st.session_state.pop("pending_run", None)
+            st.session_state.pop("show_confirm_modal", None)
+            st.session_state["run_in_progress"] = False
             _clear_confirmation_button_state()
             pending_run = None
             show_confirm_modal = False
             run_in_progress = False
-            _trigger_streamlit_rerun()
-        elif confirm_clicked:
-            confirmed_payload = dict(pending_params)
-            st.session_state['_confirmed_run_params'] = confirmed_payload
-            st.session_state['run_in_progress'] = True
-            st.session_state[_ACTIVE_RUN_ITERATION_KEY] = current_iteration
-            st.session_state.pop('pending_run', None)
-            st.session_state.pop('show_confirm_modal', None)
+        else:
+            # Transition to execution
+            run_inputs = dict(pending_params)
+            execute_run = True
+            st.session_state["run_in_progress"] = True
+            st.session_state[_ACTIVE_RUN_ITERATION_KEY] = st.session_state.get(
+                _ACTIVE_RUN_ITERATION_KEY, 0
+            )
+            st.session_state.pop("pending_run", None)
+            st.session_state.pop("show_confirm_modal", None)
             _clear_confirmation_button_state()
             pending_run = None
             show_confirm_modal = False
             run_in_progress = True
-            rerun_requested = _trigger_streamlit_rerun()
-            if not rerun_requested:
-                run_inputs = dict(confirmed_payload)
-                execute_run = True
-                st.session_state.pop('_confirmed_run_params', None)
 
-    # Sync dispatch toggle for downstream logic
-    dispatch_use_network = bool(
-        dispatch_settings.enabled and dispatch_settings.mode == 'network'
-    )
+# Sync dispatch flag for downstream logic
+dispatch_use_network = bool(
+    dispatch_settings.enabled and dispatch_settings.mode == "network"
+)
 
-    if run_inputs is not None:
-        run_config = copy.deepcopy(run_inputs.get('config_source', run_config))
-        start_year_val = int(run_inputs.get('start_year', start_year_val))
-        end_year_val = int(run_inputs.get('end_year', end_year_val))
-        dispatch_use_network = bool(
-            run_inputs.get('dispatch_use_network', dispatch_use_network)
-        )
+# Allow downstream to honor confirmed inputs immediately
+if run_inputs is not None:
+    run_config = copy.deepcopy(run_inputs.get("config_source", run_config))
+    start_year_val = int(run_inputs.get("start_year", start_year_val))
+    end_year_val = int(run_inputs.get("end_year", end_year_val))
+    dispatch_use_network = bool(run_inputs.get("dispatch_use_network", dispatch_use_network))
 
-    result = st.session_state.get("last_result")
+# Outputs/progress scaffolding (widgets filled later)
+result = st.session_state.get("last_result")
+inputs_for_run: Mapping[str, Any] = run_inputs or {}
+run_result: Mapping[str, Any] | None = None
 
-    inputs_for_run: Mapping[str, Any] = run_inputs or {}
-    run_result: Mapping[str, Any] | None = None
+progress_state = _ensure_progress_state()
+progress_section = st.container()
+with progress_section:
+    st.subheader("Run progress")
+    progress_message_placeholder = st.empty()
+    progress_bar_placeholder = st.empty()
+    progress_log_placeholder = st.empty()
 
-    progress_state = _ensure_progress_state()
-    progress_section = st.container()
-    with progress_section:
-        st.subheader("Run progress")
-        progress_message_placeholder = st.empty()
-        progress_bar_placeholder = st.empty()
-        progress_log_placeholder = st.empty()
+_sync_progress_ui(
+    progress_state,
+    progress_message_placeholder,
+    progress_bar_placeholder,
+    progress_log_placeholder,
+)
 
-    _sync_progress_ui(
-        progress_state,
-        progress_message_placeholder,
-        progress_bar_placeholder,
-        progress_log_placeholder,
-    )
-
-
+# --- Execution branch ---
 if execute_run:
     frames_for_execution = inputs_for_run.get("frames", frames_for_run)
     if frames_for_execution is None:
         frames_for_execution = frames_for_run
 
+    # Normalize assumption notes
     assumption_notes_value = inputs_for_run.get("assumption_notes", assumption_notes)
     assumption_notes_for_run: list[str] = []
     if isinstance(assumption_notes_value, Iterable) and not isinstance(
@@ -4742,7 +4758,9 @@ if execute_run:
 
     try:
         st.session_state["run_in_progress"] = True
-        st.session_state[_ACTIVE_RUN_ITERATION_KEY] = current_iteration
+        st.session_state[_ACTIVE_RUN_ITERATION_KEY] = st.session_state.get(
+            _ACTIVE_RUN_ITERATION_KEY, 0
+        )
         st.session_state.pop("show_confirm_modal", None)
         _cleanup_session_temp_dirs()
 
@@ -4754,21 +4772,18 @@ if execute_run:
         _sync_progress_ui(
             progress_state,
             progress_message_placeholder,
-            progress_bar_widget,
+            progress_bar_placeholder,
             progress_log_placeholder,
         )
 
         def _update_progress(stage: str, payload: Mapping[str, object]) -> None:
             try:
                 message, percent = _progress_update_from_stage(
-                    stage,
-                    payload,
-                    progress_state,
+                    stage, payload, progress_state
                 )
-            except Exception:  # defensive guard
+            except Exception:
                 LOGGER.exception("Unable to interpret progress update for stage %s", stage)
                 return
-
             progress_state.stage = stage
             progress_state.message = message
             progress_state.percent_complete = percent
@@ -4776,7 +4791,7 @@ if execute_run:
             _sync_progress_ui(
                 progress_state,
                 progress_message_placeholder,
-                progress_bar_widget,
+                progress_bar_placeholder,
                 progress_log_placeholder,
             )
 
@@ -4798,6 +4813,14 @@ if execute_run:
                 ccr2_enabled=bool(
                     inputs_for_run.get("ccr2_enabled", carbon_settings.ccr2_enabled)
                 ),
+                ccr1_price=inputs_for_run.get("ccr1_price", carbon_settings.ccr1_price),
+                ccr2_price=inputs_for_run.get("ccr2_price", carbon_settings.ccr2_price),
+                ccr1_escalator_pct=inputs_for_run.get(
+                    "ccr1_escalator_pct", carbon_settings.ccr1_escalator_pct
+                ),
+                ccr2_escalator_pct=inputs_for_run.get(
+                    "ccr2_escalator_pct", carbon_settings.ccr2_escalator_pct
+                ),
                 allowance_banking_enabled=bool(
                     inputs_for_run.get(
                         "allowance_banking_enabled", carbon_settings.banking_enabled
@@ -4813,7 +4836,7 @@ if execute_run:
                     "control_period_years", carbon_settings.control_period_years
                 ),
                 cap_regions=inputs_for_run.get(
-                    "cap_regions", carbon_settings.cap_regions
+                    "cap_regions", getattr(carbon_settings, "cap_regions", [])
                 ),
                 carbon_price_enabled=inputs_for_run.get(
                     "carbon_price_enabled", carbon_settings.price_enabled
@@ -4854,7 +4877,6 @@ if execute_run:
                 progress_state.stage = "complete"
                 progress_state.percent_complete = 100
                 progress_state.message = "Simulation complete. Outputs updated below."
-                # Save results for output panel
                 st.session_state["last_result"] = run_result
         else:
             progress_state.stage = "error"
@@ -4864,37 +4886,31 @@ if execute_run:
         _sync_progress_ui(
             progress_state,
             progress_message_placeholder,
-            progress_bar_widget,
+            progress_bar_placeholder,
             progress_log_placeholder,
         )
 
-
-        if isinstance(run_result, Mapping) and 'temp_dir' in run_result:
-            st.session_state['temp_dirs'] = [str(run_result['temp_dir'])]
-
-        if run_result is not None:
-            st.session_state['last_result'] = run_result
-            # Ensure any pending confirmation state is cleared after completion
-            st.session_state.pop('pending_run', None)
-            st.session_state.pop('show_confirm_modal', None)
-            result = run_result
-
-    outputs_container = st.container()
-    with outputs_container:
-        st.subheader('Model outputs')
-        if st.session_state.get('run_in_progress'):
-            st.info('Simulation in progress... progress updates appear above.')
-        else:
-            _render_outputs_panel(result)
-
-    if isinstance(result, Mapping):
-        if 'error' in result:
-            st.error(result['error'])
-        else:
-            st.info('Review the outputs above to explore charts and downloads from the most recent run.')
+# --- Outputs panel ---
+outputs_container = st.container()
+with outputs_container:
+    st.subheader("Model outputs")
+    if st.session_state.get("run_in_progress"):
+        st.info("Simulation in progress... progress updates appear above.")
     else:
-        st.info('Use the inputs panel to configure and run the simulation.')
+        _render_outputs_panel(st.session_state.get("last_result"))
+
+# --- Final guidance to user ---
+if isinstance(st.session_state.get("last_result"), Mapping):
+    if "error" in st.session_state["last_result"]:
+        st.error(st.session_state["last_result"]["error"])
+    else:
+        st.info(
+            "Review the outputs above to explore charts and downloads from the most recent run."
+        )
+else:
+    st.info("Use the inputs panel to configure and run the simulation.")
 
 
-if __name__ == '__main__':  # pragma: no cover - exercised via streamlit runtime
+if __name__ == "__main__":  # pragma: no cover
     main()
+
