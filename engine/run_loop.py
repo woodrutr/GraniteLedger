@@ -938,6 +938,7 @@ def run_fixed_point_from_frames(
         use_network=use_network,
         period_weights=period_weights,
         carbon_price_schedule=carbon_price_schedule,
+        deep_carbon_pricing=deep_carbon_pricing,
     )
     if deep_carbon_pricing:
         dispatch_kwargs["deep_carbon_pricing"] = bool(deep_carbon_pricing)
@@ -1235,6 +1236,7 @@ def run_end_to_end_from_frames(
         use_network=use_network,
         period_weights=period_weights,
         carbon_price_schedule=carbon_price_schedule,
+        deep_carbon_pricing=deep_carbon_pricing,
     )
     if deep_carbon_pricing:
         dispatch_kwargs["deep_carbon_pricing"] = bool(deep_carbon_pricing)

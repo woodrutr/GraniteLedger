@@ -6,6 +6,7 @@ The GUI assumes that core dependencies such as :mod:`pandas` are installed.
 from __future__ import annotations
 
 import copy
+import inspect
 import itertools
 import io
 import importlib.util
@@ -14,7 +15,6 @@ import re
 import shutil
 import sys
 import os
-import shutil
 import tempfile
 from collections.abc import Iterable, Mapping
 from contextlib import contextmanager
@@ -23,8 +23,8 @@ from pathlib import Path
 from typing import Any, Callable, Sequence, TypeVar
 from uuid import uuid4
 
-
 import pandas as pd
+
 
 # -------------------------
 # Optional imports / shims
@@ -3678,6 +3678,7 @@ def run_policy_simulation(
 ) -> dict[str, Any]:
 
 
+
     try:
         config = _load_config_data(config_source)
     except Exception as exc:  # pragma: no cover
@@ -3809,6 +3810,7 @@ def run_policy_simulation(
         config["sw_expansion"] = 0
         if config.get("sw_rm") not in (None, 0, False):
             config["sw_rm"] = 0
+
 
     def _coerce_year_range(start: int | None, end: int | None) -> list[int]:
         if start is None and end is None:
@@ -4024,6 +4026,29 @@ def run_policy_simulation(
     frames_obj = frames_obj.with_frame('policy', policy_frame)
 
     runner = _ensure_engine_runner()
+    supports_deep = True
+    try:
+        signature = inspect.signature(runner)
+    except (TypeError, ValueError):  # pragma: no cover - builtin or C-accelerated callables
+        supports_deep = True
+    else:
+        params = signature.parameters
+        if "deep_carbon_pricing" in params:
+            supports_deep = True
+        else:
+            supports_deep = any(
+                parameter.kind is inspect.Parameter.VAR_KEYWORD
+                for parameter in params.values()
+            )
+
+    if not supports_deep and deep_carbon_pricing:
+        return {
+            "error": (
+                "Deep carbon pricing requires an updated engine. "
+                "Please upgrade engine.run_loop.run_end_to_end_from_frames."
+            )
+        }
+
     enable_floor_flag = bool(policy_enabled and carbon_policy_cfg.enable_floor)
     enable_ccr_flag = bool(
         policy_enabled
@@ -4031,17 +4056,23 @@ def run_policy_simulation(
         and (carbon_policy_cfg.ccr1_enabled or carbon_policy_cfg.ccr2_enabled)
     )
     try:
+        run_kwargs = {
+            "years": years,
+            "price_initial": 0.0,
+            "enable_floor": enable_floor_flag,
+            "enable_ccr": enable_ccr_flag,
+            "use_network": bool(dispatch_use_network),
+            "carbon_price_schedule": price_schedule_map if price_active else None,
+            "progress_cb": progress_cb,
+        }
+        if supports_deep:
+            run_kwargs["deep_carbon_pricing"] = bool(deep_carbon_pricing)
+
         outputs = runner(
             frames_obj,
-            years=years,
-            price_initial=0.0,
-            enable_floor=enable_floor_flag,
-            enable_ccr=enable_ccr_flag,
-            use_network=bool(dispatch_use_network),
-            carbon_price_schedule=price_schedule_map if price_active else None,
-            deep_carbon_pricing=bool(deep_carbon_pricing),
-            progress_cb=progress_cb,
+            **run_kwargs,
         )
+
     except Exception as exc:  # pragma: no cover - defensive guard
         LOGGER.exception('Policy simulation failed')
         return {'error': str(exc)}
@@ -4873,6 +4904,7 @@ def main() -> None:
     }
 
 
+
     def _clone_run_payload(source: Mapping[str, Any]) -> dict[str, Any]:
         base = {k: v for k, v in source.items() if k != "frames"}
         try:
@@ -4928,6 +4960,7 @@ def main() -> None:
             )
 
     result = st.session_state.get("last_result")
+
 
 
     # Outputs/progress scaffolding (widgets filled later)
@@ -5069,7 +5102,12 @@ def main() -> None:
                             getattr(dispatch_settings, "deep_carbon_pricing", False),
                         )
                     ),
-
+                    deep_carbon_pricing=bool(
+                        inputs_for_run.get(
+                            "dispatch_deep_carbon",
+                            getattr(dispatch_settings, "deep_carbon_pricing", False),
+                        )
+                    ),
                     module_config=inputs_for_run.get(
                         "module_config", run_config.get("modules", {})
                     ),
@@ -5077,6 +5115,7 @@ def main() -> None:
                     assumption_notes=assumption_notes_for_run,
                     progress_cb=_update_progress,
                 )
+
             except Exception as exc:  # defensive guard
                 LOGGER.exception("Policy simulation failed during execution")
                 run_result = {"error": str(exc)}

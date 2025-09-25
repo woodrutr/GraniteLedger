@@ -467,6 +467,45 @@ def test_backend_deep_carbon_combines_prices(monkeypatch):
 
     _cleanup_temp_dir(result)
 
+def test_backend_reports_missing_deep_support(monkeypatch):
+    def legacy_runner(
+        frames,
+        *,
+        years=None,
+        price_initial=0.0,
+        tol=1e-3,
+        max_iter=25,
+        relaxation=0.5,
+        enable_floor=True,
+        enable_ccr=True,
+        price_cap=1000.0,
+        use_network=False,
+        carbon_price_schedule=None,
+        progress_cb=None,
+    ):
+        raise AssertionError("legacy runner should not be invoked when unsupported")
+
+    monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: legacy_runner)
+
+    config = _baseline_config()
+    frames = _frames_for_years([2025])
+
+    result = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2025,
+        frames=frames,
+        carbon_policy_enabled=True,
+        cap_regions=[1],
+        carbon_price_enabled=True,
+        carbon_price_value=20.0,
+        deep_carbon_pricing=True,
+    )
+
+    assert result.get("error") == (
+        "Deep carbon pricing requires an updated engine. "
+        "Please upgrade engine.run_loop.run_end_to_end_from_frames."
+    )
 
 def test_backend_carbon_price_disables_cap(monkeypatch):
     real_runner = importlib.import_module("engine.run_loop").run_end_to_end_from_frames
