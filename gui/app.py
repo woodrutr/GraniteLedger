@@ -3476,6 +3476,15 @@ def _build_run_summary(
             )
         )
 
+    capacity_toggle = params.get("dispatch_capacity_expansion")
+    if capacity_toggle is not None:
+        summary.append(
+            (
+                "Capacity expansion",
+                _enabled_label(capacity_toggle, true="Enabled", false="Disabled"),
+            )
+        )
+
     module_config = params.get("module_config")
     if isinstance(module_config, Mapping):
         enabled_modules: list[str] = []
@@ -3521,12 +3530,14 @@ def run_policy_simulation(
     carbon_price_value: float | None = None,
     carbon_price_schedule: Mapping[int, float] | Mapping[str, Any] | None = None,
     dispatch_use_network: bool = False,
+    dispatch_capacity_expansion: bool | None = None,
     deep_carbon_pricing: bool = False,
     module_config: Mapping[str, Any] | None = None,
     frames: FramesType | Mapping[str, pd.DataFrame] | None = None,
     assumption_notes: Iterable[str] | None = None,
     progress_cb: Callable[[str, Mapping[str, object]], None] | None = None,
 ) -> dict[str, Any]:
+
 
     try:
         config = _load_config_data(config_source)
@@ -3642,8 +3653,23 @@ def run_policy_simulation(
     config["modules"] = merged_modules
 
     dispatch_record = merged_modules.setdefault("electricity_dispatch", {})
+    capacity_setting = dispatch_record.get("capacity_expansion")
+    if dispatch_capacity_expansion is not None:
+        capacity_flag = bool(dispatch_capacity_expansion)
+    elif capacity_setting is not None:
+        capacity_flag = bool(capacity_setting)
+    else:
+        capacity_flag = True
+    dispatch_record["capacity_expansion"] = capacity_flag
     dispatch_record["use_network"] = bool(dispatch_use_network)
     dispatch_record["deep_carbon_pricing"] = bool(deep_carbon_pricing)
+
+    if capacity_flag:
+        config["sw_expansion"] = 1
+    else:
+        config["sw_expansion"] = 0
+        if config.get("sw_rm") not in (None, 0, False):
+            config["sw_rm"] = 0
 
     def _coerce_year_range(start: int | None, end: int | None) -> list[int]:
         if start is None and end is None:
@@ -4695,11 +4721,17 @@ def main() -> None:
             dict(carbon_settings.price_schedule) if carbon_settings.price_enabled else {}
         ),
         "dispatch_use_network": dispatch_use_network,
-        "dispatch_deep_carbon": bool(dispatch_settings.deep_carbon_pricing),
+        "dispatch_capacity_expansion": bool(
+            getattr(dispatch_settings, "capacity_expansion", False)
+        ),
+        "dispatch_deep_carbon": bool(
+            getattr(dispatch_settings, "deep_carbon_pricing", False)
+        ),
         "module_config": copy.deepcopy(run_config.get("modules", {})),
         "frames": frames_for_run,
         "assumption_notes": list(assumption_notes),
     }
+
 
     def _clone_run_payload(source: Mapping[str, Any]) -> dict[str, Any]:
         base = {k: v for k, v in source.items() if k != "frames"}
@@ -4743,9 +4775,17 @@ def main() -> None:
         dispatch_use_network = bool(
             run_inputs.get("dispatch_use_network", dispatch_use_network)
         )
-        dispatch_deep_carbon = bool(
-            run_inputs.get("dispatch_deep_carbon", locals().get("dispatch_deep_carbon", False))
-        )
+        if "dispatch_capacity_expansion" in run_inputs:
+            dispatch_settings.capacity_expansion = bool(
+                run_inputs.get("dispatch_capacity_expansion")
+            )
+        if "dispatch_deep_carbon" in run_inputs:
+            dispatch_settings.deep_carbon_pricing = bool(
+                run_inputs.get(
+                    "dispatch_deep_carbon",
+                    getattr(dispatch_settings, "deep_carbon_pricing", False),
+                )
+            )
 
     result = st.session_state.get("last_result")
 
@@ -4879,9 +4919,16 @@ def main() -> None:
                     dispatch_use_network=bool(
                         inputs_for_run.get("dispatch_use_network", dispatch_use_network)
                     ),
-                    deep_carbon_pricing=bool(
-                        inputs_for_run.get('dispatch_deep_carbon', dispatch_deep_carbon)
+                    dispatch_capacity_expansion=inputs_for_run.get(
+                        "dispatch_capacity_expansion",
+                        getattr(dispatch_settings, "capacity_expansion", False),
                     ),
+                    deep_carbon_pricing=bool(
+                        inputs_for_run.get(
+                            "dispatch_deep_carbon",
+                            getattr(dispatch_settings, "deep_carbon_pricing", False)
+                    ),
+
                     module_config=inputs_for_run.get(
                         "module_config", run_config.get("modules", {})
                     ),
