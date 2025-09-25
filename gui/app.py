@@ -42,6 +42,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for packaged app exec
 
 try:
     from gui.region_metadata import (
+        canonical_region_label,
         canonical_region_value,
         region_alias_map,
         region_display_label,
@@ -51,6 +52,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when run as a script
     # ``gui`` is not importable via normal absolute imports.  Import directly in
     # that scenario so the module remains runnable without ``streamlit run``.
     from region_metadata import (  # type: ignore[import-not-found]
+        canonical_region_label,
         canonical_region_value,
         region_alias_map,
         region_display_label,
@@ -653,10 +655,13 @@ def _normalize_coverage_selection(selection: Any) -> list[str]:
         if not text:
             continue
         lowered = text.lower()
-        if lowered in {"all", "all regions"}:
+        if lowered in {"all", "all regions", _ALL_REGIONS_LABEL.lower()}:
             return ["All"]
-        if text not in normalized:
-            normalized.append(text)
+        label = canonical_region_label(entry)
+        if label.lower() in {"all", "all regions", _ALL_REGIONS_LABEL.lower()}:
+            return ["All"]
+        if label not in normalized:
+            normalized.append(label)
 
     if not normalized:
         return ["All"]
@@ -966,24 +971,64 @@ def render_carbon_module_controls(
     # -------------------------
     # Coverage / Regions
     # -------------------------
-    region_labels: list[str] = []
+    coverage_labels: list[str] = []
+
+    def _register_coverage_value(candidate: Any) -> None:
+        if candidate is None:
+            return
+        text = str(candidate).strip()
+        if not text:
+            return
+        lowered = text.lower()
+        if lowered in {"all", "all regions", _ALL_REGIONS_LABEL.lower()}:
+            return
+        resolved = canonical_region_value(candidate)
+        value: int | str
+        if isinstance(resolved, str):
+            value = resolved.strip() or "default"
+        else:
+            value = int(resolved)
+        label = canonical_region_label(value)
+        if not label:
+            return
+        if label not in coverage_labels:
+            coverage_labels.append(label)
+
     if region_options is not None:
         for entry in region_options:
-            label = str(entry).strip()
-            if not label:
-                label = "default"
-            if label not in region_labels:
-                region_labels.append(label)
-    if not region_labels:
-        region_labels = ["default"]
+            _register_coverage_value(entry)
 
-    coverage_choices = [_ALL_REGIONS_LABEL] + sorted(region_labels, key=str)
+    for entry in coverage_default:
+        _register_coverage_value(entry)
+
+    if not coverage_labels:
+        coverage_labels = ["default"]
+    else:
+        coverage_labels = sorted(coverage_labels, key=str)
+
+    coverage_choices = [_ALL_REGIONS_LABEL] + coverage_labels
+
+    def _canonical_coverage_label(entry: Any) -> str:
+        if entry is None:
+            return ""
+        text = str(entry).strip()
+        if not text:
+            return ""
+        lowered = text.lower()
+        if lowered in {"all", "all regions", _ALL_REGIONS_LABEL.lower()}:
+            return _ALL_REGIONS_LABEL
+        label = canonical_region_label(entry)
+        return label
+
     if coverage_default == ["All"]:
         coverage_default_display = [_ALL_REGIONS_LABEL]
     else:
-        coverage_default_display = [
-            label for label in coverage_default if label in coverage_choices
-        ] or [_ALL_REGIONS_LABEL]
+        default_labels = [
+            label
+            for label in (_canonical_coverage_label(entry) for entry in coverage_default)
+            if label and label in coverage_choices
+        ]
+        coverage_default_display = default_labels or [_ALL_REGIONS_LABEL]
 
     # -------------------------
     # Session State Sync
