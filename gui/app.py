@@ -4037,9 +4037,19 @@ def main() -> None:
 
     execute_run = False
     run_inputs: dict[str, Any] | None = None
-    pending_run = st.session_state.get('pending_run')
+
+    pending_run_value = st.session_state.get('pending_run')
+    pending_run = pending_run_value if isinstance(pending_run_value, Mapping) else None
     show_confirm_modal = bool(st.session_state.get('show_confirm_modal'))
     run_in_progress = bool(st.session_state.get('run_in_progress'))
+
+    def _clear_confirmation_button_state() -> None:
+        try:
+            _ensure_streamlit()
+        except ModuleNotFoundError:  # pragma: no cover - GUI dependency missing
+            return
+        st.session_state.pop("confirm_run", None)
+        st.session_state.pop("cancel_run", None)
     dispatch_use_network = bool(
         dispatch_settings.enabled and dispatch_settings.mode == 'network'
     )
@@ -4065,24 +4075,12 @@ def main() -> None:
 
     if isinstance(pending_run, Mapping):
         pending_params = pending_run.get('params')
-        if not isinstance(pending_params, Mapping):
+        if not isinstance(pending_params, Mapping) or pending_params != current_run_payload:
             st.session_state.pop('pending_run', None)
             pending_run = None
             st.session_state['show_confirm_modal'] = False
             show_confirm_modal = False
-        elif pending_params != current_run_payload:
-            st.session_state.pop('pending_run', None)
-            pending_run = None
-            st.session_state['show_confirm_modal'] = False
-            show_confirm_modal = False
-
-    def _clear_confirmation_button_state() -> None:
-        try:
-            _ensure_streamlit()
-        except ModuleNotFoundError:  # pragma: no cover - GUI dependency missing
-            return
-        st.session_state.pop("confirm_run", None)
-        st.session_state.pop("cancel_run", None)
+            _clear_confirmation_button_state()
 
     if isinstance(pending_run, Mapping) and show_confirm_modal and not run_in_progress:
         # -------------------------
@@ -4143,7 +4141,6 @@ def main() -> None:
                 with st.expander("Confirm model run"):
                     confirm_clicked, cancel_clicked = _render_confirm_modal()
 
-        # Handle cancel
         if cancel_clicked:
             st.session_state.pop("pending_run", None)
             st.session_state.pop("show_confirm_modal", None)
@@ -4153,15 +4150,14 @@ def main() -> None:
             show_confirm_modal = False
             run_in_progress = False
 
-        # Handle confirm
         elif confirm_clicked:
-            pending_params = pending_run.get("params")
+            pending_params = pending_run.get("params") if isinstance(pending_run, Mapping) else None
             if isinstance(pending_params, Mapping):
-                # Save confirmed params in session and prepare for run
-                st.session_state["confirmed_run_params"] = dict(pending_params)
                 run_inputs = dict(pending_params)
+                st.session_state["confirmed_run_params"] = run_inputs
                 execute_run = True
                 st.session_state["run_in_progress"] = True
+                run_in_progress = True
 
             st.session_state.pop("pending_run", None)
             st.session_state.pop("show_confirm_modal", None)
@@ -4170,9 +4166,10 @@ def main() -> None:
             show_confirm_modal = False
 
     # Refresh pending run reference after any confirm/cancel handling
-    pending_run = st.session_state.get("pending_run")
-    if not isinstance(pending_run, Mapping):
-        pending_run = None
+    pending_run_value = st.session_state.get("pending_run")
+    pending_run = pending_run_value if isinstance(pending_run_value, Mapping) else None
+    show_confirm_modal = bool(st.session_state.get("show_confirm_modal"))
+    run_in_progress = bool(st.session_state.get("run_in_progress"))
 
     # Trigger showing modal if a run is pending
     if isinstance(pending_run, Mapping) and not show_confirm_modal and not run_in_progress:
