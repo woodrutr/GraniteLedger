@@ -934,13 +934,15 @@ def run_fixed_point_from_frames(
     policy = policy_spec.to_policy()
     years_sequence = _coerce_years(policy, years)
     period_weights = _compute_period_weights(policy, years_sequence)
-    dispatch_solver = _dispatch_from_frames(
-        frames_obj,
+    dispatch_kwargs = dict(
         use_network=use_network,
         period_weights=period_weights,
         carbon_price_schedule=carbon_price_schedule,
         deep_carbon_pricing=deep_carbon_pricing,
     )
+    if deep_carbon_pricing:
+        dispatch_kwargs["deep_carbon_pricing"] = bool(deep_carbon_pricing)
+    dispatch_solver = _dispatch_from_frames(frames_obj, **dispatch_kwargs)
 
     def dispatch_model(year: int, allowance_cost: float) -> float:
         return _extract_emissions(
@@ -1230,13 +1232,15 @@ def run_end_to_end_from_frames(
     policy = policy_spec.to_policy()
     years_sequence = _coerce_years(policy, years)
     period_weights = _compute_period_weights(policy, years_sequence)
-    dispatch_solver = _dispatch_from_frames(
-        frames_obj,
+    dispatch_kwargs = dict(
         use_network=use_network,
         period_weights=period_weights,
         carbon_price_schedule=carbon_price_schedule,
         deep_carbon_pricing=deep_carbon_pricing,
     )
+    if deep_carbon_pricing:
+        dispatch_kwargs["deep_carbon_pricing"] = bool(deep_carbon_pricing)
+    dispatch_solver = _dispatch_from_frames(frames_obj, **dispatch_kwargs)
     years_sequence = list(years_sequence)
     total_years = len(years_sequence)
 
