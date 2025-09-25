@@ -869,89 +869,36 @@ def render_carbon_module_controls(
     control_override_default = control_default_raw is not None
 
     price_enabled_default = bool(price_defaults.get("enabled", False))
-    price_value_raw = price_defaults.get(
-        "price_per_ton", price_defaults.get("price", 0.0)
-    )
+    price_value_raw = price_defaults.get("price_per_ton", price_defaults.get("price", 0.0))
     price_default = _coerce_float(price_value_raw, default=0.0)
-    price_schedule_default = _normalize_price_schedule(
-        price_defaults.get("price_schedule")
-    )
+    price_schedule_default = _normalize_price_schedule(price_defaults.get("price_schedule"))
 
     # -------------------------
     # Coverage / Regions
     # -------------------------
-    coverage_labels: set[str] = set()
-
-    def _register_coverage_value(candidate: Any) -> None:
-        if candidate is None:
-            return
-        text = str(candidate).strip()
-        if not text:
-            return
-        lowered = text.lower()
-        if lowered in {"all", "all regions", _ALL_REGIONS_LABEL.lower()}:
-            return
-        resolved = canonical_region_value(candidate)
-        value: int | str
-        if isinstance(resolved, str):
-            value = resolved.strip() or "default"
-        else:
-            value = int(resolved)
-        label = canonical_region_label(value)
-        if not label:
-            return
-        coverage_labels.add(label)
-
-    # Always include the default 25-region dataset in the coverage options so the
-    # multiselect remains comprehensive even when the base configuration only
-    # lists a subset of regions.
-    for default_region in DEFAULT_REGION_METADATA:
-        _register_coverage_value(default_region)
-
+    region_labels: list[str] = []
     if region_options is not None:
         for entry in region_options:
-            _register_coverage_value(entry)
+            label = str(entry).strip() or "default"
+            if label not in region_labels:
+                region_labels.append(label)
+    if not region_labels:
+        region_labels = ["default"]
 
-    for entry in coverage_default:
-        _register_coverage_value(entry)
-
-    if coverage_labels:
-        coverage_labels_display = sorted(coverage_labels, key=str)
-    else:
-        coverage_labels_display = ["default"]
-
-    coverage_choices = [_ALL_REGIONS_LABEL] + coverage_labels_display
-
-    def _canonical_coverage_label(entry: Any) -> str:
-        if entry is None:
-            return ""
-        text = str(entry).strip()
-        if not text:
-            return ""
-        lowered = text.lower()
-        if lowered in {"all", "all regions", _ALL_REGIONS_LABEL.lower()}:
-            return _ALL_REGIONS_LABEL
-        label = canonical_region_label(entry)
-        return label
-
+    coverage_choices = [_ALL_REGIONS_LABEL] + sorted(region_labels, key=str)
     if coverage_default == ["All"]:
         coverage_default_display = [_ALL_REGIONS_LABEL]
     else:
-        default_labels = [
-            label
-            for label in (_canonical_coverage_label(entry) for entry in coverage_default)
-            if label and label in coverage_choices
-        ]
-        coverage_default_display = default_labels or [_ALL_REGIONS_LABEL]
+        coverage_default_display = [
+            label for label in coverage_default if label in coverage_choices
+        ] or [_ALL_REGIONS_LABEL]
 
     # -------------------------
     # Session State Sync
     # -------------------------
     bank_value_default = bank_default
     if st is not None:
-        bank_value_default = float(
-            st.session_state.setdefault("carbon_bank0", bank_default)
-        )
+        bank_value_default = float(st.session_state.setdefault("carbon_bank0", bank_default))
 
     def _mark_last_changed(key: str) -> None:
         try:
@@ -965,12 +912,8 @@ def render_carbon_module_controls(
     last_changed = None
     if st is not None:
         last_changed = st.session_state.get("carbon_module_last_changed")
-        session_enabled_default = bool(
-            st.session_state.get("carbon_enable", enabled_default)
-        )
-        session_price_default = bool(
-            st.session_state.get("carbon_price_enable", price_enabled_default)
-        )
+        session_enabled_default = bool(st.session_state.get("carbon_enable", enabled_default))
+        session_price_default = bool(st.session_state.get("carbon_price_enable", price_enabled_default))
         if session_enabled_default and session_price_default:
             if last_changed == "cap":
                 session_price_default = False
@@ -980,7 +923,7 @@ def render_carbon_module_controls(
             st.session_state["carbon_price_enable"] = session_price_default
 
     # -------------------------
-    # Cap vs Price mutual exclusion toggles
+    # Cap vs Price toggles (mutually exclusive)
     # -------------------------
     enabled = container.toggle(
         "Enable carbon cap",
@@ -1067,9 +1010,7 @@ def render_carbon_module_controls(
             disabled=not (enabled and control_override),
         )
         control_period_years = (
-            _sanitize_control_period(control_period_value)
-            if enabled and control_override
-            else None
+            _sanitize_control_period(control_period_value) if enabled and control_override else None
         )
 
         coverage_selection_raw = cap_panel.multiselect(
@@ -1124,6 +1065,7 @@ def render_carbon_module_controls(
         price_schedule=price_schedule,
         errors=errors,
     )
+
 
 
 # -------------------------
