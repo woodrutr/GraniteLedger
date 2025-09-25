@@ -2781,6 +2781,30 @@ def _extract_output_dataframe(outputs: Any, names: Sequence[str]) -> pd.DataFram
         if candidate is None:
             continue
 
+        if isinstance(candidate, pd.Series):
+            return candidate.to_frame().reset_index(drop=False)
+
+        if isinstance(candidate, Mapping):
+            # ``pd.DataFrame`` cannot coerce dictionaries of scalars directly – a
+            # frequent pattern for single-region dispatch results.  Attempt an
+            # index-oriented conversion before falling back to the generic
+            # constructor so we can still surface the data in the UI.
+            try:
+                coerced = pd.DataFrame(candidate)
+            except Exception:
+                try:
+                    coerced = pd.DataFrame.from_dict(candidate, orient="index")
+                except Exception:  # pragma: no cover - defensive guard
+                    LOGGER.warning(
+                        "Unable to coerce mapping output field '%s' to a DataFrame.",
+                        name,
+                    )
+                    continue
+                else:
+                    return coerced.reset_index(drop=False)
+            else:
+                return coerced
+
         try:
             coerced = pd.DataFrame(candidate)
         except Exception:  # pragma: no cover - defensive guard
@@ -2795,6 +2819,73 @@ def _extract_output_dataframe(outputs: Any, names: Sequence[str]) -> pd.DataFram
         "Engine runner outputs missing expected field(s): %s", ", ".join(names)
     )
     return pd.DataFrame()
+
+
+def _normalize_dispatch_price_frame(
+    price_df: pd.DataFrame | None,
+) -> tuple[pd.DataFrame, dict[str, bool]]:
+    """Return a price DataFrame with best-effort column normalisation.
+
+    Engine refactors occasionally rename the dispatch price fields or return
+    mappings that are awkward to coerce into :class:`pandas.DataFrame`
+    instances.  The GUI previously assumed the canonical ``['year', 'region',
+    'price']`` schema which caused otherwise valid single-region outputs to be
+    treated as empty.  This helper performs a defensive normalisation step so
+    the UI can render whatever data is available while signalling missing
+    columns to the caller.
+    """
+
+    if not isinstance(price_df, pd.DataFrame) or price_df.empty:
+        return pd.DataFrame(), {"year": False, "region": False, "price": False}
+
+    df = price_df.copy()
+
+    # Promote index labels to columns when possible.  Many historical outputs
+    # stored the region name in the index rather than an explicit column.
+    if df.index.name or (getattr(df.index, "names", None) and any(df.index.names)):
+        df = df.reset_index(drop=False)
+
+    alias_map: dict[str, tuple[str, ...]] = {
+        "year": ("year", "period", "calendar_year"),
+        "region": ("region", "regions", "zone", "market", "node", "index"),
+        "price": (
+            "price",
+            "value",
+            "cost",
+            "marginal_cost",
+            "dispatch_price",
+            "dispatch_cost",
+        ),
+    }
+
+    rename_map: dict[str, str] = {}
+    lower_lookup = {col.lower(): col for col in df.columns}
+    for canonical, aliases in alias_map.items():
+        for alias in aliases:
+            column = lower_lookup.get(alias.lower())
+            if column is not None:
+                rename_map[column] = canonical
+                break
+
+    if rename_map:
+        df = df.rename(columns=rename_map)
+
+    # When the price column is missing but only a single numeric column is
+    # available, assume it represents the dispatch price.
+    if "price" not in df.columns:
+        numeric_columns = [
+            col for col in df.columns if pd.api.types.is_numeric_dtype(df[col])
+        ]
+        if len(numeric_columns) == 1:
+            df = df.rename(columns={numeric_columns[0]: "price"})
+
+    # If region data is absent but the DataFrame now contains a generic
+    # ``index`` column from reset_index(), interpret it as the region label.
+    if "region" not in df.columns and "index" in df.columns:
+        df = df.rename(columns={"index": "region"})
+
+    field_flags = {key: (key in df.columns) for key in ("year", "region", "price")}
+    return df, field_flags
 
 
 def _read_uploaded_dataframe(uploaded_file: Any | None) -> pd.DataFrame | None:
@@ -3774,9 +3865,10 @@ def run_policy_simulation(
     emissions_df = _extract_output_dataframe(
         outputs, ['emissions_by_region', 'emissions', 'emissions_region']
     )
-    price_df = _extract_output_dataframe(
+    raw_price_df = _extract_output_dataframe(
         outputs, ['price_by_region', 'dispatch_price_by_region', 'region_prices']
     )
+    price_df, price_flags = _normalize_dispatch_price_frame(raw_price_df)
     flows_df = _extract_output_dataframe(
         outputs, ['flows', 'network_flows', 'flows_by_region']
     )
@@ -3792,6 +3884,7 @@ def run_policy_simulation(
         'temp_dir': temp_dir,
         'documentation': documentation,
     }
+    result['_price_field_flags'] = price_flags
     if normalized_regions:
         result['cap_regions'] = list(normalized_regions)
 
@@ -4094,6 +4187,12 @@ def _render_results(result: Mapping[str, Any]) -> None:
     price_df = result.get('price_by_region')
     if not isinstance(price_df, pd.DataFrame):
         price_df = pd.DataFrame()
+        price_flags = {'year': False, 'region': False, 'price': False}
+    else:
+        price_df = price_df.copy()
+        price_flags = result.get(
+            '_price_field_flags', {'year': True, 'region': True, 'price': True}
+        )
 
     flows_df = result.get('flows')
     if not isinstance(flows_df, pd.DataFrame):
@@ -4179,30 +4278,44 @@ def _render_results(result: Mapping[str, Any]) -> None:
             st.info('No dispatch outputs are available for this run.')
         else:
             if not price_df.empty:
-                display_price = price_df.copy()
-                display_price['year'] = pd.to_numeric(display_price['year'], errors='coerce')
-                display_price = display_price.dropna(subset=['year'])
+                if all(price_flags.get(key, False) for key in ('year', 'region', 'price')):
+                    display_price = price_df.copy()
+                    display_price['year'] = pd.to_numeric(
+                        display_price['year'], errors='coerce'
+                    )
+                    display_price = display_price.dropna(subset=['year'])
 
-                if 'region' in display_price.columns:
-                    price_pivot = display_price.pivot_table(
-                        index='year',
-                        columns='region',
-                        values='price',
-                        aggfunc='mean',
-                    ).sort_index()
-                    st.markdown('**Dispatch costs by region ($/MWh)**')
-                    st.line_chart(price_pivot)
+                    if 'region' in display_price.columns:
+                        price_pivot = display_price.pivot_table(
+                            index='year',
+                            columns='region',
+                            values='price',
+                            aggfunc='mean',
+                        ).sort_index()
+                        st.markdown('**Dispatch costs by region ($/MWh)**')
+                        st.line_chart(price_pivot)
 
-                    if not price_pivot.empty:
-                        latest_year = price_pivot.index.max()
-                        latest_totals = price_pivot.loc[latest_year].fillna(0.0)
-                        latest_df = latest_totals.to_frame(name='price')
-                        latest_df.index.name = 'region'
-                        st.caption(f'Latest year visualised: {latest_year}')
-                        st.bar_chart(latest_df)
+                        if not price_pivot.empty:
+                            latest_year = price_pivot.index.max()
+                            latest_totals = price_pivot.loc[latest_year].fillna(0.0)
+                            latest_df = latest_totals.to_frame(name='price')
+                            latest_df.index.name = 'region'
+                            st.caption(f'Latest year visualised: {latest_year}')
+                            st.bar_chart(latest_df)
+                    else:
+                        st.caption(
+                            'Regional dispatch cost data unavailable; showing raw table below.'
+                        )
+                        st.dataframe(display_price, width="stretch")
                 else:
-                    st.caption('Regional dispatch cost data unavailable; showing raw table below.')
-                    st.dataframe(display_price, width="stretch")
+                    missing = [key for key, present in price_flags.items() if not present]
+                    if missing:
+                        missing_display = ', '.join(sorted(missing))
+                        st.caption(
+                            'Dispatch price data missing expected column(s): '
+                            f"{missing_display}. Showing available data below."
+                        )
+                    st.dataframe(price_df, width="stretch")
 
             if not flows_df.empty:
                 st.markdown('---')
