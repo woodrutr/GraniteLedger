@@ -190,7 +190,46 @@ SIDEBAR_STYLE = """
 
 _download_directory_fallback_used = False
 
+from dataclasses import dataclass, field
+from typing import Any
+
 @dataclass
+class GeneralConfigResult:
+    """Container for user-selected general configuration settings."""
+
+    config_label: str
+    config_source: Any
+    run_config: dict[str, Any]
+    candidate_years: list[int]
+    start_year: int
+    end_year: int
+    selected_years: list[int]
+    regions: list[int | str]
+
+
+@dataclass
+class CarbonModuleSettings:
+    """Record of carbon policy sidebar selections."""
+
+    enabled: bool
+    price_enabled: bool
+    enable_floor: bool
+    enable_ccr: bool
+    ccr1_enabled: bool
+    ccr2_enabled: bool
+    ccr1_price: float | None
+    ccr2_price: float | None
+    ccr1_escalator_pct: float
+    ccr2_escalator_pct: float
+    banking_enabled: bool
+    coverage_regions: list[str]
+    control_period_years: int | None
+    price_per_ton: float
+    initial_bank: float = 0.0
+    cap_regions: list[Any] = field(default_factory=list)
+    price_schedule: dict[int, float] = field(default_factory=dict)
+    errors: list[str] = field(default_factory=list)
+
 class CarbonPolicyConfig:
     """Normalized carbon allowance policy configuration for engine runs."""
 
@@ -199,6 +238,10 @@ class CarbonPolicyConfig:
     enable_ccr: bool = True
     ccr1_enabled: bool = True
     ccr2_enabled: bool = True
+    ccr1_price: float | None = None
+    ccr2_price: float | None = None
+    ccr1_escalator_pct: float = 0.0
+    ccr2_escalator_pct: float = 0.0
     allowance_banking_enabled: bool = True
     control_period_years: int | None = None
 
@@ -214,6 +257,10 @@ class CarbonPolicyConfig:
         ccr2_enabled: bool | None = None,
         allowance_banking_enabled: bool | None = None,
         control_period_years: int | None = None,
+        ccr1_price: float | None = None,
+        ccr2_price: float | None = None,
+        ccr1_escalator_pct: float | None = None,
+        ccr2_escalator_pct: float | None = None,
     ) -> "CarbonPolicyConfig":
         record = dict(mapping) if isinstance(mapping, Mapping) else {}
 
@@ -236,12 +283,45 @@ class CarbonPolicyConfig:
             else record.get('control_period_years')
         )
 
+        def _coerce_optional(value: Any, fallback: float | None) -> float | None:
+            if value in (None, ""):
+                return fallback
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return fallback
+
+        ccr1_price_val = _coerce_optional(
+            ccr1_price if ccr1_price is not None else record.get('ccr1_price'),
+            None,
+        )
+        ccr2_price_val = _coerce_optional(
+            ccr2_price if ccr2_price is not None else record.get('ccr2_price'),
+            None,
+        )
+        ccr1_escalator_val = _coerce_optional(
+            ccr1_escalator_pct
+            if ccr1_escalator_pct is not None
+            else record.get('ccr1_escalator_pct'),
+            0.0,
+        ) or 0.0
+        ccr2_escalator_val = _coerce_optional(
+            ccr2_escalator_pct
+            if ccr2_escalator_pct is not None
+            else record.get('ccr2_escalator_pct'),
+            0.0,
+        ) or 0.0
+
         config = cls(
             enabled=enabled_val,
             enable_floor=enable_floor_val,
             enable_ccr=enable_ccr_val,
             ccr1_enabled=ccr1_val,
             ccr2_enabled=ccr2_val,
+            ccr1_price=ccr1_price_val,
+            ccr2_price=ccr2_price_val,
+            ccr1_escalator_pct=float(ccr1_escalator_val),
+            ccr2_escalator_pct=float(ccr2_escalator_val),
             allowance_banking_enabled=banking_val,
             control_period_years=control_period_val,
         )
@@ -262,6 +342,10 @@ class CarbonPolicyConfig:
         self.enable_ccr = False
         self.ccr1_enabled = False
         self.ccr2_enabled = False
+        self.ccr1_price = None
+        self.ccr2_price = None
+        self.ccr1_escalator_pct = 0.0
+        self.ccr2_escalator_pct = 0.0
         self.allowance_banking_enabled = False
         self.control_period_years = None
 
@@ -279,6 +363,10 @@ class CarbonPolicyConfig:
             'enable_ccr': bool(self.enable_ccr),
             'ccr1_enabled': bool(self.ccr1_enabled),
             'ccr2_enabled': bool(self.ccr2_enabled),
+            'ccr1_price': self.ccr1_price,
+            'ccr2_price': self.ccr2_price,
+            'ccr1_escalator_pct': float(self.ccr1_escalator_pct),
+            'ccr2_escalator_pct': float(self.ccr2_escalator_pct),
             'allowance_banking_enabled': bool(self.allowance_banking_enabled),
             'control_period_years': self.control_period_years,
         }
@@ -888,291 +976,370 @@ def _render_carbon_policy_section(
     defaults = modules.get("carbon_policy", {}) or {}
     price_defaults = modules.get("carbon_price", {}) or {}
 
-    # -------------------------
-    # Defaults
-    # -------------------------
-    enabled_default = bool(defaults.get("enabled", True))
-    enable_floor_default = bool(defaults.get("enable_floor", True))
-    enable_ccr_default = bool(defaults.get("enable_ccr", True))
-    ccr1_default = bool(defaults.get("ccr1_enabled", True))
-    ccr2_default = bool(defaults.get("ccr2_enabled", True))
-    banking_default = bool(defaults.get("allowance_banking_enabled", True))
-    bank_default = _coerce_float(defaults.get("bank0", 0.0), default=0.0)
+from typing import Any
 
-    coverage_default = _normalize_coverage_selection(
-        defaults.get("coverage_regions", ["All"])
-    )
+# -------------------------
+# Defaults
+# -------------------------
+enabled_default = bool(defaults.get("enabled", True))
+enable_floor_default = bool(defaults.get("enable_floor", True))
+enable_ccr_default = bool(defaults.get("enable_ccr", True))
+ccr1_default = bool(defaults.get("ccr1_enabled", True))
+ccr2_default = bool(defaults.get("ccr2_enabled", True))
+ccr1_price_default = _coerce_optional_float(defaults.get("ccr1_price"))
+ccr2_price_default = _coerce_optional_float(defaults.get("ccr2_price"))
+ccr1_escalator_default = _coerce_float(defaults.get("ccr1_escalator_pct"), 0.0)
+ccr2_escalator_default = _coerce_float(defaults.get("ccr2_escalator_pct"), 0.0)
+banking_default = bool(defaults.get("allowance_banking_enabled", True))
+bank_default = _coerce_float(defaults.get("bank0", 0.0), default=0.0)
 
-    control_default_raw = defaults.get("control_period_years")
-    try:
-        control_default = int(control_default_raw)
-    except (TypeError, ValueError):
-        control_default = 3
-    control_override_default = control_default_raw is not None
+coverage_default = _normalize_coverage_selection(
+    defaults.get("coverage_regions", ["All"])
+)
 
-    price_enabled_default = bool(price_defaults.get("enabled", False))
-    price_value_raw = price_defaults.get(
-        "price_per_ton", price_defaults.get("price", 0.0)
-    )
-    price_default = _coerce_float(price_value_raw, default=0.0)
-    price_schedule_default = _normalize_price_schedule(
-        price_defaults.get("price_schedule")
-    )
+control_default_raw = defaults.get("control_period_years")
+try:
+    control_default = int(control_default_raw)
+except (TypeError, ValueError):
+    control_default = 3
+control_override_default = control_default_raw is not None
 
-    coverage_value_map: dict[str, Any] = {
-        _ALL_REGIONS_LABEL: "All",
-        "All": "All",
-    }
-    for label in coverage_default:
-        coverage_value_map.setdefault(label, canonical_region_value(label))
-    if region_options is not None:
-        for entry in region_options:
-            label = canonical_region_label(entry)
-            coverage_value_map.setdefault(label, canonical_region_value(entry))
+# -------------------------
+# Price defaults
+# -------------------------
+price_enabled_default = bool(price_defaults.get("enabled", False))
+price_value_raw = price_defaults.get("price_per_ton", price_defaults.get("price", 0.0))
+price_default = _coerce_float(price_value_raw, default=0.0)
+price_schedule_default = _normalize_price_schedule(price_defaults.get("price_schedule"))
 
-    # -------------------------
-    # Coverage / Regions
-    # -------------------------
-    region_labels: list[str] = []
-    if region_options is not None:
-        for entry in region_options:
-            label = canonical_region_label(entry).strip() or "default"
-            if label not in region_labels:
-                region_labels.append(label)
-    for label in coverage_default:
-        if label != _ALL_REGIONS_LABEL and label not in region_labels:
+# -------------------------
+# Coverage value map
+# -------------------------
+coverage_value_map: dict[str, Any] = {
+    _ALL_REGIONS_LABEL: "All",
+    "All": "All",
+}
+for label in coverage_default:
+    coverage_value_map.setdefault(label, canonical_region_value(label))
+if region_options is not None:
+    for entry in region_options:
+        label = canonical_region_label(entry)
+        coverage_value_map.setdefault(label, canonical_region_value(entry))
+
+# -------------------------
+# Coverage / Regions
+# -------------------------
+region_labels: list[str] = []
+if region_options is not None:
+    for entry in region_options:
+        label = canonical_region_label(entry).strip() or "default"
+        if label not in region_labels:
             region_labels.append(label)
-    if not region_labels:
-        region_labels = ["default"]
+for label in coverage_default:
+    if label != _ALL_REGIONS_LABEL and label not in region_labels:
+        region_labels.append(label)
+if not region_labels:
+    region_labels = ["default"]
 
-    coverage_choices = [_ALL_REGIONS_LABEL] + sorted(region_labels, key=str)
-    if coverage_default == ["All"]:
-        coverage_default_display = [_ALL_REGIONS_LABEL]
-    else:
-        coverage_default_display = [
-            label for label in coverage_default if label in coverage_choices
-        ] or [_ALL_REGIONS_LABEL]
+coverage_choices = [_ALL_REGIONS_LABEL] + sorted(region_labels, key=str)
+if coverage_default == ["All"]:
+    coverage_default_display = [_ALL_REGIONS_LABEL]
+else:
+    coverage_default_display = [
+        label for label in coverage_default if label in coverage_choices
+    ] or [_ALL_REGIONS_LABEL]
 
-    session_enabled_default = enabled_default
-    session_price_default = price_enabled_default
-    last_changed = None
-    if st is not None:
-        last_changed = st.session_state.get("carbon_module_last_changed")
-        session_enabled_default = bool(
-            st.session_state.get("carbon_enable", enabled_default)
-        )
-        session_price_default = bool(
-            st.session_state.get("carbon_price_enable", price_enabled_default)
-        )
-        if session_enabled_default and session_price_default:
-            if last_changed == "cap":
-                session_price_default = False
-            else:
-                session_enabled_default = False
-            st.session_state["carbon_enable"] = session_enabled_default
-            st.session_state["carbon_price_enable"] = session_price_default
+# -------------------------
+# Session defaults and change tracking
+# -------------------------
+bank_value_default = bank_default
+if st is not None:  # GUI path
+    bank_value_default = float(st.session_state.setdefault("carbon_bank0", bank_default))
 
-    # -------------------------
-    # Cap vs Price toggles (mutually exclusive)
-    # -------------------------
-    enabled = container.toggle(
-        "Enable carbon cap",
-        value=session_enabled_default,
-        key="carbon_enable",
-        on_change=lambda: _mark_last_changed("cap"),
+def _mark_last_changed(key: str) -> None:
+    if st is None:
+        return
+    st.session_state["carbon_module_last_changed"] = key
+
+session_enabled_default = enabled_default
+session_price_default = price_enabled_default
+last_changed = None
+if st is not None:
+    last_changed = st.session_state.get("carbon_module_last_changed")
+    session_enabled_default = bool(
+        st.session_state.get("carbon_enable", enabled_default)
     )
-    price_enabled = container.toggle(
-        "Enable carbon price",
-        value=session_price_default,
-        key="carbon_price_enable",
-        on_change=lambda: _mark_last_changed("price"),
+    session_price_default = bool(
+        st.session_state.get("carbon_price_enable", price_enabled_default)
     )
-
-    if enabled and price_enabled:
+    if session_enabled_default and session_price_default:
         if last_changed == "cap":
-            price_enabled = False
+            session_price_default = False
         else:
-            enabled = False
+            session_enabled_default = False
+        st.session_state["carbon_enable"] = session_enabled_default
+        st.session_state["carbon_price_enable"] = session_price_default
 
-    # -------------------------
-    # Carbon Cap Panel
-    # -------------------------
-    with _sidebar_panel(container, enabled) as cap_panel:
-        enable_floor = cap_panel.toggle(
-            "Enable price floor",
-            value=enable_floor_default,
-            key="carbon_floor",
-            disabled=not enabled,
-        )
-        enable_ccr = cap_panel.toggle(
-            "Enable CCR",
-            value=enable_ccr_default,
-            key="carbon_ccr",
-            disabled=not enabled,
-        )
-        ccr1_enabled = cap_panel.toggle(
-            "Enable CCR Tier 1",
-            value=ccr1_default,
-            key="carbon_ccr1",
-            disabled=not (enabled and enable_ccr),
-        )
-        ccr2_enabled = cap_panel.toggle(
-            "Enable CCR Tier 2",
-            value=ccr2_default,
-            key="carbon_ccr2",
-            disabled=not (enabled and enable_ccr),
-        )
-        banking_enabled = cap_panel.toggle(
-            "Enable allowance banking",
-            value=banking_default,
-            key="carbon_banking",
-            disabled=not enabled,
-        )
-        initial_bank = (
-            float(
-                cap_panel.number_input(
-                    "Initial allowance bank (tons)",
-                    min_value=0.0,
-                    value=float(bank_default if bank_default >= 0.0 else 0.0),
-                    step=1000.0,
-                    format="%f",
-                    key="carbon_bank0",
-                    disabled=not (enabled and banking_enabled),
-                )
-            )
-            if banking_enabled
-            else 0.0
-        )
+# -------------------------
+# Cap vs Price toggles (mutually exclusive)
+# -------------------------
+enabled = container.toggle(
+    "Enable carbon cap",
+    value=session_enabled_default,
+    key="carbon_enable",
+    on_change=lambda: _mark_last_changed("cap"),
+)
+price_enabled = container.toggle(
+    "Enable carbon price",
+    value=session_price_default,
+    key="carbon_price_enable",
+    on_change=lambda: _mark_last_changed("price"),
+)
 
-        control_override = cap_panel.toggle(
-            "Override control period",
-            value=control_override_default,
-            key="carbon_control_toggle",
-            disabled=not enabled,
-        )
-        control_period_value = cap_panel.number_input(
-            "Control period length (years)",
-            min_value=1,
-            value=int(control_default if control_default > 0 else 3),
-            step=1,
-            format="%d",
-            key="carbon_control_years",
-            disabled=not (enabled and control_override),
-        )
-        control_period_years = (
-            _sanitize_control_period(control_period_value)
-            if enabled and control_override
-            else None
-        )
+if enabled and price_enabled:
+    if last_changed == "cap":
+        price_enabled = False
+    else:
+        enabled = False
 
-        coverage_selection = cap_panel.multiselect(
-            "Regions covered by carbon cap",
-            options=coverage_choices,
-            default=coverage_default_display,
-            disabled=not enabled,
-            key="carbon_coverage_regions",
-            help=(
-                "Select the regions subject to the cap. Choose “All regions” to apply "
-                "the carbon policy across every region."
-            ),
-        )
-        coverage_regions = _normalize_coverage_selection(
-            coverage_selection or coverage_default_display
-        )
-
-    # -------------------------
-    # Carbon Price Panel
-    # -------------------------
-    with _sidebar_panel(container, price_enabled) as price_panel:
-        price_per_ton = price_panel.number_input(
-            "Carbon price ($/ton)",
-            min_value=0.0,
-            value=float(price_default if price_default >= 0.0 else 0.0),
-            step=1.0,
-            format="%0.2f",
-            key="carbon_price_value",
-            disabled=not price_enabled,
-        )
-        price_schedule = price_schedule_default.copy() if price_enabled else {}
-
-    # -------------------------
-    # Errors and Return
-    # -------------------------
-    errors: list[str] = []
-    if enabled and price_enabled:
-        errors.append("Cannot enable both carbon cap and carbon price simultaneously.")
-
-    cap_region_values: list[Any] = []
-    if coverage_regions != ["All"]:
-        for label in coverage_regions:
-            resolved = coverage_value_map.get(label, label)
-            if isinstance(resolved, str) and resolved.lower() in {"all", "all regions"}:
-                cap_region_values = []
-                break
-            try:
-                cap_region_values.append(int(resolved))
-            except (TypeError, ValueError):
-                cap_region_values.append(resolved)
-
-    carbon_module = modules.setdefault("carbon_policy", {})
-    carbon_module.update(
-        {
-            "enabled": bool(enabled),
-            "enable_floor": bool(enabled and enable_floor),
-            "enable_ccr": bool(enabled and enable_ccr),
-            "ccr1_enabled": bool(enabled and enable_ccr and ccr1_enabled),
-            "ccr2_enabled": bool(enabled and enable_ccr and ccr2_enabled),
-            "allowance_banking_enabled": bool(enabled and banking_enabled),
-            "coverage_regions": list(coverage_regions),
-        }
+# -------------------------
+# Carbon Cap Panel
+# -------------------------
+with _sidebar_panel(container, enabled) as cap_panel:
+    enable_floor = cap_panel.toggle(
+        "Enable price floor",
+        value=enable_floor_default,
+        key="carbon_floor",
+        disabled=not enabled,
     )
-    if control_period_years is None or not enabled:
-        carbon_module["control_period_years"] = None
-    else:
-        carbon_module["control_period_years"] = int(control_period_years)
+    enable_ccr = cap_panel.toggle(
+        "Enable CCR",
+        value=enable_ccr_default,
+        key="carbon_ccr",
+        disabled=not enabled,
+    )
+    ccr1_enabled = cap_panel.toggle(
+        "Enable CCR Tier 1",
+        value=ccr1_default,
+        key="carbon_ccr1",
+        disabled=not (enabled and enable_ccr),
+    )
+    ccr2_enabled = cap_panel.toggle(
+        "Enable CCR Tier 2",
+        value=ccr2_default,
+        key="carbon_ccr2",
+        disabled=not (enabled and enable_ccr),
+    )
 
-    if enabled and banking_enabled:
-        carbon_module["bank0"] = float(initial_bank)
+    if enabled and enable_ccr and ccr1_enabled:
+        default_price1 = float(ccr1_price_default) if ccr1_price_default is not None else 0.0
+        ccr1_price_value = float(
+            cap_panel.number_input(
+                "CCR Tier 1 trigger price ($/ton)",
+                min_value=0.0,
+                value=default_price1,
+                step=1.0,
+                format="%0.2f",
+                key="carbon_ccr1_price",
+                disabled=not (enabled and enable_ccr and ccr1_enabled),
+            )
+        )
+        ccr1_escalator_value = float(
+            cap_panel.number_input(
+                "CCR Tier 1 annual escalator (%)",
+                min_value=0.0,
+                value=float(ccr1_escalator_default),
+                step=0.1,
+                format="%0.2f",
+                key="carbon_ccr1_escalator",
+                disabled=not (enabled and enable_ccr and ccr1_enabled),
+            )
+        )
     else:
-        carbon_module["bank0"] = 0.0
+        ccr1_price_value = ccr1_price_default if ccr1_price_default is not None else None
+        ccr1_escalator_value = float(ccr1_escalator_default)
 
-    if cap_region_values:
-        carbon_module["regions"] = list(cap_region_values)
+    if enabled and enable_ccr and ccr2_enabled:
+        default_price2 = float(ccr2_price_default) if ccr2_price_default is not None else 0.0
+        ccr2_price_value = float(
+            cap_panel.number_input(
+                "CCR Tier 2 trigger price ($/ton)",
+                min_value=0.0,
+                value=default_price2,
+                step=1.0,
+                format="%0.2f",
+                key="carbon_ccr2_price",
+                disabled=not (enabled and enable_ccr and ccr2_enabled),
+            )
+        )
+        ccr2_escalator_value = float(
+            cap_panel.number_input(
+                "CCR Tier 2 annual escalator (%)",
+                min_value=0.0,
+                value=float(ccr2_escalator_default),
+                step=0.1,
+                format="%0.2f",
+                key="carbon_ccr2_escalator",
+                disabled=not (enabled and enable_ccr and ccr2_enabled),
+            )
+        )
     else:
-        carbon_module.pop("regions", None)
+        ccr2_price_value = ccr2_price_default if ccr2_price_default is not None else None
+        ccr2_escalator_value = float(ccr2_escalator_default)
 
-    price_module = modules.setdefault("carbon_price", {})
-    price_module["enabled"] = bool(price_enabled)
-    if price_enabled:
-        price_module["price_per_ton"] = float(price_per_ton)
-        if price_schedule:
-            price_module["price_schedule"] = dict(price_schedule)
-        else:
-            price_module.pop("price_schedule", None)
+    banking_enabled = cap_panel.toggle(
+        "Enable allowance banking",
+        value=banking_default,
+        key="carbon_banking",
+        disabled=not enabled,
+    )
+
+    if banking_enabled:
+        initial_bank = float(
+            cap_panel.number_input(
+                "Initial allowance bank (tons)",
+                min_value=0.0,
+                value=float(bank_value_default if bank_value_default >= 0.0 else 0.0),
+                step=1000.0,
+                format="%f",
+                key="carbon_bank0",
+                disabled=not (enabled and banking_enabled),
+            )
+        )
+    else:
+        initial_bank = 0.0
+
+    control_override = cap_panel.toggle(
+        "Override control period",
+        value=control_override_default,
+        key="carbon_control_toggle",
+        disabled=not enabled,
+    )
+    control_period_value = cap_panel.number_input(
+        "Control period length (years)",
+        min_value=1,
+        value=int(control_default if control_default > 0 else 3),
+        step=1,
+        format="%d",
+        key="carbon_control_years",
+        disabled=not (enabled and control_override),
+    )
+    control_period_years = (
+        _sanitize_control_period(control_period_value)
+        if enabled and control_override
+        else None
+    )
+
+    coverage_selection = cap_panel.multiselect(
+        "Regions covered by carbon cap",
+        options=coverage_choices,
+        default=coverage_default_display,
+        disabled=not enabled,
+        key="carbon_coverage_regions",
+        help=(
+            "Select the regions subject to the cap. Choose “All regions” to apply "
+            "the carbon policy across every region."
+        ),
+    )
+    coverage_regions = _normalize_coverage_selection(
+        coverage_selection or coverage_default_display
+    )
+
+# -------------------------
+# Carbon Price Panel
+# -------------------------
+with _sidebar_panel(container, price_enabled) as price_panel:
+    price_per_ton = price_panel.number_input(
+        "Carbon price ($/ton)",
+        min_value=0.0,
+        value=float(price_default if price_default >= 0.0 else 0.0),
+        step=1.0,
+        format="%0.2f",
+        key="carbon_price_value",
+        disabled=not price_enabled,
+    )
+    price_schedule = price_schedule_default.copy() if price_enabled else {}
+
+# -------------------------
+# Errors and Return
+# -------------------------
+errors: list[str] = []
+if enabled and price_enabled:
+    errors.append("Cannot enable both carbon cap and carbon price simultaneously.")
+
+cap_region_values: list[Any] = []
+if coverage_regions != ["All"]:
+    for label in coverage_regions:
+        resolved = coverage_value_map.get(label, label)
+        if isinstance(resolved, str) and resolved.lower() in {"all", "all regions"}:
+            cap_region_values = []
+            break
+        try:
+            cap_region_values.append(int(resolved))
+        except (TypeError, ValueError):
+            cap_region_values.append(resolved)
+
+carbon_module = modules.setdefault("carbon_policy", {})
+carbon_module.update(
+    {
+        "enabled": bool(enabled),
+        "enable_floor": bool(enabled and enable_floor),
+        "enable_ccr": bool(enabled and enable_ccr),
+        "ccr1_enabled": bool(enabled and enable_ccr and ccr1_enabled),
+        "ccr2_enabled": bool(enabled and enable_ccr and ccr2_enabled),
+        "allowance_banking_enabled": bool(enabled and banking_enabled),
+        "coverage_regions": list(coverage_regions),
+    }
+)
+if control_period_years is None or not enabled:
+    carbon_module["control_period_years"] = None
+else:
+    carbon_module["control_period_years"] = int(control_period_years)
+
+if enabled and banking_enabled:
+    carbon_module["bank0"] = float(initial_bank)
+else:
+    carbon_module["bank0"] = 0.0
+
+if cap_region_values:
+    carbon_module["regions"] = list(cap_region_values)
+else:
+    carbon_module.pop("regions", None)
+
+price_module = modules.setdefault("carbon_price", {})
+price_module["enabled"] = bool(price_enabled)
+if price_enabled:
+    price_module["price_per_ton"] = float(price_per_ton)
+    if price_schedule:
+        price_module["price_schedule"] = dict(price_schedule)
     else:
         price_module.pop("price_schedule", None)
-        price_module.pop("price", None)
-        if "price_per_ton" in price_module:
-            price_module["price_per_ton"] = float(price_per_ton)
+else:
+    price_module.pop("price_schedule", None)
+    price_module.pop("price", None)
+    if "price_per_ton" in price_module:
+        price_module["price_per_ton"] = float(price_per_ton)
 
-    return CarbonModuleSettings(
-        enabled=enabled,
-        price_enabled=price_enabled,
-        enable_floor=enable_floor,
-        enable_ccr=enable_ccr,
-        ccr1_enabled=ccr1_enabled,
-        ccr2_enabled=ccr2_enabled,
-        banking_enabled=banking_enabled,
-        coverage_regions=coverage_regions,
-        control_period_years=control_period_years,
-        price_per_ton=float(price_per_ton),
-        initial_bank=initial_bank,
-        cap_regions=cap_region_values,
-        price_schedule=price_schedule,
-        errors=errors,
-    )
-
-
+return CarbonModuleSettings(
+    enabled=enabled,
+    price_enabled=price_enabled,
+    enable_floor=enable_floor,
+    enable_ccr=enable_ccr,
+    ccr1_enabled=ccr1_enabled,
+    ccr2_enabled=ccr2_enabled,
+    ccr1_price=ccr1_price_value if 'ccr1_price_value' in locals() else ccr1_price_default,
+    ccr2_price=ccr2_price_value if 'ccr2_price_value' in locals() else ccr2_price_default,
+    ccr1_escalator_pct=ccr1_escalator_value if 'ccr1_escalator_value' in locals() else float(ccr1_escalator_default),
+    ccr2_escalator_pct=ccr2_escalator_value if 'ccr2_escalator_value' in locals() else float(ccr2_escalator_default),
+    banking_enabled=banking_enabled,
+    coverage_regions=coverage_regions,
+    control_period_years=control_period_years,
+    price_per_ton=float(price_per_ton),
+    initial_bank=initial_bank,
+    cap_regions=cap_region_values,
+    price_schedule=price_schedule,
+    errors=errors,
+)
 
 # -------------------------
 # Dispatch UI
@@ -2892,6 +3059,10 @@ def run_policy_simulation(
     enable_ccr: bool = True,
     ccr1_enabled: bool = True,
     ccr2_enabled: bool = True,
+    ccr1_price: float | None = None,
+    ccr2_price: float | None = None,
+    ccr1_escalator_pct: float | None = None,
+    ccr2_escalator_pct: float | None = None,
     allowance_banking_enabled: bool = True,
     initial_bank: float = 0.0,
     coverage_regions: Iterable[str] | None = None,
@@ -2930,6 +3101,10 @@ def run_policy_simulation(
         enable_ccr=enable_ccr,
         ccr1_enabled=ccr1_enabled,
         ccr2_enabled=ccr2_enabled,
+        ccr1_price=ccr1_price,
+        ccr2_price=ccr2_price,
+        ccr1_escalator_pct=ccr1_escalator_pct,
+        ccr2_escalator_pct=ccr2_escalator_pct,
         allowance_banking_enabled=allowance_banking_enabled,
         control_period_years=control_period_years,
     )
@@ -3708,6 +3883,10 @@ def main() -> None:
         enable_ccr=False,
         ccr1_enabled=False,
         ccr2_enabled=False,
+        ccr1_price=None,
+        ccr2_price=None,
+        ccr1_escalator_pct=0.0,
+        ccr2_escalator_pct=0.0,
         banking_enabled=False,
         coverage_regions=["All"],
         control_period_years=None,
@@ -3897,34 +4076,43 @@ def main() -> None:
         dispatch_settings.enabled and dispatch_settings.mode == "network"
     )
 
-    current_run_payload: dict[str, Any] = {
-        "config_source": copy.deepcopy(run_config),
-        "start_year": int(start_year_val),
-        "end_year": int(end_year_val),
-        "carbon_policy_enabled": bool(carbon_settings.enabled),
-        "enable_floor": bool(carbon_settings.enable_floor),
-        "enable_ccr": bool(carbon_settings.enable_ccr),
-        "ccr1_enabled": bool(carbon_settings.ccr1_enabled),
-        "ccr2_enabled": bool(carbon_settings.ccr2_enabled),
-        "allowance_banking_enabled": bool(carbon_settings.banking_enabled),
-        "coverage_regions": list(carbon_settings.coverage_regions),
-        "cap_regions": list(carbon_settings.cap_regions),
-        "initial_bank": float(carbon_settings.initial_bank),
-        "control_period_years": carbon_settings.control_period_years,
-        "carbon_price_enabled": bool(carbon_settings.price_enabled),
-        "carbon_price_value": float(carbon_settings.price_per_ton)
+current_run_payload: dict[str, Any] = {
+    "config_source": copy.deepcopy(run_config),
+    "start_year": int(start_year_val),
+    "end_year": int(end_year_val),
+    "carbon_policy_enabled": bool(carbon_settings.enabled),
+    "enable_floor": bool(carbon_settings.enable_floor),
+    "enable_ccr": bool(carbon_settings.enable_ccr),
+    "ccr1_enabled": bool(carbon_settings.ccr1_enabled),
+    "ccr2_enabled": bool(carbon_settings.ccr2_enabled),
+    "ccr1_price": float(carbon_settings.ccr1_price)
+    if carbon_settings.ccr1_price is not None
+    else None,
+    "ccr2_price": float(carbon_settings.ccr2_price)
+    if carbon_settings.ccr2_price is not None
+    else None,
+    "ccr1_escalator_pct": float(carbon_settings.ccr1_escalator_pct),
+    "ccr2_escalator_pct": float(carbon_settings.ccr2_escalator_pct),
+    "allowance_banking_enabled": bool(carbon_settings.banking_enabled),
+    "coverage_regions": list(carbon_settings.coverage_regions),
+    "cap_regions": list(carbon_settings.cap_regions),
+    "initial_bank": float(carbon_settings.initial_bank),
+    "control_period_years": carbon_settings.control_period_years,
+    "carbon_price_enabled": bool(carbon_settings.price_enabled),
+    "carbon_price_value": float(carbon_settings.price_per_ton)
+    if carbon_settings.price_enabled
+    else 0.0,
+    "carbon_price_schedule": (
+        dict(carbon_settings.price_schedule)
         if carbon_settings.price_enabled
-        else 0.0,
-        "carbon_price_schedule": (
-            dict(carbon_settings.price_schedule)
-            if carbon_settings.price_enabled
-            else {}
-        ),
-        "dispatch_use_network": dispatch_use_network,
-        "module_config": copy.deepcopy(run_config.get("modules", {})),
-        "frames": frames_for_run,
-        "assumption_notes": list(assumption_notes),
-    }
+        else {}
+    ),
+    "dispatch_use_network": dispatch_use_network,
+    "module_config": copy.deepcopy(run_config.get("modules", {})),
+    "frames": frames_for_run,
+    "assumption_notes": list(assumption_notes),
+}
+
 
 
     def _build_summary_from_payload(payload: Mapping[str, Any]) -> list[tuple[str, Any]]:
