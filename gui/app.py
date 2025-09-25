@@ -94,6 +94,16 @@ except ModuleNotFoundError:
             return str(x)
 
 
+try:
+    from gui.rggi import apply_rggi_defaults
+except ModuleNotFoundError:  # pragma: no cover - compatibility fallback
+    try:
+        from rggi import apply_rggi_defaults  # type: ignore[import-not-found]
+    except ModuleNotFoundError:  # pragma: no cover - compatibility fallback
+        def apply_rggi_defaults(modules: dict[str, Any]) -> None:
+            return None
+
+
 if importlib.util.find_spec("streamlit") is not None:  # pragma: no cover - optional dependency
     import streamlit as st  # type: ignore[import-not-found]
 else:  # pragma: no cover - optional dependency
@@ -186,6 +196,14 @@ SIDEBAR_SECTIONS: list[tuple[str, bool]] = [
     ("Electricity dispatch", False),
     ("Incentives / credits", False),
     ("Outputs", False),
+]
+
+_GENERAL_PRESET_STATE_KEY = "general_config_active_preset"
+_GENERAL_PRESET_WIDGET_KEY = "general_config_preset_option"
+
+_GENERAL_CONFIG_PRESETS = [
+    ("manual", "Manual configuration", None, False),
+    ("rggi", "Eastern Interconnection – RGGI", apply_rggi_defaults, True),
 ]
 
 SIDEBAR_STYLE = """
@@ -994,23 +1012,71 @@ def _render_general_config_section(
     except Exception:
         base_config = dict(default_config)
 
-    uploaded = container.file_uploader(
-        "Run configuration (TOML)",
-        type="toml",
-        key="general_config_upload",
-    )
-    if uploaded is not None:
-        config_label = uploaded.name or "uploaded_config.toml"
+    preset_key = "manual"
+    preset_label: str | None = None
+    preset_apply: Callable[[dict[str, Any]], None] | None = None
+    preset_locks_carbon = False
+
+    if st is not None:
+        default_preset_key = st.session_state.get(
+            _GENERAL_PRESET_STATE_KEY,
+            _GENERAL_CONFIG_PRESETS[0][0],
+        )
+        preset_labels = [entry[1] for entry in _GENERAL_CONFIG_PRESETS]
         try:
-            base_config = _load_config_data(uploaded.getvalue())
-        except Exception as exc:
-            container.error(f"Failed to read configuration: {exc}")
-            base_config = copy.deepcopy(dict(default_config))
-            config_label = default_label
+            default_index = next(
+                idx
+                for idx, entry in enumerate(_GENERAL_CONFIG_PRESETS)
+                if entry[0] == default_preset_key
+            )
+        except StopIteration:
+            default_index = 0
+        selected_label = container.radio(
+            "Configuration preset",
+            options=preset_labels,
+            index=default_index,
+            key=_GENERAL_PRESET_WIDGET_KEY,
+            help=(
+                "Select a pre-configured scenario or edit the default configuration manually."
+            ),
+        )
+        for key, label, apply_fn, lock_flag in _GENERAL_CONFIG_PRESETS:
+            if label == selected_label:
+                preset_key = key
+                preset_label = label if key != "manual" else None
+                preset_apply = apply_fn
+                preset_locks_carbon = bool(lock_flag)
+                st.session_state[_GENERAL_PRESET_STATE_KEY] = key
+                break
     else:
-        config_label = default_label
+        preset_key, _, preset_apply, lock_flag = _GENERAL_CONFIG_PRESETS[0]
+        preset_label = None
+        preset_locks_carbon = bool(lock_flag)
+
+    config_label = default_label
+
+    if preset_key == "manual":
+        uploaded = container.file_uploader(
+            "Run configuration (TOML)",
+            type="toml",
+            key="general_config_upload",
+        )
+        if uploaded is not None:
+            config_label = uploaded.name or "uploaded_config.toml"
+            try:
+                base_config = _load_config_data(uploaded.getvalue())
+            except Exception as exc:
+                container.error(f"Failed to read configuration: {exc}")
+                base_config = copy.deepcopy(dict(default_config))
+                config_label = default_label
+    else:
+        config_label = preset_label or default_label
 
     container.caption(f"Using configuration: {config_label}")
+    if preset_key != "manual":
+        container.info(
+            "Preset values are loaded automatically. Carbon policy settings are locked while this preset is active."
+        )
 
     candidate_years = _years_from_config(base_config)
     if candidate_years:
@@ -1191,6 +1257,19 @@ def _render_general_config_section(
     run_config["regions"] = selected_regions
     run_config.setdefault("modules", {})
 
+    active_preset_key: str | None = None
+    active_preset_label: str | None = None
+    lock_carbon_controls = False
+    if preset_key != "manual" and preset_apply is not None:
+        try:
+            preset_apply(run_config["modules"])
+        except Exception as exc:
+            container.error(f"Failed to apply preset defaults: {exc}")
+        else:
+            active_preset_key = preset_key
+            active_preset_label = preset_label
+            lock_carbon_controls = bool(preset_locks_carbon)
+
     try:
         selected_years = _select_years(candidate_years, start_year, end_year)
     except Exception:
@@ -1208,6 +1287,9 @@ def _render_general_config_section(
         end_year=end_year,
         selected_years=selected_years,
         regions=selected_regions,
+        preset_key=active_preset_key,
+        preset_label=active_preset_label,
+        lock_carbon_controls=lock_carbon_controls,
     )
 
 
@@ -1216,6 +1298,7 @@ def _render_carbon_policy_section(
     run_config: dict[str, Any],
     *,
     region_options: Iterable[Any] | None = None,
+    lock_inputs: bool = False,
 ) -> CarbonModuleSettings:
     modules = run_config.setdefault("modules", {})
     defaults = modules.get("carbon_policy", {}) or {}
@@ -1256,6 +1339,8 @@ def _render_carbon_policy_section(
     price_default = _coerce_float(price_value_raw, default=0.0)
     price_schedule_default = _normalize_price_schedule(price_defaults.get("price_schedule"))
 
+    locked = bool(lock_inputs)
+
     # -------------------------
     # Coverage value map
     # -------------------------
@@ -1292,6 +1377,31 @@ def _render_carbon_policy_section(
         coverage_default_display = [
             label for label in coverage_default if label in coverage_choices
         ] or [_ALL_REGIONS_LABEL]
+
+    default_ccr1_price_value = float(ccr1_price_default) if ccr1_price_default is not None else 0.0
+    default_ccr2_price_value = float(ccr2_price_default) if ccr2_price_default is not None else 0.0
+    default_ccr1_escalator_value = float(ccr1_escalator_default)
+    default_ccr2_escalator_value = float(ccr2_escalator_default)
+    default_control_year_value = int(control_default if control_default > 0 else 3)
+    default_price_value = float(price_default if price_default >= 0.0 else 0.0)
+
+    if locked and st is not None:
+        st.session_state["carbon_enable"] = bool(enabled_default)
+        st.session_state["carbon_price_enable"] = bool(price_enabled_default)
+        st.session_state["carbon_floor"] = bool(enable_floor_default)
+        st.session_state["carbon_ccr"] = bool(enable_ccr_default)
+        st.session_state["carbon_ccr1"] = bool(ccr1_default)
+        st.session_state["carbon_ccr2"] = bool(ccr2_default)
+        st.session_state["carbon_banking"] = bool(banking_default)
+        st.session_state["carbon_bank0"] = float(bank_default)
+        st.session_state["carbon_control_toggle"] = bool(control_override_default)
+        st.session_state["carbon_control_years"] = default_control_year_value
+        st.session_state["carbon_ccr1_price"] = default_ccr1_price_value
+        st.session_state["carbon_ccr1_escalator"] = default_ccr1_escalator_value
+        st.session_state["carbon_ccr2_price"] = default_ccr2_price_value
+        st.session_state["carbon_ccr2_escalator"] = default_ccr2_escalator_value
+        st.session_state["carbon_coverage_regions"] = list(coverage_default_display)
+        st.session_state["carbon_price_value"] = default_price_value
 
     # -------------------------
     # Session defaults and change tracking
@@ -1338,15 +1448,20 @@ def _render_carbon_policy_section(
         value=session_enabled_default,
         key="carbon_enable",
         on_change=lambda: _mark_last_changed("cap"),
+        disabled=locked,
     )
     price_enabled = container.toggle(
         "Enable carbon price",
         value=session_price_default,
         key="carbon_price_enable",
         on_change=lambda: _mark_last_changed("price"),
+        disabled=locked,
     )
 
-    if enabled and price_enabled:
+    if locked:
+        enabled = bool(enabled_default)
+        price_enabled = bool(price_enabled_default)
+    elif enabled and price_enabled:
         if last_changed == "cap":
             price_enabled = False
         else:
@@ -1355,30 +1470,30 @@ def _render_carbon_policy_section(
     # -------------------------
     # Carbon Cap Panel
     # -------------------------
-    with _sidebar_panel(container, enabled) as cap_panel:
+    with _sidebar_panel(container, enabled and not locked) as cap_panel:
         enable_floor = cap_panel.toggle(
             "Enable price floor",
             value=enable_floor_default,
             key="carbon_floor",
-            disabled=not enabled,
+            disabled=(not enabled) or locked,
         )
         enable_ccr = cap_panel.toggle(
             "Enable CCR",
             value=enable_ccr_default,
             key="carbon_ccr",
-            disabled=not enabled,
+            disabled=(not enabled) or locked,
         )
         ccr1_enabled = cap_panel.toggle(
             "Enable CCR Tier 1",
             value=ccr1_default,
             key="carbon_ccr1",
-            disabled=not (enabled and enable_ccr),
+            disabled=(not (enabled and enable_ccr)) or locked,
         )
         ccr2_enabled = cap_panel.toggle(
             "Enable CCR Tier 2",
             value=ccr2_default,
             key="carbon_ccr2",
-            disabled=not (enabled and enable_ccr),
+            disabled=(not (enabled and enable_ccr)) or locked,
         )
 
         if enabled and enable_ccr and ccr1_enabled:
@@ -1391,7 +1506,7 @@ def _render_carbon_policy_section(
                     step=1.0,
                     format="%0.2f",
                     key="carbon_ccr1_price",
-                    disabled=not (enabled and enable_ccr and ccr1_enabled),
+                    disabled=(not (enabled and enable_ccr and ccr1_enabled)) or locked,
                 )
             )
             ccr1_escalator_value = float(
@@ -1402,7 +1517,7 @@ def _render_carbon_policy_section(
                     step=0.1,
                     format="%0.2f",
                     key="carbon_ccr1_escalator",
-                    disabled=not (enabled and enable_ccr and ccr1_enabled),
+                    disabled=(not (enabled and enable_ccr and ccr1_enabled)) or locked,
                 )
             )
         else:
@@ -1419,7 +1534,7 @@ def _render_carbon_policy_section(
                     step=1.0,
                     format="%0.2f",
                     key="carbon_ccr2_price",
-                    disabled=not (enabled and enable_ccr and ccr2_enabled),
+                    disabled=(not (enabled and enable_ccr and ccr2_enabled)) or locked,
                 )
             )
             ccr2_escalator_value = float(
@@ -1430,7 +1545,7 @@ def _render_carbon_policy_section(
                     step=0.1,
                     format="%0.2f",
                     key="carbon_ccr2_escalator",
-                    disabled=not (enabled and enable_ccr and ccr2_enabled),
+                    disabled=(not (enabled and enable_ccr and ccr2_enabled)) or locked,
                 )
             )
         else:
@@ -1441,7 +1556,7 @@ def _render_carbon_policy_section(
             "Enable allowance banking",
             value=banking_default,
             key="carbon_banking",
-            disabled=not enabled,
+            disabled=(not enabled) or locked,
         )
 
         if banking_enabled:
@@ -1453,7 +1568,7 @@ def _render_carbon_policy_section(
                     step=1000.0,
                     format="%f",
                     key="carbon_bank0",
-                    disabled=not (enabled and banking_enabled),
+                    disabled=(not (enabled and banking_enabled)) or locked,
                 )
             )
         else:
@@ -1463,7 +1578,7 @@ def _render_carbon_policy_section(
             "Override control period",
             value=control_override_default,
             key="carbon_control_toggle",
-            disabled=not enabled,
+            disabled=(not enabled) or locked,
         )
         control_period_value = cap_panel.number_input(
             "Control period length (years)",
@@ -1472,7 +1587,7 @@ def _render_carbon_policy_section(
             step=1,
             format="%d",
             key="carbon_control_years",
-            disabled=not (enabled and control_override),
+            disabled=(not (enabled and control_override)) or locked,
         )
         control_period_years = (
             _sanitize_control_period(control_period_value)
@@ -1484,7 +1599,7 @@ def _render_carbon_policy_section(
             "Regions covered by carbon cap",
             options=coverage_choices,
             default=coverage_default_display,
-            disabled=not enabled,
+            disabled=(not enabled) or locked,
             key="carbon_coverage_regions",
             help=(
                 "Select the regions subject to the cap. Choose “All regions” to apply "
@@ -1498,7 +1613,7 @@ def _render_carbon_policy_section(
     # -------------------------
     # Carbon Price Panel
     # -------------------------
-    with _sidebar_panel(container, price_enabled) as price_panel:
+    with _sidebar_panel(container, price_enabled and not locked) as price_panel:
         price_per_ton = price_panel.number_input(
             "Carbon price ($/ton)",
             min_value=0.0,
@@ -1506,8 +1621,29 @@ def _render_carbon_policy_section(
             step=1.0,
             format="%0.2f",
             key="carbon_price_value",
-            disabled=not price_enabled,
+            disabled=(not price_enabled) or locked,
         )
+        price_schedule = price_schedule_default.copy() if price_enabled else {}
+
+    if locked:
+        enabled = bool(enabled_default)
+        price_enabled = bool(price_enabled_default)
+        enable_floor = bool(enable_floor_default)
+        enable_ccr = bool(enable_ccr_default)
+        ccr1_enabled = bool(ccr1_default)
+        ccr2_enabled = bool(ccr2_default)
+        banking_enabled = bool(banking_default)
+        if banking_enabled:
+            initial_bank = float(bank_value_default if bank_value_default >= 0.0 else 0.0)
+        else:
+            initial_bank = 0.0
+        control_override = bool(control_override_default)
+        if enabled and control_override:
+            control_period_years = _sanitize_control_period(default_control_year_value)
+        else:
+            control_period_years = None
+        coverage_regions = list(coverage_default)
+        price_per_ton = default_price_value
         price_schedule = price_schedule_default.copy() if price_enabled else {}
 
     # -------------------------
@@ -4553,6 +4689,7 @@ def main() -> None:
                 carbon_expander,
                 run_config,
                 region_options=general_result.regions,
+                lock_inputs=general_result.lock_carbon_controls,
             )
             module_errors.extend(carbon_settings.errors)
 
