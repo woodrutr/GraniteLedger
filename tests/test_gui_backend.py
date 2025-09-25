@@ -16,6 +16,7 @@ streamlit = pytest.importorskip("streamlit")
 def _baseline_config() -> dict:
     return {
         "years": [2025, 2026],
+        "regions": [1],
         "allowance_market": {
             "cap": {"2025": 500_000.0, "2026": 450_000.0},
             "floor": 5.0,
@@ -55,6 +56,7 @@ def test_backend_generates_outputs(tmp_path):
         config,
         start_year=2025,
         end_year=2026,
+        cap_regions=[1],
         frames=frames,
     )
 
@@ -84,6 +86,7 @@ def test_backend_policy_toggle_affects_price():
         config,
         start_year=2025,
         end_year=2025,
+        cap_regions=[1],
         frames=frames,
         carbon_policy_enabled=True,
     )
@@ -91,6 +94,7 @@ def test_backend_policy_toggle_affects_price():
         config,
         start_year=2025,
         end_year=2025,
+        cap_regions=[1],
         frames=frames,
         carbon_policy_enabled=False,
     )
@@ -182,6 +186,7 @@ def test_backend_dispatch_and_carbon_modules(monkeypatch):
         config,
         start_year=2025,
         end_year=2025,
+        cap_regions=[1],
         frames=frames,
         carbon_policy_enabled=True,
         dispatch_use_network=True,
@@ -194,6 +199,8 @@ def test_backend_dispatch_and_carbon_modules(monkeypatch):
     dispatch_cfg = result["module_config"]["electricity_dispatch"]
     assert dispatch_cfg["enabled"] is True
     assert dispatch_cfg["use_network"] is True
+    carbon_cfg = result["module_config"]["carbon_policy"]
+    assert carbon_cfg.get("regions") == [1]
 
     _cleanup_temp_dir(result)
 
@@ -249,6 +256,7 @@ def test_backend_banking_toggle_disables_bank(tmp_path):
         config,
         start_year=2025,
         end_year=2026,
+        cap_regions=[1],
         frames=frames,
         allowance_banking_enabled=False,
     )
@@ -266,15 +274,62 @@ def test_backend_returns_error_for_invalid_frames():
         config,
         start_year=2025,
         end_year=2025,
+        cap_regions=[1],
         frames={"demand": pd.DataFrame()},
     )
 
     assert "error" in result
 
 
+def test_backend_preserves_explicit_coverage_overrides(monkeypatch):
+    real_runner = importlib.import_module("engine.run_loop").run_end_to_end_from_frames
+    captured: dict[str, pd.DataFrame] = {}
+
+    def capturing_runner(frames, **kwargs):
+        captured["coverage"] = frames.coverage()
+        return real_runner(frames, **kwargs)
+
+    monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: capturing_runner)
+
+    config = _baseline_config()
+    frames = _frames_for_years([2025])
+    coverage = pd.DataFrame(
+        [
+            {"region": "default", "year": 2025, "covered": False},
+            {"region": "other", "year": -1, "covered": True},
+        ]
+    )
+    frames = frames.with_frame("coverage", coverage)
+
+    result = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2025,
+        cap_regions=["default"],
+        frames=frames,
+    )
+
+    assert "error" not in result
+    coverage_frame = captured.get("coverage")
+    assert coverage_frame is not None
+    default_rows = coverage_frame[coverage_frame["region"].astype(str) == "default"]
+    assert set(default_rows["year"].astype(int)) == {-1, 2025}
+    explicit_value = default_rows.loc[default_rows["year"] == 2025, "covered"].iloc[0]
+    default_value = default_rows.loc[default_rows["year"] == -1, "covered"].iloc[0]
+    assert bool(explicit_value) is False
+    assert bool(default_value) is True
+
+    _cleanup_temp_dir(result)
+
+
 def test_backend_builds_default_frames(tmp_path):
     config = _baseline_config()
-    result = run_policy_simulation(config, start_year=2025, end_year=2025)
+    result = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2025,
+        cap_regions=[1],
+    )
 
     assert "error" not in result
     assert not result["annual"].empty
