@@ -4115,41 +4115,45 @@ def main() -> None:
             show_confirm_modal = False
 
 # Trigger showing modal if a run is pending
-if isinstance(pending_run, Mapping) and not show_confirm_modal and not run_in_progress:
-    show_confirm_modal = True
-    st.session_state["show_confirm_modal"] = True
+    if isinstance(pending_run, Mapping) and not show_confirm_modal and not run_in_progress:
+        show_confirm_modal = True
+        st.session_state["show_confirm_modal"] = True
 
-# Handle run click to build pending run payload
-if run_clicked:
-    if assumption_errors or module_errors:
-        st.error("Resolve the configuration issues above before running the simulation.")
-    else:
-        run_inputs_payload = copy.deepcopy(current_run_payload) or {
-            "config_source": copy.deepcopy(run_config),
-            "start_year": int(start_year_val),
-            "end_year": int(end_year_val),
-            "carbon_policy_enabled": bool(carbon_settings.enabled),
-            "enable_floor": bool(carbon_settings.enable_floor),
-            "enable_ccr": bool(carbon_settings.enable_ccr),
-            "ccr1_enabled": bool(carbon_settings.ccr1_enabled),
-            "ccr2_enabled": bool(carbon_settings.ccr2_enabled),
-            "allowance_banking_enabled": bool(carbon_settings.banking_enabled),
-            "coverage_regions": list(carbon_settings.coverage_regions),
-            "control_period_years": carbon_settings.control_period_years,
-            "carbon_price_enabled": bool(carbon_settings.price_enabled),
-            "carbon_price_value": float(carbon_settings.price_per_ton),
-            "carbon_price_schedule": dict(carbon_settings.price_schedule),
-            "dispatch_use_network": bool(
-                dispatch_settings.enabled and dispatch_settings.mode == "network"
-            ),
-            "module_config": copy.deepcopy(run_config.get("modules", {})),
-        }
+    # Handle run click to build pending run payload
+    if run_clicked:
+        if assumption_errors or module_errors:
+            st.error(
+                "Resolve the configuration issues above before running the simulation."
+            )
+        else:
+            run_inputs_payload = copy.deepcopy(current_run_payload) or {
+                "config_source": copy.deepcopy(run_config),
+                "start_year": int(start_year_val),
+                "end_year": int(end_year_val),
+                "carbon_policy_enabled": bool(carbon_settings.enabled),
+                "enable_floor": bool(carbon_settings.enable_floor),
+                "enable_ccr": bool(carbon_settings.enable_ccr),
+                "ccr1_enabled": bool(carbon_settings.ccr1_enabled),
+                "ccr2_enabled": bool(carbon_settings.ccr2_enabled),
+                "allowance_banking_enabled": bool(carbon_settings.banking_enabled),
+                "coverage_regions": list(carbon_settings.coverage_regions),
+                "control_period_years": carbon_settings.control_period_years,
+                "carbon_price_enabled": bool(carbon_settings.price_enabled),
+                "carbon_price_value": float(carbon_settings.price_per_ton),
+                "carbon_price_schedule": dict(carbon_settings.price_schedule),
+                "dispatch_use_network": bool(
+                    dispatch_settings.enabled and dispatch_settings.mode == "network"
+                ),
+                "module_config": copy.deepcopy(run_config.get("modules", {})),
+            }
 
-        summary_builder = globals().get("_build_run_summary")
-        if callable(summary_builder):
-            summary_details = summary_builder(run_inputs_payload, config_label=config_label)
-        else:  # defensive fallback
-            summary_details = []
+            summary_builder = globals().get("_build_run_summary")
+            if callable(summary_builder):
+                summary_details = summary_builder(
+                    run_inputs_payload, config_label=config_label
+                )
+            else:  # defensive fallback
+                summary_details = []
 
         st.session_state["pending_run"] = {
             "params": run_inputs_payload,
