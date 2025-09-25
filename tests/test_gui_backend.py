@@ -9,7 +9,7 @@ import pytest
 pd = pytest.importorskip("pandas")
 
 from tests.fixtures.dispatch_single_minimal import baseline_frames
-from gui.app import run_policy_simulation
+from gui.app import DEEP_CARBON_UNSUPPORTED_MESSAGE, run_policy_simulation
 
 streamlit = pytest.importorskip("streamlit")
 
@@ -242,6 +242,103 @@ def test_backend_handles_renamed_engine_outputs(monkeypatch):
     pd.testing.assert_frame_equal(result["flows"], flows)
 
     _cleanup_temp_dir(result)
+
+
+def test_backend_handles_legacy_runner_without_deep_kw(monkeypatch):
+    config = _baseline_config()
+    frames = _frames_for_years([2025])
+
+    annual = pd.DataFrame([{"year": 2025, "p_co2": 12.0}])
+    emissions = pd.DataFrame([{"year": 2025, "region": "default", "emissions_tons": 1.0}])
+    prices = pd.DataFrame([{"year": 2025, "region": "default", "price": 45.0}])
+    flows = pd.DataFrame(
+        [{"year": 2025, "from_region": "A", "to_region": "B", "flow_mwh": 10.0}]
+    )
+
+    called: dict[str, bool] = {}
+
+    class LegacyOutputs:
+        def __init__(self) -> None:
+            self.annual = annual
+            self.emissions_by_region = emissions
+            self.price_by_region = prices
+            self.flows = flows
+
+        def to_csv(self, target: Path) -> None:
+            target = Path(target)
+            target.mkdir(parents=True, exist_ok=True)
+            self.annual.to_csv(target / "annual.csv", index=False)
+            self.emissions_by_region.to_csv(target / "emissions_by_region.csv", index=False)
+            self.price_by_region.to_csv(target / "price_by_region.csv", index=False)
+            self.flows.to_csv(target / "flows.csv", index=False)
+
+    def legacy_runner(
+        frames,
+        *,
+        years=None,
+        price_initial=0.0,
+        enable_floor=True,
+        enable_ccr=True,
+        use_network=False,
+        carbon_price_schedule=None,
+        progress_cb=None,
+    ):
+        called["executed"] = True
+        return LegacyOutputs()
+
+    monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: legacy_runner)
+
+    result = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2025,
+        frames=frames,
+        deep_carbon_pricing=False,
+    )
+
+    assert "error" not in result
+    assert called.get("executed") is True
+    pd.testing.assert_frame_equal(result["annual"], annual)
+    pd.testing.assert_frame_equal(result["emissions_by_region"], emissions)
+    pd.testing.assert_frame_equal(result["price_by_region"], prices)
+    pd.testing.assert_frame_equal(result["flows"], flows)
+
+    _cleanup_temp_dir(result)
+
+
+def test_backend_rejects_deep_mode_when_runner_lacks_kw(monkeypatch):
+    config = _baseline_config()
+    frames = _frames_for_years([2025])
+    called: dict[str, bool] = {}
+
+    def legacy_runner(
+        frames,
+        *,
+        years=None,
+        price_initial=0.0,
+        enable_floor=True,
+        enable_ccr=True,
+        use_network=False,
+        carbon_price_schedule=None,
+        progress_cb=None,
+    ):
+        called["executed"] = True
+        return {}
+
+    monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: legacy_runner)
+
+    result = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2025,
+        frames=frames,
+        deep_carbon_pricing=True,
+        carbon_price_enabled=True,
+        carbon_price_value=10.0,
+    )
+
+    assert result.get("error") == DEEP_CARBON_UNSUPPORTED_MESSAGE
+    assert "executed" not in called
 
 
 def test_backend_disabled_toggle_propagates_flags(monkeypatch):
