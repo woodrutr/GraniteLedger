@@ -165,6 +165,9 @@ STREAMLIT_REQUIRED_MESSAGE = (
 ENGINE_RUNNER_REQUIRED_MESSAGE = (
     "engine.run_loop.run_end_to_end_from_frames is required to run the policy simulator UI."
 )
+DEEP_CARBON_UNSUPPORTED_MESSAGE = (
+    "The installed simulation engine does not support the deep carbon pricing mode."
+)
 
 
 def _ensure_engine_runner():
@@ -188,6 +191,10 @@ _LARGE_ALLOWANCE_SUPPLY = 1e12
 _GENERAL_REGIONS_NORMALIZED_KEY = "general_regions_normalized_selection"
 _ALL_REGIONS_LABEL = "All regions"
 _T = TypeVar("_T")
+
+_RUNNER_SIGNATURE: inspect.Signature | None = None
+_RUNNER_ACCEPTS_VAR_KEYWORDS: bool | None = None
+_RUNNER_KEYWORD_SUPPORT: dict[str, bool] = {}
 
 
 SIDEBAR_SECTIONS: list[tuple[str, bool]] = [
@@ -803,6 +810,43 @@ def _ensure_engine_runner():
 def _ensure_streamlit() -> None:
     if st is None:
         raise ModuleNotFoundError(STREAMLIT_REQUIRED_MESSAGE)
+
+
+def _cache_runner_signature(runner: Callable[..., Any]) -> None:
+    global _RUNNER_SIGNATURE, _RUNNER_ACCEPTS_VAR_KEYWORDS
+    if _RUNNER_SIGNATURE is not None or _RUNNER_ACCEPTS_VAR_KEYWORDS is not None:
+        return
+    try:
+        signature = inspect.signature(runner)
+    except (TypeError, ValueError):
+        _RUNNER_SIGNATURE = None
+        _RUNNER_ACCEPTS_VAR_KEYWORDS = True
+    else:
+        _RUNNER_SIGNATURE = signature
+        _RUNNER_ACCEPTS_VAR_KEYWORDS = any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in signature.parameters.values()
+        )
+
+
+def _runner_supports_keyword(runner: Callable[..., Any], name: str) -> bool:
+    support = _RUNNER_KEYWORD_SUPPORT.get(name)
+    if support is not None:
+        return support
+
+    _cache_runner_signature(runner)
+
+    if _RUNNER_ACCEPTS_VAR_KEYWORDS or _RUNNER_SIGNATURE is None:
+        support = True
+    else:
+        parameter = _RUNNER_SIGNATURE.parameters.get(name)
+        support = parameter is not None and parameter.kind in (
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        )
+
+    _RUNNER_KEYWORD_SUPPORT[name] = support
+    return support
 
 
 @contextmanager
@@ -4055,33 +4099,32 @@ def run_policy_simulation(
         and carbon_policy_cfg.enable_ccr
         and (carbon_policy_cfg.ccr1_enabled or carbon_policy_cfg.ccr2_enabled)
     )
+    runner_kwargs: dict[str, Any] = {
+        "years": years,
+        "price_initial": 0.0,
+        "enable_floor": enable_floor_flag,
+        "enable_ccr": enable_ccr_flag,
+        "use_network": bool(dispatch_use_network),
+        "carbon_price_schedule": price_schedule_map if price_active else None,
+        "deep_carbon_pricing": bool(deep_carbon_pricing),
+        "progress_cb": progress_cb,
+    }
+    if not _runner_supports_keyword(runner, "deep_carbon_pricing"):
+        if deep_carbon_pricing:
+            return {"error": DEEP_CARBON_UNSUPPORTED_MESSAGE}
+        runner_kwargs.pop("deep_carbon_pricing", None)
     try:
-        run_kwargs = {
-            "years": years,
-            "price_initial": 0.0,
-            "enable_floor": enable_floor_flag,
-            "enable_ccr": enable_ccr_flag,
-            "use_network": bool(dispatch_use_network),
-            "carbon_price_schedule": price_schedule_map if price_active else None,
-            "progress_cb": progress_cb,
-        }
-        if supports_deep:
-            run_kwargs["deep_carbon_pricing"] = bool(deep_carbon_pricing)
-
-        outputs = runner(
-            frames_obj,
-            **run_kwargs,
-        )
-
+        outputs = runner(frames_obj, **runner_kwargs)
     except Exception as exc:  # pragma: no cover - defensive guard
-        LOGGER.exception('Policy simulation failed')
-        return {'error': str(exc)}
+        LOGGER.exception("Policy simulation failed")
+        return {"error": str(exc)}
 
     temp_dir, csv_files = _write_outputs_to_temp(outputs)
 
     documentation = {
-        'assumption_overrides': list(assumption_notes or []),
+        "assumption_overrides": list(assumption_notes or []),
     }
+
 
     annual_df = _extract_output_dataframe(
         outputs, ['annual', 'annual_results', 'annual_output', 'annual_outputs']
