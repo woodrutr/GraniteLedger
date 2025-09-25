@@ -16,7 +16,7 @@ from collections.abc import Iterable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, TypeVar
+from typing import Any, Callable, Sequence, TypeVar
 import sys
 
 import pandas as pd
@@ -352,6 +352,7 @@ class CarbonModuleSettings:
     ccr2_enabled: bool
     banking_enabled: bool
     control_period_years: int | None
+    cap_regions: list[Any] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
 
@@ -559,6 +560,8 @@ def _render_carbon_policy_section(
 
     enabled = container.toggle("Enable carbon cap", value=enabled_default, key="carbon_enable")
 
+    selected_cap_regions: list[Any] = []
+
     with _sidebar_panel(container, enabled) as panel:
         enable_floor = panel.checkbox(
             "Enable minimum reserve price",
@@ -606,6 +609,50 @@ def _render_carbon_policy_section(
             disabled=not (enabled and control_override),
         )
 
+        raw_region_values = run_config.get("regions", [])
+        available_region_values = [
+            value for value in raw_region_values if value not in (None, "")
+        ]
+        region_option_map = {str(value): value for value in available_region_values}
+        default_region_candidates = defaults.get("regions")
+        if isinstance(default_region_candidates, Mapping):
+            default_region_candidates = list(default_region_candidates.values())
+        if isinstance(default_region_candidates, (str, bytes)):
+            default_region_candidates = [default_region_candidates]
+        if not isinstance(default_region_candidates, Iterable) or isinstance(
+            default_region_candidates, (bytes, str)
+        ):
+            default_region_candidates = []
+        normalized_defaults = {
+            str(candidate)
+            for candidate in default_region_candidates
+            if candidate not in (None, "")
+        }
+        if not normalized_defaults and available_region_values:
+            normalized_defaults = {str(value) for value in available_region_values}
+
+        region_options = list(region_option_map)
+        if region_options:
+            default_labels = [
+                label for label in region_options if label in normalized_defaults
+            ]
+            selected_region_labels = panel.multiselect(
+                "Cap-covered regions",
+                options=region_options,
+                default=default_labels,
+                disabled=not enabled,
+                key="carbon_regions",
+            )
+        else:
+            selected_region_labels = []
+        selected_cap_regions = [
+            region_option_map[label]
+            for label in selected_region_labels
+            if label in region_option_map
+        ]
+        if enabled and not selected_cap_regions:
+            selected_cap_regions = list(available_region_values)
+
     control_period_years = int(control_period_value) if enabled and control_override else None
     if not enabled:
         enable_floor = False
@@ -623,6 +670,7 @@ def _render_carbon_policy_section(
         "ccr2_enabled": bool(ccr2_enabled),
         "allowance_banking_enabled": bool(banking_enabled),
         "control_period_years": control_period_years,
+        "regions": list(selected_cap_regions),
     }
 
     errors: list[str] = []
@@ -639,6 +687,7 @@ def _render_carbon_policy_section(
         ccr2_enabled=bool(ccr2_enabled),
         banking_enabled=bool(banking_enabled),
         control_period_years=control_period_years,
+        cap_regions=list(selected_cap_regions),
         errors=errors,
     )
 
@@ -2202,6 +2251,7 @@ def run_policy_simulation(
     ccr2_enabled: bool = True,
     allowance_banking_enabled: bool = True,
     control_period_years: int | None = None,
+    cap_regions: Sequence[Any] | None = None,
     dispatch_use_network: bool = False,
     module_config: Mapping[str, Any] | None = None,
     frames: FramesType | Mapping[str, pd.DataFrame] | None = None,
@@ -2239,6 +2289,252 @@ def run_policy_simulation(
             "control_period_years": control_period_years,
         }
     )
+    normalized_regions: list[Any] = []
+    if cap_regions is not None:
+        seen_labels: set[str] = set()
+        for entry in cap_regions:
+            if entry in (None, ""):
+                continue
+            if isinstance(entry, str):
+                text = entry.strip()
+                if not text:
+                    continue
+                entry = text
+            label = str(entry)
+            if label in seen_labels:
+                continue
+            seen_labels.add(label)
+            try:
+                normalized_entry: Any = int(entry)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                normalized_entry = entry
+            normalized_regions.append(normalized_entry)
+        carbon_record["regions"] = list(normalized_regions)
+
+    config["modules"] = merged_modules
+
+    dispatch_record = merged_modules.setdefault("electricity_dispatch", {})
+    dispatch_record["use_network"] = bool(dispatch_use_network)
+
+    def _coerce_year_range(start: int | None, end: int | None) -> list[int]:
+        if start is None and end is None:
+            return []
+        if start is None:
+            start = end
+        if end is None:
+            end = start
+        assert start is not None and end is not None
+        step = 1 if end >= start else -1
+        return list(range(int(start), int(end) + step, step))
+
+    years = _coerce_year_range(start_year, end_year)
+    if not years:
+        years = _years_from_config(config)
+    if not years:
+        fallback_year = start_year or end_year
+        if fallback_year is not None:
+            years = [int(fallback_year)]
+        else:
+            years = [2025]
+
+    years = sorted({int(year) for year in years})
+    config["years"] = list(years)
+    config["start_year"] = int(years[0])
+    config["end_year"] = int(years[-1])
+
+    if frames is None:
+        frames_obj = _build_default_frames(
+            years,
+            carbon_policy_enabled=bool(carbon_policy_enabled),
+            banking_enabled=bool(allowance_banking_enabled),
+        )
+    else:
+        frames_obj = Frames.coerce(
+            frames,
+            carbon_policy_enabled=bool(carbon_policy_enabled),
+            banking_enabled=bool(allowance_banking_enabled),
+        )
+
+    try:
+        frames_obj = _ensure_years_in_demand(frames_obj, years)
+    except Exception as exc:
+        LOGGER.exception("Unable to normalise demand frame for requested years")
+        return {"error": str(exc)}
+
+    if normalized_regions:
+        region_label_map: dict[str, Any] = {str(region): region for region in normalized_regions}
+
+        def _ingest_region_values(values: Sequence[Any] | pd.Series | None) -> None:
+            if values is None:
+                return
+            if isinstance(values, pd.Series):
+                iterable = values.dropna().unique()
+            else:
+                iterable = values
+            for value in iterable:
+                if value is None:
+                    continue
+                if pd.isna(value):
+                    continue
+                region_label_map.setdefault(str(value), value)
+
+        demand_region_labels: set[str] = set()
+        try:
+            demand_df = frames_obj.demand()
+        except Exception:
+            demand_df = None
+        if demand_df is not None and not demand_df.empty:
+            _ingest_region_values(demand_df["region"])
+            demand_region_labels = {str(region) for region in demand_df["region"].unique()}
+
+        existing_coverage_df: pd.DataFrame | None = None
+        for frame_name in ("units", "coverage"):
+            try:
+                frame_candidate = frames_obj.optional_frame(frame_name)
+            except Exception:
+                frame_candidate = None
+            if frame_candidate is not None and not frame_candidate.empty and "region" in frame_candidate.columns:
+                _ingest_region_values(frame_candidate["region"])
+                if frame_name == "coverage":
+                    existing_coverage_df = frame_candidate.copy()
+
+        if not demand_region_labels:
+            demand_region_labels = set(region_label_map)
+
+        normalized_existing: pd.DataFrame | None = None
+        existing_keys: set[tuple[str, int]] = set()
+        if existing_coverage_df is not None and not existing_coverage_df.empty:
+            normalized_existing = existing_coverage_df.copy()
+            if not isinstance(normalized_existing.index, pd.RangeIndex):
+                normalized_existing = normalized_existing.reset_index(drop=True)
+            index_names = getattr(normalized_existing.index, "names", None) or []
+            if "region" not in normalized_existing.columns and "region" in index_names:
+                normalized_existing = normalized_existing.reset_index()
+            if "region" not in normalized_existing.columns:
+                normalized_existing = normalized_existing.assign(region=pd.Series(dtype=object))
+            if "year" not in normalized_existing.columns:
+                normalized_existing = normalized_existing.assign(year=-1)
+            if "covered" not in normalized_existing.columns:
+                normalized_existing = normalized_existing.assign(covered=False)
+            normalized_existing = normalized_existing.loc[:, ["region", "year", "covered"]]
+            normalized_existing["year"] = pd.to_numeric(
+                normalized_existing["year"], errors="coerce"
+            ).fillna(-1).astype(int)
+            normalized_existing["covered"] = normalized_existing["covered"].astype(bool)
+            existing_keys = {
+                (str(region), int(year))
+                for region, year in zip(normalized_existing["region"], normalized_existing["year"])
+            }
+
+        coverage_records: list[dict[str, Any]] = []
+        selected_labels = {str(region) for region in normalized_regions}
+        for label in sorted({*demand_region_labels, *selected_labels, *region_label_map.keys()}):
+            key = (label, -1)
+            if key in existing_keys:
+                continue
+            region_value = region_label_map.get(label)
+            if region_value is None:
+                try:
+                    region_value = int(label)
+                except (TypeError, ValueError):
+                    region_value = label
+            coverage_records.append(
+                {
+                    "region": region_value,
+                    "year": -1,
+                    "covered": label in selected_labels,
+                }
+            )
+
+        if coverage_records:
+            coverage_df = pd.DataFrame(coverage_records, columns=["region", "year", "covered"])
+        else:
+            coverage_df = pd.DataFrame(columns=["region", "year", "covered"])
+        if normalized_existing is not None:
+            coverage_df = pd.concat([normalized_existing, coverage_df], ignore_index=True)
+        coverage_df = coverage_df.sort_values(["region", "year"]).reset_index(drop=True)
+        frames_obj = frames_obj.with_frame("coverage", coverage_df)
+
+        config_regions = list(dict.fromkeys(list(config.get("regions", [])) + normalized_regions))
+        config["regions"] = config_regions
+
+        cap_group_cfg = config.get('carbon_cap_groups')
+        if isinstance(cap_group_cfg, list):
+            if cap_group_cfg:
+                first_entry = dict(cap_group_cfg[0])
+                first_entry.setdefault('name', first_entry.get('name', 'default'))
+                first_entry['regions'] = list(normalized_regions)
+                cap_group_cfg[0] = first_entry
+            else:
+                cap_group_cfg.append({'name': 'default', 'regions': list(normalized_regions), 'cap': 'none'})
+        elif isinstance(cap_group_cfg, Mapping):
+            updated_groups = {}
+            applied = False
+            for key, value in cap_group_cfg.items():
+                entry = dict(value) if isinstance(value, Mapping) else {}
+                if not applied:
+                    entry['regions'] = list(normalized_regions)
+                    applied = True
+                updated_groups[str(key)] = entry
+            if not applied:
+                updated_groups['default'] = {'regions': list(normalized_regions), 'cap': 'none'}
+            config['carbon_cap_groups'] = updated_groups
+        else:
+            config['carbon_cap_groups'] = [{'name': 'default', 'regions': list(normalized_regions), 'cap': 'none'}]
+
+    policy_frame = _build_policy_frame(
+        config,
+        years,
+        bool(carbon_policy_enabled),
+        ccr1_enabled=bool(ccr1_enabled),
+        ccr2_enabled=bool(ccr2_enabled),
+        control_period_years=control_period_years,
+        banking_enabled=bool(allowance_banking_enabled),
+    )
+    frames_obj = frames_obj.with_frame('policy', policy_frame)
+
+    runner = _ensure_engine_runner()
+    enable_floor_flag = bool(carbon_policy_enabled and enable_floor)
+    enable_ccr_flag = bool(
+        carbon_policy_enabled
+        and enable_ccr
+        and (ccr1_enabled or ccr2_enabled)
+    )
+
+    try:
+        outputs = runner(
+            frames_obj,
+            years=years,
+            enable_floor=enable_floor_flag,
+            enable_ccr=enable_ccr_flag,
+            use_network=bool(dispatch_use_network),
+            progress_cb=progress_cb,
+        )
+    except Exception as exc:  # pragma: no cover - defensive guard
+        LOGGER.exception('Policy simulation failed')
+        return {'error': str(exc)}
+
+    temp_dir, csv_files = _write_outputs_to_temp(outputs)
+
+    documentation = {
+        'assumption_overrides': list(assumption_notes or []),
+    }
+
+    result: dict[str, Any] = {
+        'annual': outputs.annual,
+        'emissions_by_region': outputs.emissions_by_region,
+        'price_by_region': outputs.price_by_region,
+        'flows': outputs.flows,
+        'module_config': merged_modules,
+        'config': config,
+        'csv_files': csv_files,
+        'temp_dir': temp_dir,
+        'documentation': documentation,
+    }
+    if normalized_regions:
+        result['cap_regions'] = list(normalized_regions)
+
+    return result
 
 def _extract_result_frame(
     result: Mapping[str, Any],
@@ -2544,6 +2840,7 @@ def main() -> None:
         ccr2_enabled=False,
         banking_enabled=False,
         control_period_years=None,
+        cap_regions=[],
     )
     dispatch_settings = DispatchModuleSettings(
         enabled=False,
@@ -2760,6 +3057,7 @@ def main() -> None:
                 'ccr2_enabled': bool(carbon_settings.ccr2_enabled),
                 'allowance_banking_enabled': bool(carbon_settings.banking_enabled),
                 'control_period_years': carbon_settings.control_period_years,
+                'cap_regions': list(carbon_settings.cap_regions),
                 'dispatch_use_network': bool(
                     dispatch_settings.enabled and dispatch_settings.mode == 'network'
                 ),
@@ -2889,6 +3187,9 @@ def main() -> None:
                 ),
                 control_period_years=inputs_for_run.get(
                     'control_period_years', carbon_settings.control_period_years
+                ),
+                cap_regions=inputs_for_run.get(
+                    'cap_regions', carbon_settings.cap_regions
                 ),
                 dispatch_use_network=bool(
                     inputs_for_run.get('dispatch_use_network', dispatch_use_network)

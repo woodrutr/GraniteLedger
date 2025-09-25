@@ -1227,6 +1227,66 @@ def build_cap_group_inputs(all_frames, setin):
         group: configured_groups.get(group, {}) for group in active_groups
     }
 
+    coverage_frame = all_frames.get('coverage')
+    coverage_records: dict[tuple[str, int], bool] = {}
+    explicit_keys: set[tuple[str, int]] = set()
+    if isinstance(coverage_frame, pd.DataFrame) and not coverage_frame.empty:
+        coverage_df = coverage_frame.copy()
+        if not isinstance(coverage_df.index, pd.RangeIndex):
+            coverage_df = coverage_df.reset_index()
+        if 'region' not in coverage_df.columns and 'region' in coverage_df.index.names:
+            coverage_df = coverage_df.reset_index()
+        if 'region' not in coverage_df.columns:
+            coverage_df = pd.DataFrame(columns=['region', 'year', 'covered'])
+        if 'year' not in coverage_df.columns:
+            coverage_df = coverage_df.assign(year=-1)
+        if 'covered' not in coverage_df.columns:
+            coverage_df = coverage_df.assign(covered=False)
+        coverage_df['year'] = pd.to_numeric(coverage_df['year'], errors='coerce').fillna(-1).astype(int)
+        coverage_df['region'] = coverage_df['region'].astype(str)
+        coverage_df['covered'] = coverage_df['covered'].astype(bool)
+        coverage_records = {
+            (str(row.region), int(row.year)): bool(row.covered)
+            for row in coverage_df.itertuples(index=False)
+        }
+        explicit_keys = set(coverage_records)
+
+    valid_regions = list(dict.fromkeys(getattr(setin, 'region', []) or []))
+    label_to_value = {str(region): region for region in valid_regions}
+    valid_labels = list(label_to_value)
+    covered_labels = {
+        str(region)
+        for region in (membership['region'] if not membership.empty else [])
+    }
+
+    for label in valid_labels:
+        default_key = (label, -1)
+        if default_key not in coverage_records:
+            coverage_records[default_key] = False
+
+    for label in valid_labels:
+        flag = label in covered_labels
+        matching_keys = [key for key in coverage_records if key[0] == label]
+        if matching_keys:
+            for key in matching_keys:
+                if key in explicit_keys:
+                    continue
+                coverage_records[key] = flag
+        else:
+            coverage_records[(label, -1)] = flag
+
+    if coverage_records:
+        coverage_entries = []
+        for (label, year), covered in sorted(coverage_records.items(), key=lambda item: (item[0][0], item[0][1])):
+            region_value = label_to_value.get(label, label)
+            coverage_entries.append(
+                {'region': region_value, 'year': int(year), 'covered': bool(covered)}
+            )
+        coverage_result = pd.DataFrame(coverage_entries, columns=['region', 'year', 'covered'])
+        coverage_result['year'] = coverage_result['year'].astype(int)
+        coverage_result['covered'] = coverage_result['covered'].astype(bool)
+        all_frames = all_frames.with_frame('coverage', coverage_result)
+
     years = list(getattr(setin, 'years', []))
     cap_group_year_combos = None
     if active_groups and years:
