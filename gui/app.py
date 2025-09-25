@@ -237,6 +237,9 @@ class GeneralConfigResult:
     end_year: int
     selected_years: list[int]
     regions: list[int | str]
+    preset_key: str | None = None
+    preset_label: str | None = None
+    lock_carbon_controls: bool = False
 
 
 @dataclass
