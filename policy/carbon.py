@@ -1,7 +1,8 @@
 """Carbon policy helpers for applying allowance market rules."""
 from __future__ import annotations
 
-from typing import Any, Mapping
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 
 class CarbonPolicyError(ValueError):
@@ -30,25 +31,57 @@ def _required_float(mapping: Mapping[str, Any], key: str) -> float:
 def _validate_trigger(
     *,
     enabled: bool,
-    trigger_key: str,
-    quantity_key: str,
+    trigger_keys: Sequence[str],
+    quantity_keys: Sequence[str],
     config: Mapping[str, Any],
 ) -> tuple[float, float]:
     """Validate and return CCR trigger settings when ``enabled``."""
 
-    trigger = config.get(trigger_key)
-    quantity = config.get(quantity_key)
     if not enabled:
         return 0.0, 0.0
-    if trigger in (None, ""):
+
+    trigger_value: Any = None
+    for key in trigger_keys:
+        trigger_value = config.get(key, trigger_value)
+        if trigger_value not in (None, ""):
+            break
+    if trigger_value in (None, ""):
+        preferred = trigger_keys[0]
         raise CarbonPolicyError(
-            f"Configuration enables CCR but does not supply '{trigger_key}'."
+            "Configuration enables CCR but does not supply "
+            f"'{preferred}' (or an accepted alias)."
         )
-    if quantity in (None, ""):
+
+    quantity_value: Any = None
+    for key in quantity_keys:
+        quantity_value = config.get(key, quantity_value)
+        if quantity_value not in (None, ""):
+            break
+    if quantity_value in (None, ""):
+        preferred = quantity_keys[0]
         raise CarbonPolicyError(
-            f"Configuration enables CCR but does not supply '{quantity_key}'."
+            "Configuration enables CCR but does not supply "
+            f"'{preferred}' (or an accepted alias)."
         )
-    return float(trigger), float(quantity)
+
+    try:
+        trigger_float = float(trigger_value)
+    except (TypeError, ValueError) as exc:  # pragma: no cover - defensive guard
+        raise CarbonPolicyError(
+            f"CCR trigger price must be numeric (received {trigger_value!r})."
+        ) from exc
+
+    try:
+        quantity_float = float(quantity_value)
+    except (TypeError, ValueError) as exc:  # pragma: no cover - defensive guard
+        raise CarbonPolicyError(
+            f"CCR quantity must be numeric (received {quantity_value!r})."
+        ) from exc
+
+    if quantity_float < 0.0:
+        raise CarbonPolicyError("CCR quantity must be non-negative")
+
+    return trigger_float, quantity_float
 
 
 def apply_carbon_policy(
@@ -88,7 +121,9 @@ def apply_carbon_policy(
     enabled = bool(config.get("enabled", True))
     enable_floor = bool(config.get("enable_floor", False))
     enable_ccr = bool(config.get("enable_ccr", False))
-    banking_enabled = bool(config.get("allowance_banking_enabled", False))
+    banking_enabled = bool(
+        config.get("allowance_banking_enabled", config.get("banking_enabled", False))
+    )
 
     emissions = _coerce_float(state.get("emissions", 0.0))
     bank_previous = _coerce_float(state.get("bank_balance", 0.0))
@@ -134,14 +169,14 @@ def apply_carbon_policy(
 
     ccr1_trigger, ccr1_qty = _validate_trigger(
         enabled=ccr1_enabled,
-        trigger_key="ccr1_trigger_price",
-        quantity_key="ccr1_quantity",
+        trigger_keys=("ccr1_trigger_price", "ccr1_price"),
+        quantity_keys=("ccr1_quantity", "ccr1_qty"),
         config=config,
     )
     ccr2_trigger, ccr2_qty = _validate_trigger(
         enabled=ccr2_enabled,
-        trigger_key="ccr2_trigger_price",
-        quantity_key="ccr2_quantity",
+        trigger_keys=("ccr2_trigger_price", "ccr2_price"),
+        quantity_keys=("ccr2_quantity", "ccr2_qty"),
         config=config,
     )
 
