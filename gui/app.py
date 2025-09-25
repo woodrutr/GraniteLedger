@@ -1036,20 +1036,65 @@ def render_carbon_module_controls(
         else:
             enabled = False
 
-    enable_floor = container.toggle("Enable price floor", value=enable_floor_default, key="carbon_floor")
-    enable_ccr = container.toggle("Enable CCR", value=enable_ccr_default, key="carbon_ccr")
-    ccr1_enabled = container.toggle("Enable CCR Tier 1", value=ccr1_default, key="carbon_ccr1")
-    ccr2_enabled = container.toggle("Enable CCR Tier 2", value=ccr2_default, key="carbon_ccr2")
-    banking_enabled = container.toggle("Enable allowance banking", value=banking_default, key="carbon_banking")
+    with _sidebar_panel(container, enabled) as cap_panel:
+        enable_floor = cap_panel.toggle(
+            "Enable price floor",
+            value=enable_floor_default,
+            key="carbon_floor",
+            disabled=not enabled,
+        )
+        enable_ccr = cap_panel.toggle(
+            "Enable CCR",
+            value=enable_ccr_default,
+            key="carbon_ccr",
+            disabled=not enabled,
+        )
+        ccr1_enabled = cap_panel.toggle(
+            "Enable CCR Tier 1",
+            value=ccr1_default,
+            key="carbon_ccr1",
+            disabled=not (enabled and enable_ccr),
+        )
+        ccr2_enabled = cap_panel.toggle(
+            "Enable CCR Tier 2",
+            value=ccr2_default,
+            key="carbon_ccr2",
+            disabled=not (enabled and enable_ccr),
+        )
+        banking_enabled = cap_panel.toggle(
+            "Enable allowance banking",
+            value=banking_default,
+            key="carbon_banking",
+            disabled=not enabled,
+        )
 
-    control_override = container.toggle(
-        "Override control period",
-        value=control_override_default,
-        key="carbon_ctrl_override",
+        control_override = cap_panel.toggle(
+            "Override control period",
+            value=control_override_default,
+            key="carbon_control_toggle",
+            disabled=not enabled,
+        )
+        control_period_value = cap_panel.number_input(
+            "Control period length (years)",
+            min_value=1,
+            value=int(control_default if control_default > 0 else 3),
+            step=1,
+            format="%d",
+            key="carbon_control_years",
+            disabled=not (enabled and control_override),
+        )
+    control_period_years = (
+        _sanitize_control_period(control_period_value)
+        if enabled and control_override
+        else None
     )
-    control_period_years = control_default if control_override else None
 
-    price_per_ton = container.number_input("Carbon price ($/ton)", value=price_default, key="carbon_price_val")
+    price_per_ton = container.number_input(
+        "Carbon price ($/ton)",
+        value=price_default,
+        key="carbon_price_val",
+        disabled=not price_enabled,
+    )
     price_schedule = price_schedule_default
 
     errors: list[str] = []
@@ -1115,7 +1160,7 @@ def render_carbon_module_controls(
             )
         )
         control_override = panel.checkbox(
-            "Specify control period length",
+            "Override control period",
             value=control_override_default,
             disabled=not enabled,
             key="carbon_control_toggle",
@@ -1196,7 +1241,11 @@ def render_carbon_module_controls(
         if enabled and not selected_cap_regions:
             selected_cap_regions = list(available_region_values)
 
-    control_period_years = int(control_period_value) if enabled and control_override else None
+    control_period_years = (
+        _sanitize_control_period(control_period_value)
+        if enabled and control_override
+        else None
+    )
     coverage_selection = coverage_selection_raw or coverage_default_display
     coverage_regions = _normalize_coverage_selection(coverage_selection)
     if not enabled:
