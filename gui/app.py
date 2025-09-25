@@ -3988,21 +3988,6 @@ def main() -> None:
         st.session_state.pop("confirm_run", None)
         st.session_state.pop("cancel_run", None)
 
-    def _trigger_streamlit_rerun() -> None:
-        try:
-            _ensure_streamlit()
-        except ModuleNotFoundError:  # pragma: no cover - GUI dependency missing
-            return
-
-        rerun = getattr(st, "rerun", None)
-        if callable(rerun):
-            rerun()
-            return
-
-        rerun = getattr(st, "experimental_rerun", None)
-        if callable(rerun):  # pragma: no cover - compatibility path
-            rerun()
-
     if isinstance(pending_run, Mapping) and show_confirm_modal and not run_in_progress:
         # Pick dialog if available (Streamlit >= 1.31), else use expander
         streamlit_version = getattr(st, "__version__", "0")
@@ -4055,18 +4040,19 @@ def main() -> None:
             _clear_confirmation_button_state()
             pending_run = None
             show_confirm_modal = False
-            _trigger_streamlit_rerun()
+            run_in_progress = False
         elif confirm_clicked:
             pending_params = pending_run.get('params')
             if isinstance(pending_params, Mapping):
-                st.session_state['confirmed_run_params'] = dict(pending_params)
+                run_inputs = dict(pending_params)
+                execute_run = True
                 st.session_state['run_in_progress'] = True
+                run_in_progress = True
             st.session_state.pop('pending_run', None)
             st.session_state.pop('show_confirm_modal', None)
             _clear_confirmation_button_state()
             pending_run = None
             show_confirm_modal = False
-            _trigger_streamlit_rerun()
 
     if isinstance(pending_run, Mapping) and not show_confirm_modal and not run_in_progress:
         show_confirm_modal = True
@@ -4116,11 +4102,6 @@ def main() -> None:
     dispatch_use_network = bool(
         dispatch_settings.enabled and dispatch_settings.mode == 'network'
     )
-
-    confirmed_run_params = st.session_state.pop('confirmed_run_params', None)
-    if isinstance(confirmed_run_params, Mapping):
-        run_inputs = dict(confirmed_run_params)
-        execute_run = True
 
     if run_inputs is not None:
         run_config = copy.deepcopy(run_inputs.get('config_source', run_config))
