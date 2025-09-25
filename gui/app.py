@@ -4357,122 +4357,124 @@ def main() -> None:
     
     
     with st.sidebar:
-    st.markdown(SIDEBAR_STYLE, unsafe_allow_html=True)
+        st.markdown(SIDEBAR_STYLE, unsafe_allow_html=True)
 
-    last_result_mapping = st.session_state.get("last_result")
-    if not isinstance(last_result_mapping, Mapping):
-        last_result_mapping = None
+        last_result_mapping = st.session_state.get("last_result")
+        if not isinstance(last_result_mapping, Mapping):
+            last_result_mapping = None
 
-    (inputs_tab,) = st.tabs(["Inputs"])
+        (inputs_tab,) = st.tabs(["Inputs"])
 
-    with inputs_tab:
-        # -------- General --------
-        general_label, general_expanded = SIDEBAR_SECTIONS[0]
-        general_expander = st.expander(general_label, expanded=general_expanded)
-        general_result = _render_general_config_section(
-            general_expander,
-            default_source=DEFAULT_CONFIG_PATH,
-            default_label=DEFAULT_CONFIG_PATH.name,
-            default_config=default_config_data,
-        )
-        run_config = general_result.run_config
-        config_label = general_result.config_label
-        candidate_years = general_result.candidate_years
-        start_year_val = general_result.start_year
-        end_year_val = general_result.end_year
-        selected_years = general_result.selected_years
-
-        # -------- Carbon --------
-        carbon_label, carbon_expanded = SIDEBAR_SECTIONS[1]
-        carbon_expander = st.expander(carbon_label, expanded=carbon_expanded)
-        carbon_settings = _render_carbon_policy_section(
-            carbon_expander,
-            run_config,
-            region_options=general_result.regions,
-        )
-        module_errors.extend(carbon_settings.errors)
-
-        # Prepare default frames (defensive)
-        try:
-            frames_for_run = _build_default_frames(
-                selected_years or [start_year_val],
-                carbon_policy_enabled=bool(carbon_settings.enabled),
-                banking_enabled=bool(carbon_settings.banking_enabled),
-                carbon_price_schedule=(
-                    carbon_settings.price_schedule if carbon_settings.price_enabled else None
-                ),
+        with inputs_tab:
+            # -------- General --------
+            general_label, general_expanded = SIDEBAR_SECTIONS[0]
+            general_expander = st.expander(general_label, expanded=general_expanded)
+            general_result = _render_general_config_section(
+                general_expander,
+                default_source=DEFAULT_CONFIG_PATH,
+                default_label=DEFAULT_CONFIG_PATH.name,
+                default_config=default_config_data,
             )
-        except Exception as exc:  # pragma: no cover
-            frames_for_run = None
-            st.warning(f"Unable to prepare default assumption tables: {exc}")
+            run_config = general_result.run_config
+            config_label = general_result.config_label
+            candidate_years = general_result.candidate_years
+            start_year_val = general_result.start_year
+            end_year_val = general_result.end_year
+            selected_years = general_result.selected_years
 
-        # -------- Dispatch --------
-        dispatch_label, dispatch_expanded = SIDEBAR_SECTIONS[2]
-        dispatch_expander = st.expander(dispatch_label, expanded=dispatch_expanded)
-        dispatch_settings = _render_dispatch_section(dispatch_expander, run_config, frames_for_run)
-        module_errors.extend(dispatch_settings.errors)
-
-        # -------- Incentives --------
-        incentives_label, incentives_expanded = SIDEBAR_SECTIONS[3]
-        incentives_expander = st.expander(incentives_label, expanded=incentives_expanded)
-        incentives_settings = _render_incentives_section(
-            incentives_expander,
-            run_config,
-            frames_for_run,
-        )
-        module_errors.extend(incentives_settings.errors)
-
-        # -------- Outputs --------
-        outputs_label, outputs_expanded = SIDEBAR_SECTIONS[4]
-        outputs_expander = st.expander(outputs_label, expanded=outputs_expanded)
-        outputs_settings = _render_outputs_section(
-            outputs_expander,
-            run_config,
-            last_result_mapping,
-        )
-        module_errors.extend(outputs_settings.errors)
-
-        # -------- Assumptions --------
-        st.divider()
-        inputs_header = st.container()
-        inputs_header.subheader("Assumption overrides")
-        inputs_header.caption(
-            "Adjust core assumption tables or upload CSV files to override the defaults."
-        )
-        if frames_for_run is not None:
-            demand_tab, units_tab, fuels_tab, transmission_tab = st.tabs(
-                ["Demand", "Units", "Fuels", "Transmission"]
+            # -------- Carbon --------
+            carbon_label, carbon_expanded = SIDEBAR_SECTIONS[1]
+            carbon_expander = st.expander(carbon_label, expanded=carbon_expanded)
+            carbon_settings = _render_carbon_policy_section(
+                carbon_expander,
+                run_config,
+                region_options=general_result.regions,
             )
-            with demand_tab:
-                frames_for_run, notes, errors = _render_demand_controls(
-                    frames_for_run, selected_years
+            module_errors.extend(carbon_settings.errors)
+
+            # Prepare default frames (defensive)
+            try:
+                frames_for_run = _build_default_frames(
+                    selected_years or [start_year_val],
+                    carbon_policy_enabled=bool(carbon_settings.enabled),
+                    banking_enabled=bool(carbon_settings.banking_enabled),
+                    carbon_price_schedule=(
+                        carbon_settings.price_schedule if carbon_settings.price_enabled else None
+                    ),
                 )
-                assumption_notes.extend(notes)
-                assumption_errors.extend(errors)
-            with units_tab:
-                frames_for_run, notes, errors = _render_units_controls(frames_for_run)
-                assumption_notes.extend(notes)
-                assumption_errors.extend(errors)
-            with fuels_tab:
-                frames_for_run, notes, errors = _render_fuels_controls(frames_for_run)
-                assumption_notes.extend(notes)
-                assumption_errors.extend(errors)
-            with transmission_tab:
-                frames_for_run, notes, errors = _render_transmission_controls(frames_for_run)
-                assumption_notes.extend(notes)
-                assumption_errors.extend(errors)
+            except Exception as exc:  # pragma: no cover
+                frames_for_run = None
+                st.warning(f"Unable to prepare default assumption tables: {exc}")
 
-            if assumption_errors:
-                st.warning(
-                    "Resolve the highlighted assumption issues before running the simulation."
-                )
-        else:
-            st.info(
-                "Default assumption tables are unavailable due to a previous error. "
-                "Resolve the issue above to edit inputs through the GUI."
+            # -------- Dispatch --------
+            dispatch_label, dispatch_expanded = SIDEBAR_SECTIONS[2]
+            dispatch_expander = st.expander(dispatch_label, expanded=dispatch_expanded)
+            dispatch_settings = _render_dispatch_section(
+                dispatch_expander, run_config, frames_for_run
             )
+            module_errors.extend(dispatch_settings.errors)
 
-        run_clicked = st.button("Run Model", type="primary", use_container_width=True)
+            # -------- Incentives --------
+            incentives_label, incentives_expanded = SIDEBAR_SECTIONS[3]
+            incentives_expander = st.expander(incentives_label, expanded=incentives_expanded)
+            incentives_settings = _render_incentives_section(
+                incentives_expander,
+                run_config,
+                frames_for_run,
+            )
+            module_errors.extend(incentives_settings.errors)
+
+            # -------- Outputs --------
+            outputs_label, outputs_expanded = SIDEBAR_SECTIONS[4]
+            outputs_expander = st.expander(outputs_label, expanded=outputs_expanded)
+            outputs_settings = _render_outputs_section(
+                outputs_expander,
+                run_config,
+                last_result_mapping,
+            )
+            module_errors.extend(outputs_settings.errors)
+
+            # -------- Assumptions --------
+            st.divider()
+            inputs_header = st.container()
+            inputs_header.subheader("Assumption overrides")
+            inputs_header.caption(
+                "Adjust core assumption tables or upload CSV files to override the defaults."
+            )
+            if frames_for_run is not None:
+                demand_tab, units_tab, fuels_tab, transmission_tab = st.tabs(
+                    ["Demand", "Units", "Fuels", "Transmission"]
+                )
+                with demand_tab:
+                    frames_for_run, notes, errors = _render_demand_controls(
+                        frames_for_run, selected_years
+                    )
+                    assumption_notes.extend(notes)
+                    assumption_errors.extend(errors)
+                with units_tab:
+                    frames_for_run, notes, errors = _render_units_controls(frames_for_run)
+                    assumption_notes.extend(notes)
+                    assumption_errors.extend(errors)
+                with fuels_tab:
+                    frames_for_run, notes, errors = _render_fuels_controls(frames_for_run)
+                    assumption_notes.extend(notes)
+                    assumption_errors.extend(errors)
+                with transmission_tab:
+                    frames_for_run, notes, errors = _render_transmission_controls(frames_for_run)
+                    assumption_notes.extend(notes)
+                    assumption_errors.extend(errors)
+
+                if assumption_errors:
+                    st.warning(
+                        "Resolve the highlighted assumption issues before running the simulation."
+                    )
+            else:
+                st.info(
+                    "Default assumption tables are unavailable due to a previous error. "
+                    "Resolve the issue above to edit inputs through the GUI."
+                )
+
+            run_clicked = st.button("Run Model", type="primary", use_container_width=True)
 
 # Finalize selected years defensively
 try:
