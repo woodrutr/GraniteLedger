@@ -49,6 +49,7 @@ class DispatchModuleSettings:
     mode: str
     capacity_expansion: bool
     reserve_margins: bool
+    deep_carbon_pricing: bool
     errors: list[str] = field(default_factory=list)
 
 
