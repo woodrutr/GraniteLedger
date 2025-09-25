@@ -2139,7 +2139,7 @@ def _render_demand_controls(
     demand_default = frames_obj.demand()
     if not demand_default.empty:
         st.caption("Current demand assumptions")
-        st.dataframe(demand_default, use_container_width=True)
+        st.dataframe(demand_default, width="stretch")
     else:
         st.info("No default demand data found. Provide values via the controls or upload a CSV.")
 
@@ -2271,7 +2271,7 @@ def _render_units_controls(frames_obj: FramesType) -> tuple[FramesType, list[str
     units_default = frames_obj.units()
     if not units_default.empty:
         st.caption("Current generating units")
-        st.dataframe(units_default, use_container_width=True)
+        st.dataframe(units_default, width="stretch")
     else:
         st.info("No generating units are defined. Upload a CSV to provide unit characteristics.")
 
@@ -2417,7 +2417,7 @@ def _render_fuels_controls(frames_obj: FramesType) -> tuple[FramesType, list[str
     fuels_default = frames_obj.fuels()
     if not fuels_default.empty:
         st.caption("Current fuel coverage")
-        st.dataframe(fuels_default, use_container_width=True)
+        st.dataframe(fuels_default, width="stretch")
     else:
         st.info("No fuel data available. Upload a CSV to specify fuel coverage.")
 
@@ -2509,7 +2509,7 @@ def _render_transmission_controls(
     transmission_default = frames_obj.transmission()
     if not transmission_default.empty:
         st.caption("Current transmission limits")
-        st.dataframe(transmission_default, use_container_width=True)
+        st.dataframe(transmission_default, width="stretch")
     else:
         st.info("No transmission limits specified. Add entries below or upload a CSV.")
 
@@ -2849,7 +2849,7 @@ def _render_technology_section(
 
     if 'technology' not in frame.columns:
         st.caption('Technology detail unavailable; displaying raw data instead.')
-        st.dataframe(frame, use_container_width=True)
+        st.dataframe(frame, width="stretch")
         return
 
     value_col: str | None = None
@@ -2867,7 +2867,7 @@ def _render_technology_section(
             value_label = numeric_cols[0]
         else:
             st.caption('No numeric values available to chart; showing raw data.')
-            st.dataframe(frame, use_container_width=True)
+            st.dataframe(frame, width="stretch")
             return
 
     display_frame = frame.copy()
@@ -2877,7 +2877,7 @@ def _render_technology_section(
 
     if display_frame.empty:
         st.caption('No valid year entries available; showing raw data.')
-        st.dataframe(frame, use_container_width=True)
+        st.dataframe(frame, width="stretch")
         return
 
     display_frame = display_frame.sort_values(['year', 'technology'])
@@ -2890,7 +2890,7 @@ def _render_technology_section(
 
     if pivot.empty:
         st.caption('No data available to chart; showing raw data.')
-        st.dataframe(frame, use_container_width=True)
+        st.dataframe(frame, width="stretch")
         return
 
     st.line_chart(pivot)
@@ -3066,7 +3066,7 @@ def _render_results(result: Mapping[str, Any]) -> None:
                     st.caption(f'{label} unavailable for this run.')
 
         st.markdown('---')
-        st.dataframe(display_annual, use_container_width=True)
+        st.dataframe(display_annual, width="stretch")
     else:
         st.info('No annual results to display.')
 
@@ -3095,7 +3095,7 @@ def _render_results(result: Mapping[str, Any]) -> None:
                 st.bar_chart(latest_df)
         else:
             st.caption('Regional emissions data unavailable; showing raw table below.')
-            st.dataframe(display_emissions, use_container_width=True)
+            st.dataframe(display_emissions, width="stretch")
     else:
         st.caption('No regional emissions data available for this run.')
 
@@ -3124,7 +3124,7 @@ def _render_results(result: Mapping[str, Any]) -> None:
                 st.bar_chart(latest_df)
         else:
             st.caption('Regional price data unavailable; showing raw table below.')
-            st.dataframe(display_price, use_container_width=True)
+            st.dataframe(display_price, width="stretch")
     else:
         st.caption('No regional price data available for this run.')
 
@@ -3353,7 +3353,7 @@ def main() -> None:
                     'Resolve the issue above to edit inputs through the GUI.'
                 )
 
-            run_clicked = st.button('Run Model', type='primary', use_container_width=True)
+            run_clicked = st.button('Run Model', type='primary', width="stretch")
 
     try:
         selected_years = _select_years(candidate_years, start_year_val, end_year_val)
