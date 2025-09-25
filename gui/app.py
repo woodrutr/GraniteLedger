@@ -3392,13 +3392,7 @@ def main() -> None:
         except Exception:
             use_dialog = hasattr(st, "dialog")
 
-        context_manager = (
-            st.dialog("Confirm model run")
-            if use_dialog and hasattr(st, "dialog")
-            else st.expander("Confirm model run")
-        )
-
-        with context_manager:
+        def _render_confirm_modal() -> tuple[bool, bool]:
             st.markdown('You are about to run the model with the following configuration:')
             summary_details = pending_run.get('summary', [])
             if isinstance(summary_details, list) and summary_details:
@@ -3412,21 +3406,41 @@ def main() -> None:
             confirm_col, cancel_col = st.columns(2)
             confirm_clicked = confirm_col.button('Confirm Run', type='primary', key='confirm_run')
             cancel_clicked = cancel_col.button('Cancel', key='cancel_run')
+            return confirm_clicked, cancel_clicked
 
-            if cancel_clicked:
-                st.session_state.pop('pending_run', None)
-                st.session_state['show_confirm_modal'] = False
-                pending_run = None
-                show_confirm_modal = False
-            elif confirm_clicked:
-                pending_params = pending_run.get('params')
-                if isinstance(pending_params, Mapping):
-                    run_inputs = dict(pending_params)
-                    execute_run = True
-                st.session_state.pop('pending_run', None)
-                st.session_state['show_confirm_modal'] = False
-                pending_run = None
-                show_confirm_modal = False
+        confirm_clicked = False
+        cancel_clicked = False
+
+        if use_dialog and hasattr(st, "dialog"):
+            clicks: dict[str, bool] = {'confirm': False, 'cancel': False}
+
+            @st.dialog('Confirm model run')
+            def _show_confirm_dialog() -> None:
+                confirm, cancel = _render_confirm_modal()
+                clicks['confirm'] = confirm
+                clicks['cancel'] = cancel
+
+            _show_confirm_dialog()
+            confirm_clicked = clicks['confirm']
+            cancel_clicked = clicks['cancel']
+        else:
+            with st.expander('Confirm model run'):
+                confirm_clicked, cancel_clicked = _render_confirm_modal()
+
+        if cancel_clicked:
+            st.session_state.pop('pending_run', None)
+            st.session_state['show_confirm_modal'] = False
+            pending_run = None
+            show_confirm_modal = False
+        elif confirm_clicked:
+            pending_params = pending_run.get('params')
+            if isinstance(pending_params, Mapping):
+                run_inputs = dict(pending_params)
+                execute_run = True
+            st.session_state.pop('pending_run', None)
+            st.session_state['show_confirm_modal'] = False
+            pending_run = None
+            show_confirm_modal = False
 
     if isinstance(pending_run, Mapping) and not show_confirm_modal:
         show_confirm_modal = True
