@@ -967,14 +967,8 @@ def _dispatch_from_frames(
         allowance_component = float(allowance_cost)
         exogenous_component = schedule_price + extra_price
 
-        if deep_carbon_pricing:
-            dispatch_allowance_cost = allowance_component
-            dispatch_carbon_price = exogenous_component
-        else:
-            dispatch_allowance_cost = effective_carbon_price(
-                allowance_component, exogenous_component, deep=False
-            )
-            dispatch_carbon_price = 0.0
+        dispatch_allowance_cost = float(allowance_component)
+        dispatch_carbon_price = max(0.0, float(exogenous_component))
 
         if use_network:
             raw_result = solve_network_from_frames(

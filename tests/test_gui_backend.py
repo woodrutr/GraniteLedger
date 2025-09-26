@@ -787,6 +787,34 @@ def test_backend_carbon_price_reduces_emissions():
     _cleanup_temp_dir(priced)
 
 
+def test_backend_carbon_price_schedule_lowers_future_emissions():
+    config = _baseline_config()
+    config["allowance_market"]["cap"] = {}
+    frames = _frames_for_years([2024, 2025])
+
+    result = run_policy_simulation(
+        config,
+        start_year=2024,
+        end_year=2025,
+        frames=frames,
+        carbon_policy_enabled=False,
+        carbon_price_enabled=True,
+        carbon_price_schedule={2024: 0.0, 2025: 100.0},
+        carbon_price_escalator_pct=0.0,
+    )
+
+    assert "error" not in result
+
+    annual = result["annual"].set_index("year")
+    first_year = int(annual.index.min())
+    later_year = int(annual.index.max())
+
+    assert later_year > first_year
+    assert annual.loc[later_year, "emissions_tons"] < annual.loc[first_year, "emissions_tons"]
+
+    _cleanup_temp_dir(result)
+
+
 def test_backend_control_period_override_applies(monkeypatch):
     real_runner = importlib.import_module("engine.run_loop").run_end_to_end_from_frames
     captured: dict[str, object] = {}
