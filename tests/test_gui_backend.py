@@ -381,6 +381,48 @@ def test_backend_disabled_toggle_propagates_flags(monkeypatch):
     _cleanup_temp_dir(result)
 
 
+def test_backend_enforces_carbon_mode_exclusivity(monkeypatch):
+    real_runner = importlib.import_module("engine.run_loop").run_end_to_end_from_frames
+    captured: dict[str, object] = {}
+
+    def capturing_runner(frames, **kwargs):
+        policy = frames.policy().to_policy()
+        captured["policy_enabled"] = policy.enabled
+        captured["price_schedule"] = kwargs.get("carbon_price_schedule")
+        return real_runner(frames, **kwargs)
+
+    monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: capturing_runner)
+
+    config = _baseline_config()
+    frames = _frames_for_years([2025, 2026])
+
+    result = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2026,
+        frames=frames,
+        carbon_policy_enabled=True,
+        carbon_price_enabled=True,
+        carbon_price_value=15.0,
+        carbon_price_escalator_pct=0.0,
+    )
+
+    assert "error" not in result
+    assert captured.get("policy_enabled") is False
+    schedule = captured.get("price_schedule")
+    assert isinstance(schedule, Mapping)
+    assert schedule  # non-empty schedule when price enabled
+
+    module_config = result["module_config"]
+    policy_cfg = module_config["carbon_policy"]
+    price_cfg = module_config["carbon_price"]
+    assert not policy_cfg.get("enabled")
+    assert price_cfg.get("enabled")
+    assert sum(1 for flag in (policy_cfg.get("enabled"), price_cfg.get("enabled")) if flag) == 1
+
+    _cleanup_temp_dir(result)
+
+
 def test_backend_control_period_defaults_to_config(monkeypatch):
     real_runner = importlib.import_module("engine.run_loop").run_end_to_end_from_frames
     captured: dict[str, object] = {}
