@@ -409,6 +409,9 @@ def test_render_results_carbon_price_hides_allowance_columns(monkeypatch):
         def download_button(self, *args, **kwargs):
             return None
 
+        def multiselect(self, label, options, *, default=None, key=None):
+            return list(default or [])
+
     dummy_st = DummyStreamlit()
     monkeypatch.setattr(gui_app, "st", dummy_st)
 
@@ -521,7 +524,12 @@ def test_backend_handles_renamed_engine_outputs(monkeypatch):
     )
 
     pd.testing.assert_frame_equal(result["annual"], annual)
-    pd.testing.assert_frame_equal(result["emissions_by_region"], emissions)
+    emissions_result = result["emissions_by_region"]
+    assert {"region_canonical", "region_label"}.issubset(emissions_result.columns)
+    pd.testing.assert_frame_equal(
+        emissions_result[emissions.columns],
+        emissions,
+    )
     pd.testing.assert_frame_equal(result["price_by_region"], prices)
     pd.testing.assert_frame_equal(result["flows"], flows)
 
@@ -583,7 +591,12 @@ def test_backend_handles_legacy_runner_without_deep_kw(monkeypatch):
     assert "error" not in result
     assert called.get("executed") is True
     pd.testing.assert_frame_equal(result["annual"], annual)
-    pd.testing.assert_frame_equal(result["emissions_by_region"], emissions)
+    emissions_result = result["emissions_by_region"]
+    assert {"region_canonical", "region_label"}.issubset(emissions_result.columns)
+    pd.testing.assert_frame_equal(
+        emissions_result[emissions.columns],
+        emissions,
+    )
     pd.testing.assert_frame_equal(result["price_by_region"], prices)
     pd.testing.assert_frame_equal(result["flows"], flows)
 
