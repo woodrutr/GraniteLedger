@@ -881,6 +881,47 @@ def _expand_or_build_price_schedule(
 
 
 
+def _build_price_schedule(
+    start_year: int,
+    end_year: int,
+    base_value: float,
+    escalator_pct: float,
+) -> dict[int, float]:
+    """Return a price schedule that grows geometrically each year."""
+
+    try:
+        start = int(start_year)
+    except (TypeError, ValueError):
+        return {}
+    try:
+        end = int(end_year)
+    except (TypeError, ValueError):
+        return {}
+
+    try:
+        base = float(base_value)
+    except (TypeError, ValueError):
+        base = 0.0
+    try:
+        escalator = float(escalator_pct)
+    except (TypeError, ValueError):
+        escalator = 0.0
+
+    step = 1 if end >= start else -1
+    ratio = 1.0 + (escalator or 0.0) / 100.0
+
+    schedule: dict[int, float] = {}
+    exponent = 0
+    for year in range(start, end + step, step):
+        try:
+            factor = ratio ** exponent
+        except OverflowError:
+            factor = float("inf")
+        schedule[year] = round(base * factor, 6)
+        exponent += 1
+    return schedule
+
+
 def _build_price_escalator_schedule(
     base_price: float,
     escalator_pct: float,
@@ -4793,6 +4834,19 @@ def run_policy_simulation(
         and carbon_policy_cfg.enable_ccr
         and (carbon_policy_cfg.ccr1_enabled or carbon_policy_cfg.ccr2_enabled)
     )
+    if price_active:
+        price_value_raw = (
+            carbon_price_value
+            if carbon_price_value is not None
+            else price_cfg.price_per_ton
+        )
+        try:
+            runner_price_value = float(price_value_raw)
+        except (TypeError, ValueError):
+            runner_price_value = float(price_cfg.price_per_ton)
+    else:
+        runner_price_value = 0.0
+
     runner_kwargs: dict[str, Any] = {
         "years": years,
         "price_initial": 0.0,
@@ -4800,9 +4854,13 @@ def run_policy_simulation(
         "enable_ccr": enable_ccr_flag,
         "use_network": bool(dispatch_use_network),
         "carbon_price_schedule": price_schedule_map if price_active else None,
+        "carbon_price_value": runner_price_value,
         "deep_carbon_pricing": bool(deep_carbon_pricing),
         "progress_cb": progress_cb,
     }
+
+    if not _runner_supports_keyword(runner, "carbon_price_value"):
+        runner_kwargs.pop("carbon_price_value", None)
 
     if not _runner_supports_keyword(runner, "deep_carbon_pricing"):
         if deep_carbon_pricing:

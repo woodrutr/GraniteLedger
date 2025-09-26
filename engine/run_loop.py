@@ -927,13 +927,19 @@ def run_fixed_point_from_frames(
     | Mapping[str, Any]
     | float
     | None = None,
+    carbon_price_value: float = 0.0,
     deep_carbon_pricing: bool = False,
 ) -> dict[int, dict]:
     """Run the annual fixed-point integration using in-memory frames."""
 
     _ensure_pandas()
 
-    frames_obj = Frames.coerce(frames, carbon_price_schedule=carbon_price_schedule)
+    schedule_lookup_source = _prepare_carbon_price_schedule(
+        carbon_price_schedule,
+        carbon_price_value,
+    )
+
+    frames_obj = Frames.coerce(frames, carbon_price_schedule=schedule_lookup_source)
     policy_spec = frames_obj.policy()
     policy = policy_spec.to_policy()
     years_sequence = _coerce_years(policy, years)
@@ -941,7 +947,7 @@ def run_fixed_point_from_frames(
     dispatch_kwargs = dict(
         use_network=use_network,
         period_weights=period_weights,
-        carbon_price_schedule=carbon_price_schedule,
+        carbon_price_schedule=dict(schedule_lookup_source),
         deep_carbon_pricing=deep_carbon_pricing,
     )
     if deep_carbon_pricing:
@@ -1186,19 +1192,26 @@ def _build_engine_outputs(
 
 def _coerce_price_schedule(
     schedule: Mapping[int, float] | Mapping[str, Any] | float | None,
-) -> dict[int, float]:
-    """Normalise ``schedule`` into a mapping keyed by integer years."""
+) -> dict[int | None, float]:
+    """Normalise ``schedule`` into a mapping keyed by integer years.
+
+    When ``schedule`` contains an entry for ``None`` the value is preserved and
+    treated as the default price to apply when a specific year is not present.
+    """
 
     if schedule is None:
         return {}
 
     if isinstance(schedule, Mapping):
-        normalised: dict[int, float] = {}
+        normalised: dict[int | None, float] = {}
         for key, value in schedule.items():
-            try:
-                year = int(key)
-            except (TypeError, ValueError):
-                continue
+            if key is None:
+                year: int | None = None
+            else:
+                try:
+                    year = int(key)
+                except (TypeError, ValueError):
+                    continue
             try:
                 price = float(value)  # type: ignore[arg-type]
             except (TypeError, ValueError):
@@ -1214,6 +1227,24 @@ def _coerce_price_schedule(
     return {None: value}  # type: ignore[index]
 
 
+def _prepare_carbon_price_schedule(
+    schedule: Mapping[int, float] | Mapping[str, Any] | float | None,
+    value: float | None,
+) -> dict[int | None, float]:
+    """Return a normalised schedule including a default carbon price value."""
+
+    normalised = dict(_coerce_price_schedule(schedule))
+    if value in (None, ""):
+        default = 0.0
+    else:
+        try:
+            default = float(value)
+        except (TypeError, ValueError):
+            default = 0.0
+    normalised[None] = default
+    return normalised
+
+
 def run_end_to_end_from_frames(
     frames: Frames | Mapping[str, pd.DataFrame],
     *,
@@ -1227,6 +1258,7 @@ def run_end_to_end_from_frames(
     price_cap: float = 1000.0,
     use_network: bool = False,
     carbon_price_schedule: Mapping[int, float] | Mapping[str, Any] | float | None = None,
+    carbon_price_value: float = 0.0,
     deep_carbon_pricing: bool = False,
     progress_cb: ProgressCallback | None = None,
 ) -> EngineOutputs:
@@ -1239,7 +1271,12 @@ def run_end_to_end_from_frames(
 
     _ensure_pandas()
 
-    frames_obj = Frames.coerce(frames, carbon_price_schedule=carbon_price_schedule)
+    schedule_lookup_source = _prepare_carbon_price_schedule(
+        carbon_price_schedule,
+        carbon_price_value,
+    )
+
+    frames_obj = Frames.coerce(frames, carbon_price_schedule=schedule_lookup_source)
     policy_spec = frames_obj.policy()
     policy = policy_spec.to_policy()
     years_sequence = _coerce_years(policy, years)
@@ -1247,7 +1284,7 @@ def run_end_to_end_from_frames(
     dispatch_kwargs = dict(
         use_network=use_network,
         period_weights=period_weights,
-        carbon_price_schedule=carbon_price_schedule,
+        carbon_price_schedule=dict(schedule_lookup_source),
         deep_carbon_pricing=deep_carbon_pricing,
     )
     if deep_carbon_pricing:
@@ -1273,7 +1310,7 @@ def run_end_to_end_from_frames(
 
     cp_track: dict[str, dict[str, float | list[int] | None]] = {}
 
-    price_schedule = _coerce_price_schedule(carbon_price_schedule)
+    price_schedule = dict(schedule_lookup_source)
 
     def _price_for_year(period: Any) -> float:
         try:
