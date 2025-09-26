@@ -5702,8 +5702,8 @@ def _render_outputs_panel(last_result: Mapping[str, Any] | None) -> None:
 def main() -> None:
     """Streamlit entry point."""
     _ensure_streamlit()
-    st.set_page_config(page_title='BlueSky Policy Simulator', layout='wide')
-    st.title('BlueSky Policy Simulator')
+    st.set_page_config(page_title='Granite Ledger Policy Simulator', layout='wide')
+    st.title('Granite Ledger Policy Simulator')
     st.write('Upload a run configuration and execute the annual allowance market engine.')
     st.session_state.setdefault('last_result', None)
     st.session_state.setdefault('temp_dirs', [])
