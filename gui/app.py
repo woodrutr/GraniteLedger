@@ -4914,6 +4914,22 @@ def run_policy_simulation(
         LOGGER.exception("Policy simulation failed")
         return {"error": str(exc)}
 
+    if isinstance(outputs, Mapping):
+        capacity_df = outputs.get("capacity_by_technology")
+        generation_df = outputs.get("generation_by_technology")
+    else:
+        capacity_df = getattr(outputs, "capacity_by_technology", None)
+        generation_df = getattr(outputs, "generation_by_technology", None)
+
+    if capacity_df is None:
+        LOGGER.warning(
+            "Runner outputs missing capacity_by_technology frame; capacity charts will not be displayed."
+        )
+    if generation_df is None:
+        LOGGER.warning(
+            "Runner outputs missing generation_by_technology frame; generation charts will not be displayed."
+        )
+
 
     temp_dir, csv_files = _write_outputs_to_temp(outputs)
 
