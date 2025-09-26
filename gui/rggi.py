@@ -1,5 +1,14 @@
 from typing import Any
 
+try:  # pragma: no cover - optional import for GUI metadata
+    from gui.region_metadata import canonical_region_label
+except ModuleNotFoundError:  # pragma: no cover - fallback for packaging
+    try:
+        from region_metadata import canonical_region_label  # type: ignore[import-not-found]
+    except ModuleNotFoundError:  # pragma: no cover - minimal fallback
+        def canonical_region_label(value: Any) -> str:  # type: ignore[no-redef]
+            return str(value)
+
 # -------------------------
 # RGGI Defaults (2025 Model Rule Forward)
 # -------------------------
@@ -144,10 +153,14 @@ RGGI_REGIONS = [
     "New Hampshire", "New Jersey", "New York", "Rhode Island", "Vermont",
 ]
 
+RGGI_REGION_IDS = (7, 8, 9, 10, 13)
+
 
 def apply_rggi_defaults(modules: dict[str, Any]) -> None:
     """Apply RGGI 2025 Model Rule defaults to module configuration."""
     carbon_module = modules.setdefault("carbon_policy", {})
+    coverage_labels = [canonical_region_label(region_id) for region_id in RGGI_REGION_IDS]
+
     carbon_module.update(
         {
             "enabled": True,
@@ -156,7 +169,7 @@ def apply_rggi_defaults(modules: dict[str, Any]) -> None:
             "ccr1_enabled": True,
             "ccr2_enabled": True,
             "allowance_banking_enabled": True,
-            "coverage_regions": list(RGGI_REGIONS),
+            "coverage_regions": coverage_labels,
             "control_period_years": 3,
             "bank0": float(RGGI_INITIAL_BANK),
             "rggi_budgets": dict(RGGI_BUDGETS),
