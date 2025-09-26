@@ -5,6 +5,7 @@ import pytest
 from gui.app import (
     CarbonPriceConfig,
     _build_cap_reduction_schedule,
+    _build_price_schedule,
     _build_price_escalator_schedule,
     _merge_price_schedules,
     _normalize_price_schedule,
@@ -71,6 +72,18 @@ def test_build_price_escalator_schedule_handles_empty_years() -> None:
     schedule = _build_price_escalator_schedule(20.0, 5.0, [])
 
     assert schedule == {}
+
+
+def test_build_price_schedule_generates_geometric_growth() -> None:
+    schedule = _build_price_schedule(2025, 2030, 45.0, 7.0)
+
+    assert list(schedule) == [2025, 2026, 2027, 2028, 2029, 2030]
+    assert schedule[2025] == pytest.approx(45.0)
+    assert schedule[2026] == pytest.approx(48.15)
+    assert schedule[2027] == pytest.approx(51.5205)
+    assert schedule[2028] == pytest.approx(55.126935)
+    assert schedule[2029] == pytest.approx(58.98582)
+    assert schedule[2030] == pytest.approx(63.114828)
 
 
 def test_build_cap_reduction_schedule_percent_and_fixed() -> None:
