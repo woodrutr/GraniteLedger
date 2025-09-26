@@ -79,3 +79,22 @@ def test_apply_carbon_policy_accepts_price_alias(base_config: dict[str, float | 
 
     assert result["ccr1_issued"] == pytest.approx(10.0)
     assert result["ccr2_issued"] == pytest.approx(20.0)
+
+
+def test_apply_carbon_policy_enforces_reserve_price(base_config: dict[str, float | bool]) -> None:
+    base_config["reserve_price"] = {2025: 42.0}
+    state = {
+        "year": 2025,
+        "emissions": 90.0,
+        "allowances": 100.0,
+        "price": 10.0,
+        "bank_balance": 0.0,
+    }
+
+    result = apply_carbon_policy(state, base_config)
+
+    assert result["price"] == pytest.approx(42.0)
+    assert result["ccr1_issued"] == pytest.approx(10.0)
+    assert result["ccr2_issued"] == pytest.approx(0.0)
+    assert result["allowances_minted"] == pytest.approx(110.0)
+    assert result["shortage"] is False

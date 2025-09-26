@@ -84,6 +84,76 @@ def _validate_trigger(
     return trigger_float, quantity_float
 
 
+def _extract_year_hint(value: Any) -> int | None:
+    """Return a four-digit year parsed from ``value`` when possible."""
+
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        try:
+            return int(value)
+        except (TypeError, ValueError):  # pragma: no cover - defensive guard
+            return None
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.isdigit() and len(stripped) >= 4:
+            try:
+                return int(stripped[:4])
+            except ValueError:  # pragma: no cover - defensive guard
+                return None
+        digits = "".join(ch for ch in stripped if ch.isdigit())
+        if len(digits) >= 4:
+            try:
+                return int(digits[:4])
+            except ValueError:  # pragma: no cover - defensive guard
+                return None
+    return None
+
+
+def _resolve_reserve_price(
+    state: Mapping[str, Any], config: Mapping[str, Any]
+) -> float | None:
+    """Return the applicable reserve price for ``state`` if configured."""
+
+    reserve_entry = config.get("reserve_price")
+    if reserve_entry in (None, ""):
+        return None
+
+    if isinstance(reserve_entry, Mapping):
+        candidate_sources: tuple[Mapping[str, Any], ...] = (state, config)
+        candidate_keys = (
+            "year",
+            "compliance_year",
+            "period",
+            "period_label",
+            "control_period",
+        )
+        candidates: list[Any] = []
+        for mapping in candidate_sources:
+            for key in candidate_keys:
+                value = mapping.get(key)
+                if value is not None:
+                    candidates.append(value)
+
+        for candidate in candidates:
+            lookup_keys: list[Any] = []
+            if isinstance(candidate, str):
+                stripped = candidate.strip()
+                if stripped:
+                    lookup_keys.append(stripped)
+            if candidate is not None:
+                lookup_keys.append(candidate)
+            year_hint = _extract_year_hint(candidate)
+            if year_hint is not None:
+                lookup_keys.append(year_hint)
+                lookup_keys.append(str(year_hint))
+
+            for key in lookup_keys:
+                if key in reserve_entry:
+                    return _coerce_float(reserve_entry[key])
+        return None
+
+    return _coerce_float(reserve_entry)
+
+
 def apply_carbon_policy(
     state: Mapping[str, Any],
     config: Mapping[str, Any],
@@ -163,6 +233,10 @@ def apply_carbon_policy(
     price_floor = float(config.get("price_floor", config.get("floor", 0.0)))
     if enable_floor:
         result_price = max(result_price, price_floor)
+
+    reserve_price_value = _resolve_reserve_price(state, config)
+    if reserve_price_value is not None:
+        result_price = max(result_price, reserve_price_value)
 
     ccr1_enabled = bool(config.get("ccr1_enabled", enable_ccr)) and enable_ccr
     ccr2_enabled = bool(config.get("ccr2_enabled", enable_ccr)) and enable_ccr
