@@ -474,8 +474,6 @@ def clear_year(
             ccr2_final = best_ccr2
             total_allowances = bank_prev + minted_final
 
-    shortage_flag = emissions > total_allowances + tol
-
     frac = max(0.0, min(1.0, float(policy.annual_surrender_frac)))
     required_current = frac * emissions
     outstanding_before = outstanding_prev + emissions
@@ -499,6 +497,8 @@ def clear_year(
         bank_unadjusted = 0.0
         carry_pct = 0.0
     bank_new = bank_unadjusted * carry_pct
+
+    shortage_flag = emissions > minted_final + tol
 
     record = {
         'year': year,
