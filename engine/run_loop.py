@@ -963,18 +963,14 @@ def _dispatch_from_frames(
         weight = _weight_for(year)
         frames_for_year = _scaled_frames(year, weight)
         schedule_price = _price_for(year)
-        extra_price = _normalize_extra_price(carbon_price)
         allowance_component = float(allowance_cost)
-        exogenous_component = schedule_price + extra_price
-
-        if deep_carbon_pricing:
-            dispatch_allowance_cost = allowance_component
-            dispatch_carbon_price = exogenous_component
+        if carbon_price in (None, ""):
+            exogenous_component = schedule_price
         else:
-            dispatch_allowance_cost = effective_carbon_price(
-                allowance_component, exogenous_component, deep=False
-            )
-            dispatch_carbon_price = 0.0
+            exogenous_component = _normalize_extra_price(carbon_price)
+
+        dispatch_allowance_cost = allowance_component
+        dispatch_carbon_price = exogenous_component
 
         if use_network:
             raw_result = solve_network_from_frames(
@@ -1038,7 +1034,7 @@ def run_fixed_point_from_frames(
 
     def dispatch_model(year: int, allowance_cost: float) -> float:
         return _extract_emissions(
-            dispatch_solver(year, allowance_cost, carbon_price=0.0)
+            dispatch_solver(year, allowance_cost)
         )
 
     return run_annual_fixed_point(
@@ -1479,7 +1475,7 @@ def run_end_to_end_from_frames(
 
         if not policy_enabled_global:
             dispatch_result = dispatch_solver(
-                year, 0.0, carbon_price=0.0
+                year, 0.0, carbon_price=carbon_price_value
             )
             emissions = _extract_emissions(dispatch_result)
             effective_price = effective_carbon_price(
@@ -1592,15 +1588,16 @@ def run_end_to_end_from_frames(
             annual_surrender_frac=surrender_frac,
             carry_pct=carry_pct,
             banking_enabled=banking_enabled_year,
-            carbon_price=0.0,
+            carbon_price=carbon_price_value,
             progress_cb=progress_cb,
         )
 
         try:
-            allowance_price = float(summary.get('p_co2', 0.0))
+            clearing_price = float(summary.get('p_co2', 0.0))
         except (TypeError, ValueError):
-            allowance_price = 0.0
+            clearing_price = 0.0
         exogenous_price = float(carbon_price_value)
+        allowance_price = max(clearing_price - exogenous_price, 0.0)
         effective_price = effective_carbon_price(
             allowance_price, exogenous_price, deep_carbon_pricing
         )
