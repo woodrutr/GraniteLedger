@@ -4812,6 +4812,11 @@ def run_policy_simulation(
             first_bank = bank_series.iloc[0]
             if pd.notna(first_bank):
                 policy_bank0 = float(first_bank)
+    if not policy_bank0 and bank0_from_config is not None:
+        try:
+            policy_bank0 = float(bank0_from_config)
+        except Exception:  # pragma: no cover - defensive
+            policy_bank0 = 0.0
 
     runner = _ensure_engine_runner()
     supports_deep = True
@@ -5285,8 +5290,8 @@ def _render_results(result: Mapping[str, Any]) -> None:
         price_missing_caption = 'Allowance clearing price data unavailable for this run.'
 
     price_chart_column: str | None = None
-    if not chart_data.empty and 'allowance_price' in chart_data.columns:
-        chart_data = chart_data.rename(columns={'allowance_price': price_series_label})
+    if not chart_data.empty and 'p_co2' in chart_data.columns:
+        chart_data = chart_data.rename(columns={'p_co2': price_series_label})
         price_chart_column = price_series_label
 
     display_price_table = display_annual.copy()
@@ -5298,16 +5303,17 @@ def _render_results(result: Mapping[str, Any]) -> None:
         allowed_price_columns = [
             'year',
             price_series_label,
-            'p_co2_exogenous',
-            'p_co2_effective',
+            'p_co2_all',
+            'p_co2_exc',
+            'p_co2_eff',
             'emissions_tons',
         ]
         display_price_table = display_price_table.filter(items=allowed_price_columns)
     else:
         # Allowance output path
-        if 'allowance_price' in display_price_table.columns:
+        if 'p_co2' in display_price_table.columns:
             display_price_table = display_price_table.rename(
-                columns={'allowance_price': price_series_label}
+                columns={'p_co2': price_series_label}
             )
 
 

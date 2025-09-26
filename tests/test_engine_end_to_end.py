@@ -201,8 +201,8 @@ def test_disabled_policy_produces_zero_price():
         relaxation=0.8,
     )
 
-    assert outputs.annual["allowance_price"].eq(0.0).all()
-    assert outputs.annual["allowances_surrendered"].eq(0.0).all()
+    assert outputs.annual["p_co2"].eq(0.0).all()
+    assert outputs.annual["surrender"].eq(0.0).all()
     assert outputs.annual["bank"].eq(0.0).all()
 
 
@@ -277,7 +277,7 @@ def test_ccr_trigger_increases_allowances():
     allowances_issued = available - bank0
 
     assert allowances_issued > cap
-    assert annual.loc[first_year, "allowance_price"] == pytest.approx(
+    assert annual.loc[first_year, "p_co2"] == pytest.approx(
         policy.ccr1_trigger.loc[first_year], rel=1e-4
     )
 
@@ -299,7 +299,7 @@ def test_compliance_true_up_reconciles_obligations():
     final_year = YEARS[-1]
     final_obligation = float(annual.loc[final_year, "obligation"])
     assert final_obligation <= 1e-6
-    surrendered_final = float(annual.loc[final_year, "allowances_surrendered"])
+    surrendered_final = float(annual.loc[final_year, "surrender"])
     required_fraction = 0.5 * float(annual.loc[final_year, "emissions_tons"])
     assert surrendered_final > required_fraction
 
@@ -335,7 +335,7 @@ def test_control_period_mass_balance():
     )
 
     total_supply = float(policy.bank0) + allowances_minted.sum()
-    total_surrendered = annual["allowances_surrendered"].sum()
+    total_surrendered = annual["surrender"].sum()
     ending_bank = float(annual.iloc[-1]["bank"])
     remaining = float(annual.iloc[-1]["obligation"])
 
@@ -353,6 +353,23 @@ def test_annual_output_schema_matches_spec():
     )
 
     assert list(outputs.annual.columns) == ANNUAL_OUTPUT_COLUMNS
+
+
+def test_annual_output_csv_schema(tmp_path):
+    frames = _three_year_frames()
+    outputs = run_end_to_end_from_frames(
+        frames,
+        years=YEARS,
+        price_initial=0.0,
+        tol=1e-4,
+        relaxation=0.8,
+    )
+
+    outdir = tmp_path / "results"
+    outputs.to_csv(outdir)
+
+    annual_csv = pd.read_csv(outdir / "annual.csv")
+    assert list(annual_csv.columns) == ANNUAL_OUTPUT_COLUMNS
 
 
 def test_daily_resolution_matches_annual_totals():
@@ -503,4 +520,4 @@ def test_zero_cap_policy_still_enforced():
 
     annual = outputs.annual.set_index("year")
     assert (annual["obligation"] > 0.0).any()
-    assert annual["allowance_price"].gt(0.0).any()
+    assert annual["p_co2"].gt(0.0).any()

@@ -14,16 +14,16 @@ except ImportError:  # pragma: no cover - optional dependency
 
 ANNUAL_OUTPUT_COLUMNS = [
     "year",
-    "allowance_price",
-    "allowance_price_allowance_component",
-    "allowance_price_exogenous_component",
-    "allowance_price_effective",
+    "p_co2",
+    "p_co2_all",
+    "p_co2_exc",
+    "p_co2_eff",
     "iterations",
     "emissions_tons",
     "allowances_minted",
     "allowances_available",
     "bank",
-    "allowances_surrendered",
+    "surrender",
     "obligation",
     "finalized",
     "shortage_flag",
@@ -1203,22 +1203,16 @@ def _build_engine_outputs(
         annual_rows.append(
             {
                 "year": year,
-                "allowance_price": price_value,
-                "allowance_price_allowance_component": float(
-                    entry.get("allowance_price_last", price_value)
-                ),
-                "allowance_price_exogenous_component": float(
-                    entry.get("exogenous_price_last", 0.0)
-                ),
-                "allowance_price_effective": float(
-                    entry.get("effective_price_last", price_value)
-                ),
+                "p_co2": price_value,
+                "p_co2_all": float(entry.get("allowance_price_last", price_value)),
+                "p_co2_exc": float(entry.get("exogenous_price_last", 0.0)),
+                "p_co2_eff": float(entry.get("effective_price_last", price_value)),
                 "iterations": iterations_value,
                 "emissions_tons": float(entry.get("emissions_sum", 0.0)),
                 "allowances_minted": minted,
                 "allowances_available": allowances_total,
                 "bank": bank_final,
-                "allowances_surrendered": surrendered_total,
+                "surrender": surrendered_total,
                 "obligation": obligation_final,
                 "finalized": finalized,
                 "shortage_flag": shortage_flag,
