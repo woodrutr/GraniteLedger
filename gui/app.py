@@ -4275,8 +4275,31 @@ def run_policy_simulation(
     )
     banking_flag = bool(policy_enabled and carbon_policy_cfg.allowance_banking_enabled)
 
+    raw_initial_bank = _coerce_float(initial_bank, default=0.0)
+
+    market_cfg = config.get("allowance_market")
+    bank0_from_config: float | None = None
+    if isinstance(market_cfg, Mapping):
+        bank0_from_config = _coerce_float(market_cfg.get("bank0"), default=0.0)
+        if not banking_flag and bank0_from_config > 0.0:
+            LOGGER.warning(
+                "Allowance banking disabled; ignoring initial bank of %.3f tons.",
+                bank0_from_config,
+            )
+            try:
+                market_cfg["bank0"] = 0.0  # type: ignore[index]
+            except Exception:  # pragma: no cover - best effort for immutable mappings
+                pass
+
+    if not banking_flag and raw_initial_bank > 0.0:
+        LOGGER.warning(
+            "Allowance banking disabled; ignoring requested initial bank of %.3f tons.",
+            raw_initial_bank,
+        )
+        raw_initial_bank = 0.0
+
     carbon_record = merged_modules.setdefault("carbon_policy", {})
-    initial_bank_value = float(initial_bank) if banking_flag else 0.0
+    initial_bank_value = raw_initial_bank if banking_flag else 0.0
 
     cap_start_value_norm: float | None
     if carbon_cap_start_value is not None:
@@ -4686,6 +4709,17 @@ def run_policy_simulation(
     )
     frames_obj = frames_obj.with_frame('policy', policy_frame)
 
+    policy_bank0 = 0.0
+    if isinstance(policy_frame, pd.DataFrame) and not policy_frame.empty and 'bank0' in policy_frame.columns:
+        try:
+            bank_series = pd.to_numeric(policy_frame['bank0'], errors='coerce')
+        except Exception:  # pragma: no cover - defensive
+            bank_series = None
+        if bank_series is not None and not bank_series.empty:
+            first_bank = bank_series.iloc[0]
+            if pd.notna(first_bank):
+                policy_bank0 = float(first_bank)
+
     runner = _ensure_engine_runner()
     supports_deep = True
     legacy_signature = False
@@ -4779,6 +4813,41 @@ def run_policy_simulation(
     flows_df = _extract_output_dataframe(
         outputs, ['flows', 'network_flows', 'flows_by_region']
     )
+
+    if isinstance(annual_df, pd.DataFrame):
+        annual_df = annual_df.copy()
+        if not banking_flag:
+            annual_df['bank'] = 0.0
+        elif not annual_df.empty and {'allowances_total', 'emissions_tons'}.issubset(annual_df.columns):
+            try:
+                year_order = pd.to_numeric(annual_df['year'], errors='coerce')
+            except Exception:  # pragma: no cover - defensive
+                year_order = None
+            if year_order is not None:
+                ordered_index = year_order.sort_values(kind='mergesort').index
+            else:
+                ordered_index = annual_df.index
+            bank_running = policy_bank0 if banking_flag else 0.0
+            bank_values: dict[Any, float] = {}
+            for idx in ordered_index:
+                try:
+                    allowances_total = float(annual_df.at[idx, 'allowances_total'])
+                except Exception:
+                    allowances_total = 0.0
+                try:
+                    emissions_value = float(annual_df.at[idx, 'emissions_tons'])
+                except Exception:
+                    emissions_value = 0.0
+                bank_running = max(bank_running + allowances_total - emissions_value, 0.0)
+                bank_values[idx] = bank_running
+            annual_df['bank'] = annual_df.index.map(lambda idx: bank_values.get(idx, 0.0))
+
+    if isinstance(csv_files, Mapping) and isinstance(annual_df, pd.DataFrame):
+        try:
+            csv_files = dict(csv_files)
+            csv_files['annual.csv'] = annual_df.to_csv(index=False).encode('utf-8')
+        except Exception:  # pragma: no cover - defensive
+            pass
 
     result: dict[str, Any] = {
         'annual': annual_df,
