@@ -2,13 +2,14 @@ import importlib
 import io
 import shutil
 from collections.abc import Mapping
+from pathlib import Path
 
 import pytest
 
 pd = pytest.importorskip("pandas")
 
 from tests.fixtures.dispatch_single_minimal import baseline_frames
-from gui.app import run_policy_simulation
+from gui.app import DEEP_CARBON_UNSUPPORTED_MESSAGE, run_policy_simulation
 
 streamlit = pytest.importorskip("streamlit")
 
@@ -48,6 +49,45 @@ def _cleanup_temp_dir(result: dict) -> None:
     temp_dir = result.get("temp_dir")
     if temp_dir:
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_write_outputs_to_temp_falls_back_when_default_unwritable(monkeypatch):
+    from gui import app as gui_app
+
+    class DummyOutputs:
+        def __init__(self) -> None:
+            self.saved_to: Path | None = None
+
+        def to_csv(self, target: Path) -> None:
+            self.saved_to = Path(target)
+            csv_path = self.saved_to / "dummy.csv"
+            csv_path.write_text("value")
+
+    fallback_base = Path.cwd() / ".graniteledger" / "tmp"
+
+    monkeypatch.delenv("GRANITELEDGER_TMPDIR", raising=False)
+    monkeypatch.setattr(gui_app.tempfile, "gettempdir", lambda: "/unwritable")
+
+    def fake_mkdtemp(prefix: str, dir: str | None = None) -> str:
+        if dir == "/unwritable":
+            raise PermissionError("read-only filesystem")
+        assert dir == str(fallback_base)
+        target_dir = Path(dir) / "fallback"
+        target_dir.mkdir(parents=True, exist_ok=False)
+        return str(target_dir)
+
+    monkeypatch.setattr(gui_app.tempfile, "mkdtemp", fake_mkdtemp)
+
+    outputs = DummyOutputs()
+    temp_dir, csv_files = gui_app._write_outputs_to_temp(outputs)
+
+    try:
+        assert outputs.saved_to == temp_dir
+        assert temp_dir == fallback_base / "fallback"
+        assert csv_files == {"dummy.csv": b"value"}
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        shutil.rmtree(fallback_base, ignore_errors=True)
 
 
 def test_backend_generates_outputs(tmp_path):
@@ -116,6 +156,189 @@ def test_backend_policy_toggle_affects_price():
 
     _cleanup_temp_dir(enabled)
     _cleanup_temp_dir(disabled)
+
+
+def test_dispatch_capacity_toggle_updates_config():
+    config = _baseline_config()
+    frames = _frames_for_years([2025])
+    module_config = {
+        "electricity_dispatch": {"enabled": True, "capacity_expansion": True}
+    }
+
+    disabled = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2025,
+        cap_regions=[1],
+        frames=frames,
+        dispatch_capacity_expansion=False,
+        module_config=module_config,
+    )
+
+    assert "error" not in disabled
+    assert disabled["config"].get("sw_expansion") == 0
+    dispatch_cfg = disabled["module_config"]["electricity_dispatch"]
+    assert dispatch_cfg["capacity_expansion"] is False
+
+    enabled = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2025,
+        cap_regions=[1],
+        frames=frames,
+        dispatch_capacity_expansion=True,
+        module_config=module_config,
+    )
+
+    assert "error" not in enabled
+    assert enabled["config"].get("sw_expansion") == 1
+    assert enabled["module_config"]["electricity_dispatch"]["capacity_expansion"] is True
+
+    _cleanup_temp_dir(disabled)
+    _cleanup_temp_dir(enabled)
+
+
+def test_backend_handles_renamed_engine_outputs(monkeypatch):
+    config = _baseline_config()
+    frames = _frames_for_years([2025])
+
+    annual = pd.DataFrame([{"year": 2025, "p_co2": 12.0}])
+    emissions = pd.DataFrame([{"year": 2025, "region": "default", "emissions_tons": 1.0}])
+    prices = pd.DataFrame([{"year": 2025, "region": "default", "price": 45.0}])
+    flows = pd.DataFrame(
+        [{"year": 2025, "from_region": "A", "to_region": "B", "flow_mwh": 10.0}]
+    )
+
+    class FakeOutputs:
+        def __init__(self) -> None:
+            self.annual_results = annual
+            self.emissions = emissions
+            self.dispatch_price_by_region = prices
+            self.network_flows = flows
+
+        def to_csv(self, outdir):
+            outdir = Path(outdir)
+            outdir.mkdir(parents=True, exist_ok=True)
+            self.annual_results.to_csv(outdir / "annual.csv", index=False)
+            self.emissions.to_csv(outdir / "emissions_by_region.csv", index=False)
+            self.dispatch_price_by_region.to_csv(outdir / "price_by_region.csv", index=False)
+            self.network_flows.to_csv(outdir / "flows.csv", index=False)
+
+    def fake_runner(*args, **kwargs):
+        return FakeOutputs()
+
+    monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: fake_runner)
+
+    result = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2025,
+        frames=frames,
+    )
+
+    pd.testing.assert_frame_equal(result["annual"], annual)
+    pd.testing.assert_frame_equal(result["emissions_by_region"], emissions)
+    pd.testing.assert_frame_equal(result["price_by_region"], prices)
+    pd.testing.assert_frame_equal(result["flows"], flows)
+
+    _cleanup_temp_dir(result)
+
+
+def test_backend_handles_legacy_runner_without_deep_kw(monkeypatch):
+    config = _baseline_config()
+    frames = _frames_for_years([2025])
+
+    annual = pd.DataFrame([{"year": 2025, "p_co2": 12.0}])
+    emissions = pd.DataFrame([{"year": 2025, "region": "default", "emissions_tons": 1.0}])
+    prices = pd.DataFrame([{"year": 2025, "region": "default", "price": 45.0}])
+    flows = pd.DataFrame(
+        [{"year": 2025, "from_region": "A", "to_region": "B", "flow_mwh": 10.0}]
+    )
+
+    called: dict[str, bool] = {}
+
+    class LegacyOutputs:
+        def __init__(self) -> None:
+            self.annual = annual
+            self.emissions_by_region = emissions
+            self.price_by_region = prices
+            self.flows = flows
+
+        def to_csv(self, target: Path) -> None:
+            target = Path(target)
+            target.mkdir(parents=True, exist_ok=True)
+            self.annual.to_csv(target / "annual.csv", index=False)
+            self.emissions_by_region.to_csv(target / "emissions_by_region.csv", index=False)
+            self.price_by_region.to_csv(target / "price_by_region.csv", index=False)
+            self.flows.to_csv(target / "flows.csv", index=False)
+
+    def legacy_runner(
+        frames,
+        *,
+        years=None,
+        price_initial=0.0,
+        enable_floor=True,
+        enable_ccr=True,
+        use_network=False,
+        carbon_price_schedule=None,
+        progress_cb=None,
+    ):
+        called["executed"] = True
+        return LegacyOutputs()
+
+    monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: legacy_runner)
+
+    result = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2025,
+        frames=frames,
+        deep_carbon_pricing=False,
+    )
+
+    assert "error" not in result
+    assert called.get("executed") is True
+    pd.testing.assert_frame_equal(result["annual"], annual)
+    pd.testing.assert_frame_equal(result["emissions_by_region"], emissions)
+    pd.testing.assert_frame_equal(result["price_by_region"], prices)
+    pd.testing.assert_frame_equal(result["flows"], flows)
+
+    _cleanup_temp_dir(result)
+
+
+def test_backend_rejects_deep_mode_when_runner_lacks_kw(monkeypatch):
+    config = _baseline_config()
+    frames = _frames_for_years([2025])
+    called: dict[str, bool] = {}
+
+    def legacy_runner(
+        frames,
+        *,
+        years=None,
+        price_initial=0.0,
+        enable_floor=True,
+        enable_ccr=True,
+        use_network=False,
+        carbon_price_schedule=None,
+        progress_cb=None,
+    ):
+        called["executed"] = True
+        return {}
+
+    monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: legacy_runner)
+
+    result = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2025,
+        frames=frames,
+        deep_carbon_pricing=True,
+        carbon_price_enabled=True,
+        carbon_price_value=10.0,
+    )
+
+    assert result.get("error") == DEEP_CARBON_UNSUPPORTED_MESSAGE
+    assert "executed" not in called
 
 
 def test_backend_disabled_toggle_propagates_flags(monkeypatch):
@@ -216,6 +439,16 @@ def test_backend_control_period_override_applies(monkeypatch):
     assert carbon_cfg.get("control_period_years") == 4
 
     _cleanup_temp_dir(result)
+
+
+def test_backend_errors_when_demand_years_do_not_overlap():
+    config = _baseline_config()
+    frames = _frames_for_years([2030, 2031])
+
+    result = run_policy_simulation(config, frames=frames)
+
+    assert "error" in result
+    assert "Demand data covers years" in result["error"]
 
 
 def test_backend_dispatch_and_carbon_modules(monkeypatch):
@@ -350,6 +583,7 @@ def test_backend_reports_missing_deep_support(monkeypatch):
     ):
         raise AssertionError("legacy runner should not be invoked when unsupported")
 
+
     monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: legacy_runner)
 
     config = _baseline_config()
@@ -371,7 +605,6 @@ def test_backend_reports_missing_deep_support(monkeypatch):
         "Deep carbon pricing requires an updated engine. "
         "Please upgrade engine.run_loop.run_end_to_end_from_frames."
     )
-
 
 def test_backend_carbon_price_disables_cap(monkeypatch):
     real_runner = importlib.import_module("engine.run_loop").run_end_to_end_from_frames
@@ -401,6 +634,7 @@ def test_backend_carbon_price_disables_cap(monkeypatch):
         carbon_price_value=37.0,
         module_config=module_config,
     )
+
 
     assert "error" not in result
     assert captured.get("carbon_enabled") is False
