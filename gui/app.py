@@ -651,7 +651,9 @@ def _sync_progress_ui(
     else:
         progress_placeholder.progress(percent)
 
-    if state.log:
+    if state.stage == "complete":
+        log_placeholder.caption("Progress updates will appear here during the run.")
+    elif state.log:
         log_placeholder.markdown(_progress_log_markdown(state.log))
     else:
         log_placeholder.caption("Progress updates will appear here during the run.")
