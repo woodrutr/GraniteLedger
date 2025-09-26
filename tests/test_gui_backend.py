@@ -202,6 +202,136 @@ def test_backend_marks_allowance_price_output():
     _cleanup_temp_dir(result)
 
 
+def test_deep_carbon_allows_cap_and_price(monkeypatch):
+    config = _baseline_config()
+    frames = _frames_for_years([2025])
+
+    module_config = {
+        "carbon_policy": {
+            "enabled": True,
+            "enable_floor": True,
+            "enable_ccr": True,
+            "ccr1_enabled": True,
+            "ccr2_enabled": False,
+            "allowance_banking_enabled": True,
+            "cap_schedule": {2025: 450_000.0},
+            "coverage_regions": ["All"],
+        },
+        "allowance_market": {
+            "cap": {2025: 450_000.0},
+            "enabled": True,
+        },
+        "carbon_price": {
+            "enabled": True,
+            "price_per_ton": 35.0,
+            "price_escalator_pct": 0.0,
+            "price_schedule": {2025: 35.0},
+            "coverage_regions": ["All"],
+        },
+        "electricity_dispatch": {
+            "deep_carbon_pricing": True,
+        },
+    }
+
+    captured: dict[str, Any] = {}
+
+    def fake_runner(frames_obj, **kwargs):
+        captured["frames"] = frames_obj
+        captured["kwargs"] = dict(kwargs)
+
+        annual = pd.DataFrame(
+            [
+                {
+                    "year": 2025,
+                    "allowance_price": 35.0,
+                    "emissions_tons": 100.0,
+                    "allowances_available": 110.0,
+                    "bank": 0.0,
+                }
+            ]
+        )
+        emissions = pd.DataFrame(
+            [
+                {
+                    "year": 2025,
+                    "region": "default",
+                    "emissions_tons": 100.0,
+                }
+            ]
+        )
+        price = pd.DataFrame(
+            [
+                {
+                    "year": 2025,
+                    "region": "default",
+                    "price": 35.0,
+                }
+            ]
+        )
+        flows = pd.DataFrame(
+            [
+                {
+                    "year": 2025,
+                    "from_region": "default",
+                    "to_region": "default",
+                    "flow": 0.0,
+                }
+            ]
+        )
+
+        class DummyOutputs:
+            def __init__(self) -> None:
+                self.annual = annual
+                self.emissions_by_region = emissions
+                self.price_by_region = price
+                self.flows = flows
+
+            def to_csv(self, target: Path) -> None:
+                target_path = Path(target)
+                self.annual.to_csv(target_path / "annual.csv", index=False)
+                self.emissions_by_region.to_csv(
+                    target_path / "emissions_by_region.csv", index=False
+                )
+                self.price_by_region.to_csv(
+                    target_path / "price_by_region.csv", index=False
+                )
+                self.flows.to_csv(target_path / "flows.csv", index=False)
+
+        return DummyOutputs()
+
+    monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: fake_runner)
+
+    result = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2025,
+        coverage_regions=["All"],
+        cap_regions=[1],
+        frames=frames,
+        carbon_policy_enabled=True,
+        enable_floor=True,
+        enable_ccr=True,
+        ccr1_enabled=True,
+        ccr2_enabled=False,
+        allowance_banking_enabled=True,
+        carbon_price_enabled=True,
+        carbon_price_value=35.0,
+        carbon_price_schedule={2025: 35.0},
+        carbon_cap_schedule={2025: 450_000.0},
+        deep_carbon_pricing=True,
+        module_config=module_config,
+    )
+
+    try:
+        assert "error" not in result
+        kwargs = captured["kwargs"]
+        assert kwargs["enable_ccr"] is True
+        assert kwargs["carbon_price_schedule"] == {2025: 35.0}
+        assert kwargs["deep_carbon_pricing"] is True
+    finally:
+        _cleanup_temp_dir(result)
+
+
 def test_backend_marks_carbon_price_output():
     config = _baseline_config()
     frames = _frames_for_years([2025])

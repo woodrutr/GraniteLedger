@@ -1844,6 +1844,8 @@ def _render_carbon_policy_section(
             st.session_state.get("dispatch_deep_carbon", deep_pricing_allowed)
         )
 
+    mutually_exclusive = not deep_pricing_allowed
+
     session_enabled_default = enabled_default
     session_price_default = price_enabled_default
     last_changed = None
@@ -1855,7 +1857,7 @@ def _render_carbon_policy_section(
             st.session_state.setdefault("carbon_price_enable", price_enabled_default)
         )
         last_changed = st.session_state.get("carbon_module_last_changed")
-        if session_enabled_default and session_price_default:
+        if mutually_exclusive and session_enabled_default and session_price_default:
             if last_changed == "cap":
                 session_price_default = False
             else:
@@ -1867,7 +1869,7 @@ def _render_carbon_policy_section(
     # -------------------------
     # Cap vs Price toggles (mutually exclusive)
     # -------------------------
-    cap_toggle_disabled = locked or session_price_default
+    cap_toggle_disabled = locked or (mutually_exclusive and session_price_default)
     enabled = container.toggle(
         "Enable carbon cap",
         value=session_enabled_default,
@@ -1875,7 +1877,7 @@ def _render_carbon_policy_section(
         on_change=lambda: _mark_last_changed("cap"),
         disabled=cap_toggle_disabled,
     )
-    price_toggle_disabled = locked or bool(enabled)
+    price_toggle_disabled = locked or (mutually_exclusive and bool(enabled))
     price_enabled = container.toggle(
         "Enable carbon price",
         value=session_price_default,
@@ -1884,14 +1886,18 @@ def _render_carbon_policy_section(
         disabled=price_toggle_disabled,
     )
 
-    if price_enabled and enabled:
-        enabled = False
-    elif enabled and not price_enabled:
-        price_enabled = False
+    if mutually_exclusive:
+        if price_enabled and enabled:
+            enabled = False
+        elif enabled and not price_enabled:
+            price_enabled = False
 
     if locked:
         price_enabled = bool(price_enabled_default)
-        enabled = bool(enabled_default and not price_enabled)
+        if mutually_exclusive:
+            enabled = bool(enabled_default and not price_enabled)
+        else:
+            enabled = bool(enabled_default)
 
     cap_schedule: dict[int, float] = dict(cap_schedule_default)
     cap_start_value = float(cap_start_default_int)
