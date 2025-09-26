@@ -1,6 +1,14 @@
 from __future__ import annotations
 
-from gui.app import CarbonPriceConfig, _merge_price_schedules, _normalize_price_schedule
+import pytest
+
+from gui.app import (
+    CarbonPriceConfig,
+    _build_cap_reduction_schedule,
+    _build_price_escalator_schedule,
+    _merge_price_schedules,
+    _normalize_price_schedule,
+)
 
 
 def test_normalize_price_schedule_handles_malformed_entries() -> None:
@@ -40,3 +48,35 @@ def test_carbon_price_config_builds_sorted_schedule_from_years() -> None:
 
     assert config.schedule == {2021: 12.5, 2022: 12.5, 2023: 12.5}
     assert list(config.schedule) == [2021, 2022, 2023]
+    assert config.escalator_pct == 0.0
+
+
+def test_carbon_price_config_applies_escalator_growth() -> None:
+    config = CarbonPriceConfig.from_mapping(
+        {},
+        enabled=True,
+        value=10.0,
+        schedule=None,
+        years=[2020, 2021, 2022],
+        escalator_pct=10.0,
+    )
+
+    assert config.escalator_pct == 10.0
+    assert config.schedule[2020] == pytest.approx(10.0)
+    assert config.schedule[2021] == pytest.approx(11.0)
+    assert config.schedule[2022] == pytest.approx(12.1)
+
+
+def test_build_price_escalator_schedule_handles_empty_years() -> None:
+    schedule = _build_price_escalator_schedule(20.0, 5.0, [])
+
+    assert schedule == {}
+
+
+def test_build_cap_reduction_schedule_percent_and_fixed() -> None:
+    years = [2025, 2026, 2027]
+    percent_schedule = _build_cap_reduction_schedule(100.0, "percent", 10.0, years)
+    fixed_schedule = _build_cap_reduction_schedule(100.0, "fixed", 5.0, years)
+
+    assert percent_schedule == {2025: 100.0, 2026: 90.0, 2027: 80.0}
+    assert fixed_schedule == {2025: 100.0, 2026: 95.0, 2027: 90.0}
