@@ -4853,11 +4853,18 @@ def run_policy_simulation(
         "enable_floor": enable_floor_flag,
         "enable_ccr": enable_ccr_flag,
         "use_network": bool(dispatch_use_network),
+        "capacity_expansion": bool(capacity_flag),
         "carbon_price_schedule": price_schedule_map if price_active else None,
         "carbon_price_value": runner_price_value,
         "deep_carbon_pricing": bool(deep_carbon_pricing),
         "progress_cb": progress_cb,
     }
+
+    if _runner_supports_keyword(runner, "report_by_technology"):
+        runner_kwargs["report_by_technology"] = True
+
+    if not _runner_supports_keyword(runner, "capacity_expansion"):
+        runner_kwargs.pop("capacity_expansion", None)
 
     if not _runner_supports_keyword(runner, "carbon_price_value"):
         runner_kwargs.pop("carbon_price_value", None)
