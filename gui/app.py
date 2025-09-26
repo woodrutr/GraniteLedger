@@ -4946,7 +4946,7 @@ def run_policy_simulation(
         annual_df = annual_df.copy()
         if not banking_flag:
             annual_df['bank'] = 0.0
-        elif not annual_df.empty and {'allowances_total', 'emissions_tons'}.issubset(annual_df.columns):
+        elif not annual_df.empty and {'allowances_available', 'emissions_tons'}.issubset(annual_df.columns):
             try:
                 year_order = pd.to_numeric(annual_df['year'], errors='coerce')
             except Exception:  # pragma: no cover - defensive
@@ -4959,7 +4959,7 @@ def run_policy_simulation(
             bank_values: dict[Any, float] = {}
             for idx in ordered_index:
                 try:
-                    allowances_total = float(annual_df.at[idx, 'allowances_total'])
+                    allowances_total = float(annual_df.at[idx, 'allowances_available'])
                 except Exception:
                     allowances_total = 0.0
                 try:
@@ -5296,13 +5296,15 @@ def _render_results(result: Mapping[str, Any]) -> None:
         price_missing_caption = 'Allowance clearing price data unavailable for this run.'
 
     price_chart_column: str | None = None
-    if not chart_data.empty and 'p_co2' in chart_data.columns:
-        chart_data = chart_data.rename(columns={'p_co2': price_series_label})
+    if not chart_data.empty and 'allowance_price' in chart_data.columns:
+        chart_data = chart_data.rename(columns={'allowance_price': price_series_label})
         price_chart_column = price_series_label
 
     display_price_table = display_annual.copy()
-    if 'p_co2' in display_price_table.columns:
-        display_price_table = display_price_table.rename(columns={'p_co2': price_series_label})
+    if 'allowance_price' in display_price_table.columns:
+        display_price_table = display_price_table.rename(
+            columns={'allowance_price': price_series_label}
+        )
 
     emissions_df = result.get('emissions_by_region')
     if not isinstance(emissions_df, pd.DataFrame):

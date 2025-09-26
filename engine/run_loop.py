@@ -11,6 +11,24 @@ try:  # pragma: no cover - optional dependency guard
 except ImportError:  # pragma: no cover - optional dependency
     pd = cast(object, None)
 
+
+ANNUAL_OUTPUT_COLUMNS = [
+    "year",
+    "allowance_price",
+    "allowance_price_allowance_component",
+    "allowance_price_exogenous_component",
+    "allowance_price_effective",
+    "iterations",
+    "emissions_tons",
+    "allowances_minted",
+    "allowances_available",
+    "bank",
+    "allowances_surrendered",
+    "obligation",
+    "finalized",
+    "shortage_flag",
+]
+
 from dispatch.interface import DispatchResult
 from dispatch.lp_network import solve_from_frames as solve_network_from_frames
 from dispatch.lp_single import solve as solve_single
@@ -1185,16 +1203,22 @@ def _build_engine_outputs(
         annual_rows.append(
             {
                 "year": year,
-                "p_co2": price_value,
-                "p_co2_allowance": float(entry.get("allowance_price_last", price_value)),
-                "p_co2_exogenous": float(entry.get("exogenous_price_last", 0.0)),
-                "p_co2_effective": float(entry.get("effective_price_last", price_value)),
+                "allowance_price": price_value,
+                "allowance_price_allowance_component": float(
+                    entry.get("allowance_price_last", price_value)
+                ),
+                "allowance_price_exogenous_component": float(
+                    entry.get("exogenous_price_last", 0.0)
+                ),
+                "allowance_price_effective": float(
+                    entry.get("effective_price_last", price_value)
+                ),
                 "iterations": iterations_value,
                 "emissions_tons": float(entry.get("emissions_sum", 0.0)),
-                "available_allowances": minted,
-                "allowances_total": allowances_total,
+                "allowances_minted": minted,
+                "allowances_available": allowances_total,
                 "bank": bank_final,
-                "surrendered": surrendered_total,
+                "allowances_surrendered": surrendered_total,
                 "obligation": obligation_final,
                 "finalized": finalized,
                 "shortage_flag": shortage_flag,
@@ -1229,7 +1253,7 @@ def _build_engine_outputs(
                     }
                 )
 
-    annual_df = pd.DataFrame(annual_rows)
+    annual_df = pd.DataFrame(annual_rows, columns=ANNUAL_OUTPUT_COLUMNS)
     if not annual_df.empty:
         annual_df = annual_df.sort_values("year").reset_index(drop=True)
 
