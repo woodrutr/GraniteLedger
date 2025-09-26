@@ -101,6 +101,22 @@ except ModuleNotFoundError:
 
 
 try:
+    from gui.outputs_visualization import (
+        filter_emissions_by_regions,
+        load_emissions_data,
+        region_selection_options,
+        summarize_emissions_totals,
+    )
+except ModuleNotFoundError:  # pragma: no cover - compatibility fallback
+    from outputs_visualization import (  # type: ignore[import-not-found]
+        filter_emissions_by_regions,
+        load_emissions_data,
+        region_selection_options,
+        summarize_emissions_totals,
+    )
+
+
+try:
     from gui.rggi import apply_rggi_defaults
 except ModuleNotFoundError:  # pragma: no cover - compatibility fallback
     try:
@@ -5481,13 +5497,6 @@ def _render_technology_section(
 
     st.line_chart(pivot)
 
-    latest_year = pivot.index.max()
-    latest_totals = pivot.loc[latest_year].fillna(0.0)
-    latest_df = latest_totals.to_frame(name=value_label)
-    latest_df.index.name = 'technology'
-    st.caption(f'Latest year visualised: {latest_year}')
-    st.bar_chart(latest_df)
-
 
 def _cleanup_session_temp_dirs() -> None:
     _ensure_streamlit()
@@ -5741,9 +5750,7 @@ def _render_results(result: Mapping[str, Any]) -> None:
             )
 
 
-    emissions_df = result.get('emissions_by_region')
-    if not isinstance(emissions_df, pd.DataFrame):
-        emissions_df = pd.DataFrame()
+    emissions_df = load_emissions_data(result)
 
     price_df = result.get('price_by_region')
     if not isinstance(price_df, pd.DataFrame):
@@ -5782,7 +5789,6 @@ def _render_results(result: Mapping[str, Any]) -> None:
             if price_chart_column and price_chart_column in chart_data.columns:
                 st.markdown(f'**{price_series_label}**')
                 st.line_chart(chart_data[[price_chart_column]])
-                st.bar_chart(chart_data[[price_chart_column]])
             else:
                 st.caption(price_missing_caption)
 
@@ -5796,40 +5802,70 @@ def _render_results(result: Mapping[str, Any]) -> None:
         else:
             if not chart_data.empty and 'emissions_tons' in chart_data.columns:
                 st.markdown('**Total emissions (tons)**')
-                st.line_chart(chart_data[['emissions_tons']])
                 st.bar_chart(chart_data[['emissions_tons']])
             elif not display_annual.empty:
                 st.caption('Total emissions data unavailable for this run.')
 
-            if not emissions_df.empty:
+            if emissions_df.empty:
+                if not display_annual.empty:
+                    st.caption('No regional emissions data available for this run.')
+            else:
                 display_emissions = emissions_df.copy()
-                display_emissions['year'] = pd.to_numeric(
-                    display_emissions['year'], errors='coerce'
-                )
-                display_emissions = display_emissions.dropna(subset=['year'])
+                if 'year' in display_emissions.columns:
+                    display_emissions['year'] = pd.to_numeric(
+                        display_emissions['year'], errors='coerce'
+                    )
+                    display_emissions = display_emissions.dropna(subset=['year'])
+                    display_emissions = display_emissions.sort_values(
+                        ['year', 'region_label']
+                    )
 
-                if 'region' in display_emissions.columns:
-                    emissions_pivot = display_emissions.pivot_table(
-                        index='year',
-                        columns='region',
-                        values='emissions_tons',
-                        aggfunc='sum',
-                    ).sort_index()
-                    st.markdown('**Emissions by region**')
-                    st.line_chart(emissions_pivot)
+                region_options = region_selection_options(display_emissions)
+                if region_options:
+                    option_labels = [label for label, _ in region_options]
+                    label_to_value = {label: value for label, value in region_options}
+                    selected_labels = st.multiselect(
+                        'Select regions to include',
+                        option_labels,
+                        default=option_labels,
+                        key='emissions_region_selection',
+                    )
+                    selected_values = [
+                        label_to_value[label]
+                        for label in selected_labels
+                        if label in label_to_value
+                    ]
+                    filtered_emissions = filter_emissions_by_regions(
+                        display_emissions, selected_values
+                    )
+                    if 'year' in filtered_emissions.columns:
+                        filtered_emissions = filtered_emissions.sort_values(
+                            ['year', 'region_label']
+                        )
+                    summary_df = summarize_emissions_totals(filtered_emissions)
+                    if summary_df.empty:
+                        st.caption(
+                            'No emissions data available for the selected regions.'
+                        )
+                    else:
+                        st.markdown('**Emissions by region (total tons)**')
+                        st.bar_chart(summary_df)
 
-                    if not emissions_pivot.empty:
-                        latest_year = emissions_pivot.index.max()
-                        latest_totals = emissions_pivot.loc[latest_year].fillna(0.0)
-                        latest_df = latest_totals.to_frame(name='emissions_tons')
-                        latest_df.index.name = 'region'
-                        st.caption(f'Latest year visualised: {latest_year}')
-                        st.bar_chart(latest_df)
+                    st.markdown('---')
+                    st.dataframe(
+                        filtered_emissions.drop(
+                            columns=['region_canonical'], errors='ignore'
+                        ),
+                        width="stretch",
+                    )
                 else:
                     st.caption('Regional emissions data unavailable; showing raw table below.')
-                    st.dataframe(display_emissions, width="stretch")
-            elif not display_annual.empty:
-                st.caption('No regional emissions data available for this run.')
+                    st.dataframe(
+                        display_emissions.drop(
+                            columns=['region_canonical'], errors='ignore'
+                        ),
+                        width="stretch",
+                    )
 
     if bank_tab is not None:
         with bank_tab:
@@ -5865,14 +5901,6 @@ def _render_results(result: Mapping[str, Any]) -> None:
                         ).sort_index()
                         st.markdown('**Dispatch costs by region ($/MWh)**')
                         st.line_chart(price_pivot)
-
-                        if not price_pivot.empty:
-                            latest_year = price_pivot.index.max()
-                            latest_totals = price_pivot.loc[latest_year].fillna(0.0)
-                            latest_df = latest_totals.to_frame(name='price')
-                            latest_df.index.name = 'region'
-                            st.caption(f'Latest year visualised: {latest_year}')
-                            st.bar_chart(latest_df)
                     else:
                         st.caption(
                             'Regional dispatch cost data unavailable; showing raw table below.'
