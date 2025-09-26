@@ -5303,6 +5303,15 @@ def _render_results(result: Mapping[str, Any]) -> None:
     display_price_table = display_annual.copy()
     if 'p_co2' in display_price_table.columns:
         display_price_table = display_price_table.rename(columns={'p_co2': price_series_label})
+    if price_output_type == 'carbon':
+        allowed_price_columns = [
+            'year',
+            price_series_label,
+            'p_co2_exogenous',
+            'p_co2_effective',
+            'emissions_tons',
+        ]
+        display_price_table = display_price_table.filter(items=allowed_price_columns)
 
     emissions_df = result.get('emissions_by_region')
     if not isinstance(emissions_df, pd.DataFrame):
@@ -5324,9 +5333,18 @@ def _render_results(result: Mapping[str, Any]) -> None:
 
     st.caption('Visualisations reflect the most recent model run.')
 
-    price_tab, emissions_tab, bank_tab, dispatch_tab = st.tabs(
-        [price_tab_label, 'Emissions', 'Allowance bank', 'Dispatch costs']
-    )
+    show_bank_tab = price_output_type != 'carbon'
+    tab_labels = [price_tab_label, 'Emissions']
+    if show_bank_tab:
+        tab_labels.append('Allowance bank')
+    tab_labels.append('Dispatch costs')
+
+    tabs = st.tabs(tab_labels)
+    tab_iter = iter(tabs)
+    price_tab = next(tab_iter)
+    emissions_tab = next(tab_iter)
+    bank_tab = next(tab_iter) if show_bank_tab else None
+    dispatch_tab = next(tab_iter)
 
     with price_tab:
         st.subheader(price_section_title)
@@ -5385,16 +5403,17 @@ def _render_results(result: Mapping[str, Any]) -> None:
             elif not display_annual.empty:
                 st.caption('No regional emissions data available for this run.')
 
-    with bank_tab:
-        st.subheader('Allowance bank balance')
-        if display_annual.empty:
-            st.info('No annual results to display.')
-        elif 'bank' in chart_data.columns:
-            st.markdown('**Bank balance (tons)**')
-            st.line_chart(chart_data[['bank']])
-            st.bar_chart(chart_data[['bank']])
-        else:
-            st.caption('Allowance bank data unavailable for this run.')
+    if bank_tab is not None:
+        with bank_tab:
+            st.subheader('Allowance bank balance')
+            if display_annual.empty:
+                st.info('No annual results to display.')
+            elif 'bank' in chart_data.columns:
+                st.markdown('**Bank balance (tons)**')
+                st.line_chart(chart_data[['bank']])
+                st.bar_chart(chart_data[['bank']])
+            else:
+                st.caption('Allowance bank data unavailable for this run.')
 
     with dispatch_tab:
         st.subheader('Dispatch costs and network results')

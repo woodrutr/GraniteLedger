@@ -217,6 +217,100 @@ def test_backend_marks_carbon_price_output():
     _cleanup_temp_dir(result)
 
 
+def test_render_results_carbon_price_hides_allowance_columns(monkeypatch):
+    from gui import app as gui_app
+
+    config = _baseline_config()
+    frames = _frames_for_years([2025])
+
+    result = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2025,
+        frames=frames,
+        carbon_policy_enabled=False,
+        carbon_price_enabled=True,
+        carbon_price_value=25.0,
+    )
+
+    assert result.get('_price_output_type') == 'carbon'
+
+    class DummyTab:
+        def __enter__(self):
+            return None
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class DummyStreamlit:
+        def __init__(self) -> None:
+            self.dataframes = []
+            self.tab_labels = []
+
+        def error(self, *args, **kwargs):
+            return None
+
+        def caption(self, *args, **kwargs):
+            return None
+
+        def subheader(self, *args, **kwargs):
+            return None
+
+        def info(self, *args, **kwargs):
+            return None
+
+        def markdown(self, *args, **kwargs):
+            return None
+
+        def line_chart(self, *args, **kwargs):
+            return None
+
+        def bar_chart(self, *args, **kwargs):
+            return None
+
+        def dataframe(self, frame, **kwargs):
+            self.dataframes.append(frame)
+            return None
+
+        def tabs(self, labels):
+            self.tab_labels.append(list(labels))
+            return [DummyTab() for _ in labels]
+
+        def download_button(self, *args, **kwargs):
+            return None
+
+    dummy_st = DummyStreamlit()
+    monkeypatch.setattr(gui_app, "st", dummy_st)
+
+    gui_app._render_results(result)
+
+    assert dummy_st.tab_labels, "Expected result tabs to be rendered"
+    assert "Allowance bank" not in dummy_st.tab_labels[0]
+
+    price_tables = [
+        frame
+        for frame in dummy_st.dataframes
+        if isinstance(frame, pd.DataFrame) and "Carbon price ($/ton)" in frame.columns
+    ]
+
+    assert price_tables, "Expected carbon price table to be rendered"
+
+    allowed_columns = {
+        "year",
+        "Carbon price ($/ton)",
+        "p_co2_exogenous",
+        "p_co2_effective",
+        "emissions_tons",
+    }
+    disallowed_columns = {"allowances_total", "bank"}
+
+    for table in price_tables:
+        assert set(table.columns).issubset(allowed_columns)
+        assert disallowed_columns.isdisjoint(table.columns)
+
+    _cleanup_temp_dir(result)
+
+
 def test_dispatch_capacity_toggle_updates_config():
     config = _baseline_config()
     frames = _frames_for_years([2025])
