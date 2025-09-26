@@ -5713,7 +5713,7 @@ def main() -> None:
         "carbon_cap_schedule": dict(carbon_settings.cap_schedule),
         "dispatch_use_network": dispatch_use_network,
         "dispatch_capacity_expansion": bool(
-            getattr(dispatch_settings, "capacity_expansion", False)
+            getattr(dispatch_settings, "capacity_expansion", True)
         ),
         "dispatch_deep_carbon": bool(
             getattr(dispatch_settings, "deep_carbon_pricing", False)
@@ -5915,7 +5915,7 @@ def main() -> None:
                     ),
                     dispatch_capacity_expansion=inputs_for_run.get(
                         "dispatch_capacity_expansion",
-                        getattr(dispatch_settings, "capacity_expansion", False),
+                        getattr(dispatch_settings, "capacity_expansion", True),
                     ),
                     deep_carbon_pricing=bool(
                         inputs_for_run.get(
