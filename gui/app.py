@@ -3396,12 +3396,38 @@ def _coerce_year_set(value: Any, fallback: Iterable[int]) -> set[int]:
     return years
 
 
+def _apply_schedule_growth(
+    value: float,
+    growth: float | None,
+    *,
+    mode: str = "percent",
+    steps: int = 1,
+    forward: bool = True,
+) -> float:
+    """Return ``value`` adjusted ``steps`` times according to ``growth`` settings."""
+
+    if growth in (None, 0.0) or steps <= 0:
+        return float(value)
+
+    if mode == "percent":
+        factor = 1.0 + float(growth) / 100.0
+        if factor == 0.0:
+            return 0.0 if forward else float(value)
+        power = factor**steps
+        return float(value) * power if forward else float(value) / power
+
+    delta = float(growth) * steps
+    return float(value) + delta if forward else float(value) - delta
+
+
 def _coerce_year_value_map(
     entry: Any,
     years: Iterable[int],
     *,
     cast: Callable[[Any], _T],
     default: _T,
+    growth: float | None = None,
+    growth_mode: str = "percent",
 ) -> dict[int, _T]:
     values: dict[int, _T] = {}
 
@@ -3419,7 +3445,12 @@ def _coerce_year_value_map(
             coerced = cast(entry)
         except (TypeError, ValueError):
             coerced = cast(default)
-        return {int(year): coerced for year in years}
+        normalized_years = sorted(int(year) for year in years)
+        if not normalized_years:
+            return {}
+        start = normalized_years[0]
+        end = normalized_years[-1]
+        return {year: coerced for year in range(start, end + 1)}
     else:
         iterator = []
 
@@ -3433,10 +3464,61 @@ def _coerce_year_value_map(
         except (TypeError, ValueError):
             continue
 
+    normalized_years = sorted(int(year) for year in years)
+    if not normalized_years:
+        return {}
+
+    run_years = list(range(normalized_years[0], normalized_years[-1] + 1))
+
+    if not values:
+        default_value = cast(default)
+        return {year: default_value for year in run_years}
+
+    known_years = sorted(values.keys())
+    first_year = known_years[0]
+    first_value = values[first_year]
     result: dict[int, _T] = {}
-    for year in years:
-        year_int = int(year)
-        result[year_int] = values.get(year_int, cast(default))
+    numeric_growth = growth not in (None, 0.0)
+    last_numeric: float | None = None
+    last_value: _T | None = None
+
+    for year in run_years:
+        if year in values:
+            last_value = values[year]
+            if numeric_growth:
+                try:
+                    last_numeric = float(last_value)  # type: ignore[arg-type]
+                except (TypeError, ValueError):
+                    last_numeric = float(cast(default))
+        else:
+            if numeric_growth:
+                if last_numeric is None:
+                    try:
+                        base_numeric = float(first_value)  # type: ignore[arg-type]
+                    except (TypeError, ValueError):
+                        base_numeric = float(cast(default))
+                    steps = first_year - year
+                    last_numeric = _apply_schedule_growth(
+                        base_numeric,
+                        growth,
+                        mode=growth_mode,
+                        steps=steps,
+                        forward=False,
+                    )
+                else:
+                    last_numeric = _apply_schedule_growth(
+                        last_numeric,
+                        growth,
+                        mode=growth_mode,
+                        steps=1,
+                        forward=True,
+                    )
+                last_value = cast(last_numeric)
+            else:
+                if last_value is None:
+                    last_value = values[first_year]
+        result[year] = cast(last_value if last_value is not None else cast(default))
+
     return result
 
 
@@ -3449,6 +3531,10 @@ def _build_policy_frame(
     ccr2_enabled: bool | None = None,
     control_period_years: int | None = None,
     banking_enabled: bool = True,
+    floor_escalator_mode: str | None = None,
+    floor_escalator_value: float | None = None,
+    ccr1_escalator_pct: float | None = None,
+    ccr2_escalator_pct: float | None = None,
 ) -> pd.DataFrame:
     years_list = sorted(int(year) for year in years)
     if not years_list:
@@ -3487,16 +3573,46 @@ def _build_policy_frame(
         if control_period is not None and control_period <= 0:
             control_period = None
 
-        cap_map = _coerce_year_value_map(market_cfg.get("cap"), years_list, cast=float, default=0.0)
-        floor_map = _coerce_year_value_map(market_cfg.get("floor"), years_list, cast=float, default=0.0)
+        cap_map = _coerce_year_value_map(
+            market_cfg.get("cap"),
+            years_list,
+            cast=float,
+            default=0.0,
+        )
+        floor_growth_mode = str(floor_escalator_mode or market_cfg.get("floor_escalator_mode", "fixed")).strip().lower()
+        if floor_growth_mode not in {"percent", "fixed"}:
+            floor_growth_mode = "fixed"
+        floor_growth_value = (
+            floor_escalator_value
+            if floor_escalator_value is not None
+            else _coerce_float(market_cfg.get("floor_escalator_value"), 0.0)
+        )
+        floor_map = _coerce_year_value_map(
+            market_cfg.get("floor"),
+            years_list,
+            cast=float,
+            default=0.0,
+            growth=floor_growth_value,
+            growth_mode=floor_growth_mode,
+        )
         ccr1_trigger_map = _coerce_year_value_map(
-            market_cfg.get("ccr1_trigger"), years_list, cast=float, default=0.0
+            market_cfg.get("ccr1_trigger"),
+            years_list,
+            cast=float,
+            default=0.0,
+            growth=ccr1_escalator_pct,
+            growth_mode="percent",
         )
         ccr1_qty_map = _coerce_year_value_map(
             market_cfg.get("ccr1_qty"), years_list, cast=float, default=0.0
         )
         ccr2_trigger_map = _coerce_year_value_map(
-            market_cfg.get("ccr2_trigger"), years_list, cast=float, default=0.0
+            market_cfg.get("ccr2_trigger"),
+            years_list,
+            cast=float,
+            default=0.0,
+            growth=ccr2_escalator_pct,
+            growth_mode="percent",
         )
         ccr2_qty_map = _coerce_year_value_map(
             market_cfg.get("ccr2_qty"), years_list, cast=float, default=0.0
@@ -5320,6 +5436,10 @@ def run_policy_simulation(
         ccr2_enabled=bool(ccr2_enabled),
         control_period_years=control_period_years,
         banking_enabled=bool(allowance_banking_enabled),
+        floor_escalator_mode=carbon_policy_cfg.floor_escalator_mode,
+        floor_escalator_value=carbon_policy_cfg.floor_escalator_value,
+        ccr1_escalator_pct=carbon_policy_cfg.ccr1_escalator_pct,
+        ccr2_escalator_pct=carbon_policy_cfg.ccr2_escalator_pct,
     )
     frames_obj = frames_obj.with_frame('policy', policy_frame)
 
@@ -5443,12 +5563,20 @@ def run_policy_simulation(
         LOGGER.exception("Policy simulation failed")
         return {"error": str(exc)}
 
+    limiting_factors: list[str] = []
+
     if isinstance(outputs, Mapping):
         capacity_df = outputs.get("capacity_by_technology")
         generation_df = outputs.get("generation_by_technology")
+        raw_factors = outputs.get("limiting_factors", [])
+        if isinstance(raw_factors, Iterable) and not isinstance(raw_factors, (str, bytes)):
+            limiting_factors = [str(entry) for entry in raw_factors]
     else:
         capacity_df = getattr(outputs, "capacity_by_technology", None)
         generation_df = getattr(outputs, "generation_by_technology", None)
+        raw_factors = getattr(outputs, "limiting_factors", None)
+        if isinstance(raw_factors, Iterable) and not isinstance(raw_factors, (str, bytes)):
+            limiting_factors = [str(entry) for entry in raw_factors]
 
     if capacity_df is None:
         LOGGER.warning(
@@ -5527,6 +5655,8 @@ def run_policy_simulation(
         'temp_dir': temp_dir,
         'documentation': documentation,
     }
+    if limiting_factors:
+        result['limiting_factors'] = limiting_factors
     result['_price_output_type'] = 'allowance' if policy_enabled else 'carbon'
     result['_price_field_flags'] = price_flags
     if normalized_regions:
