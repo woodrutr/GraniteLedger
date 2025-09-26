@@ -202,6 +202,76 @@ def test_backend_marks_allowance_price_output():
     _cleanup_temp_dir(result)
 
 
+def test_backend_returns_technology_frames(monkeypatch):
+    config = _baseline_config()
+    frames = _frames_for_years([2025])
+
+    capacity_df = pd.DataFrame(
+        [
+            {"year": 2025, "technology": "wind", "capacity_mw": 10.0},
+            {"year": 2025, "technology": "solar", "capacity_mw": 5.0},
+        ]
+    )
+    generation_df = pd.DataFrame(
+        [
+            {"year": 2025, "technology": "wind", "generation_mwh": 25.0},
+            {"year": 2025, "technology": "solar", "generation_mwh": 15.0},
+        ]
+    )
+
+    class StubOutputs:
+        def __init__(self) -> None:
+            self.annual = pd.DataFrame(
+                [
+                    {
+                        "year": 2025,
+                        "allowance_price": 0.0,
+                        "emissions_tons": 0.0,
+                        "bank": 0.0,
+                    }
+                ]
+            )
+            self.emissions_by_region = pd.DataFrame(
+                [{"year": 2025, "region": "default", "emissions_tons": 0.0}]
+            )
+            self.price_by_region = pd.DataFrame(
+                [{"year": 2025, "region": "default", "price": 0.0}]
+            )
+            self.flows = pd.DataFrame([{"from": "A", "to": "B", "value": 0.0}])
+            self.capacity_by_technology = capacity_df
+            self.generation_by_technology = generation_df
+
+        def to_csv(self, target: Path) -> None:
+            self.annual.to_csv(target / "annual.csv", index=False)
+            self.emissions_by_region.to_csv(
+                target / "emissions_by_region.csv", index=False
+            )
+            self.price_by_region.to_csv(target / "price_by_region.csv", index=False)
+            self.flows.to_csv(target / "flows.csv", index=False)
+
+    def stub_runner(frames_obj, **kwargs):
+        assert kwargs.get("capacity_expansion") is True
+        return StubOutputs()
+
+    monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: stub_runner)
+
+    result = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2025,
+        cap_regions=[1],
+        frames=frames,
+        dispatch_capacity_expansion=True,
+    )
+
+    assert "capacity_by_technology" in result
+    assert isinstance(result["capacity_by_technology"], pd.DataFrame)
+    assert "generation_by_technology" in result
+    assert isinstance(result["generation_by_technology"], pd.DataFrame)
+
+    _cleanup_temp_dir(result)
+
+
 def test_backend_marks_carbon_price_output():
     config = _baseline_config()
     frames = _frames_for_years([2025])
