@@ -7,11 +7,13 @@ import pandas as pd
 
 try:  # pragma: no cover - fallback when executed as a script
     from gui.region_metadata import (
+        DEFAULT_REGION_METADATA,
         canonical_region_label,
         canonical_region_value,
     )
 except ModuleNotFoundError:  # pragma: no cover - compatibility fallback
     from region_metadata import (  # type: ignore[import-not-found]
+        DEFAULT_REGION_METADATA,
         canonical_region_label,
         canonical_region_value,
     )
@@ -78,19 +80,26 @@ def region_selection_options(emissions_df: pd.DataFrame) -> list[tuple[str, int 
 
     options: list[tuple[str, int | str]] = []
     seen: set[int | str] = set()
-    for canonical, label in zip(
-        emissions_df["region_canonical"], emissions_df.get("region_label", [])
-    ):
+    for canonical in emissions_df["region_canonical"]:
         if pd.isna(canonical):
             continue
         canonical_value = canonical_region_value(canonical)
+        if isinstance(canonical_value, str) and canonical_value.strip().lower() == "default":
+            continue
         if canonical_value in seen:
             continue
         seen.add(canonical_value)
-        display_label = str(label) if isinstance(label, str) and label else canonical_region_label(canonical_value)
+        display_label = canonical_region_label(canonical_value)
         options.append((display_label, canonical_value))
 
     options.sort(key=lambda item: item[0].lower())
+    if not options:
+        fallback = [
+            (metadata.label, metadata.id)
+            for metadata in DEFAULT_REGION_METADATA.values()
+        ]
+        fallback.sort(key=lambda item: item[0].lower())
+        return fallback
     return options
 
 
