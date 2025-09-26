@@ -118,6 +118,18 @@ except ModuleNotFoundError:  # pragma: no cover - compatibility fallback
 
 
 try:
+    from gui.recent_results import (
+        get_recent_result,
+        record_recent_result,
+    )
+except ModuleNotFoundError:  # pragma: no cover - compatibility fallback
+    from recent_results import (  # type: ignore[import-not-found]
+        get_recent_result,
+        record_recent_result,
+    )
+
+
+try:
     from gui.rggi import apply_rggi_defaults
 except ModuleNotFoundError:  # pragma: no cover - compatibility fallback
     try:
@@ -5686,6 +5698,8 @@ def run_policy_simulation(
             else:
                 result['csv_files'] = updated_csv
 
+    record_recent_result(result)
+
     return result
 
     # Carbon price config
@@ -6260,6 +6274,8 @@ def _render_results(result: Mapping[str, Any]) -> None:
 def _render_outputs_panel(last_result: Mapping[str, Any] | None) -> None:
     """Render the main outputs panel with charts for the latest run."""
     _ensure_streamlit()
+    if not isinstance(last_result, Mapping):
+        last_result = get_recent_result()
     if not isinstance(last_result, Mapping) or not last_result:
         st.caption('Run the model to populate this panel with results.')
         return
@@ -6275,6 +6291,7 @@ def main() -> None:
     st.session_state.setdefault('last_result', None)
     st.session_state.setdefault('temp_dirs', [])
     st.session_state.setdefault('run_in_progress', False)
+    record_recent_result(st.session_state.get('last_result'))
     current_iteration = _advance_script_iteration()
     _reset_run_state_on_reload()
     _recover_stuck_run_state(current_iteration)
@@ -6365,6 +6382,8 @@ def main() -> None:
         last_result_mapping = st.session_state.get("last_result")
         if not isinstance(last_result_mapping, Mapping):
             last_result_mapping = None
+        if last_result_mapping is None:
+            last_result_mapping = get_recent_result()
 
         (inputs_tab,) = st.tabs(["Inputs"])
 

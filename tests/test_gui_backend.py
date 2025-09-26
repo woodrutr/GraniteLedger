@@ -536,6 +536,60 @@ def test_backend_handles_renamed_engine_outputs(monkeypatch):
     _cleanup_temp_dir(result)
 
 
+def test_recent_results_repository_tracks_outputs(monkeypatch):
+    from gui import recent_results
+
+    recent_results.clear_recent_result()
+
+    config = _baseline_config()
+    frames = _frames_for_years([2025])
+
+    annual = pd.DataFrame([{"year": 2025, "p_co2": 5.0}])
+    emissions = pd.DataFrame([{"year": 2025, "region": "default", "emissions_tons": 1.0}])
+    prices = pd.DataFrame([{"year": 2025, "region": "default", "price": 15.0}])
+
+    class CapturingOutputs:
+        def __init__(self) -> None:
+            self.annual = annual
+            self.emissions_by_region = emissions
+            self.price_by_region = prices
+            self.flows = pd.DataFrame()
+
+        def to_csv(self, target: Path) -> None:
+            target = Path(target)
+            target.mkdir(parents=True, exist_ok=True)
+            self.annual.to_csv(target / "annual.csv", index=False)
+            self.emissions_by_region.to_csv(
+                target / "emissions_by_region.csv", index=False
+            )
+            self.price_by_region.to_csv(target / "price_by_region.csv", index=False)
+
+    def fake_runner(*args, **kwargs):
+        return CapturingOutputs()
+
+    monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: fake_runner)
+
+    result = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2025,
+        frames=frames,
+    )
+
+    stored = recent_results.get_recent_result()
+    assert stored is result
+    pd.testing.assert_frame_equal(stored["annual"], annual)
+    emissions_result = stored["emissions_by_region"]
+    assert {"region_canonical", "region_label"}.issubset(emissions_result.columns)
+    pd.testing.assert_frame_equal(
+        emissions_result[emissions.columns],
+        emissions,
+    )
+
+    recent_results.clear_recent_result()
+    _cleanup_temp_dir(result)
+
+
 def test_backend_handles_legacy_runner_without_deep_kw(monkeypatch):
     config = _baseline_config()
     frames = _frames_for_years([2025])
