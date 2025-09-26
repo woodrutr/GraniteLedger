@@ -62,6 +62,16 @@ def _assert_price_schedule(result: Mapping[str, Any], expected: Mapping[int, flo
         assert annual.loc[year, "p_co2"] == pytest.approx(price, rel=0.0, abs=1e-9)
 
 
+def _emissions_by_year(result: Mapping[str, Any]) -> pd.Series:
+    """Return the annual emissions indexed by year for convenience."""
+
+    annual = result["annual"]
+    assert isinstance(annual, pd.DataFrame)
+    series = annual.set_index("year")["emissions_tons"].astype(float)
+    series.index = series.index.astype(int)
+    return series
+
+
 def test_write_outputs_to_temp_falls_back_when_default_unwritable(monkeypatch):
     from gui import app as gui_app
 
@@ -400,6 +410,7 @@ def test_backend_enforces_carbon_mode_exclusivity(monkeypatch):
         policy = frames.policy().to_policy()
         captured["policy_enabled"] = policy.enabled
         captured["price_schedule"] = kwargs.get("carbon_price_schedule")
+        captured["price_value"] = kwargs.get("carbon_price_value")
         return real_runner(frames, **kwargs)
 
     monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: capturing_runner)
@@ -423,6 +434,7 @@ def test_backend_enforces_carbon_mode_exclusivity(monkeypatch):
     schedule = captured.get("price_schedule")
     assert isinstance(schedule, Mapping)
     assert schedule  # non-empty schedule when price enabled
+    assert captured.get("price_value") == pytest.approx(15.0)
 
     module_config = result["module_config"]
     policy_cfg = module_config["carbon_policy"]
@@ -462,6 +474,42 @@ def test_backend_control_period_defaults_to_config(monkeypatch):
     assert carbon_cfg.get("control_period_years") is None
 
     _cleanup_temp_dir(result)
+
+
+def test_backend_carbon_price_reduces_emissions():
+    config = _baseline_config()
+    config["allowance_market"]["cap"] = {"2025": 1_000_000.0, "2026": 1_000_000.0}
+    config["allowance_market"]["floor"] = 0.0
+    frames = _frames_for_years([2025, 2026])
+
+    baseline = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2026,
+        frames=frames,
+        carbon_price_enabled=False,
+    )
+    priced = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2026,
+        frames=frames,
+        carbon_price_enabled=True,
+        carbon_price_value=100.0,
+        carbon_price_escalator_pct=0.0,
+    )
+
+    assert "error" not in baseline
+    assert "error" not in priced
+
+    baseline_emissions = _emissions_by_year(baseline)
+    priced_emissions = _emissions_by_year(priced)
+
+    for year in baseline_emissions.index:
+        assert priced_emissions.loc[year] < baseline_emissions.loc[year]
+
+    _cleanup_temp_dir(baseline)
+    _cleanup_temp_dir(priced)
 
 
 def test_backend_control_period_override_applies(monkeypatch):
@@ -703,6 +751,7 @@ def test_backend_carbon_price_disables_cap(monkeypatch):
         captured["carbon_enabled"] = policy.enabled
         captured["control"] = policy.control_period_length
         captured["price_schedule"] = kwargs.get("carbon_price_schedule")
+        captured["price_value"] = kwargs.get("carbon_price_value")
         return real_runner(frames, **kwargs)
 
     monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: capturing_runner)
@@ -730,6 +779,7 @@ def test_backend_carbon_price_disables_cap(monkeypatch):
     schedule = captured.get("price_schedule")
     assert isinstance(schedule, Mapping)
     assert schedule.get(2026) == pytest.approx(37.0)
+    assert captured.get("price_value") == pytest.approx(37.0)
 
     carbon_cfg = result["module_config"].get("carbon_policy", {})
     assert carbon_cfg.get("enabled") is False
@@ -747,6 +797,7 @@ def test_backend_builds_price_schedule_for_run_years(monkeypatch):
 
     def capturing_runner(frames, **kwargs):
         captured["carbon_price_schedule"] = kwargs.get("carbon_price_schedule")
+        captured["carbon_price_value"] = kwargs.get("carbon_price_value")
         return real_runner(frames, **kwargs)
 
     monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: capturing_runner)
@@ -771,6 +822,7 @@ def test_backend_builds_price_schedule_for_run_years(monkeypatch):
     assert isinstance(schedule, Mapping)
     expected = _build_price_schedule(2025, 2030, 45.0, 7.0)
     assert schedule == expected
+    assert captured.get("carbon_price_value") == pytest.approx(45.0)
 
     _cleanup_temp_dir(result)
 
