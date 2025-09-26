@@ -769,6 +769,49 @@ def _merge_price_schedules(
     return dict(sorted(merged.items()))
 
 
+def _expand_price_schedule(
+    schedule: Mapping[int, float],
+    years: Iterable[int] | None,
+) -> dict[int, float]:
+    """Return ``schedule`` expanded to cover every ``year`` without gaps."""
+
+    if not schedule:
+        return {}
+
+    normalized_years: list[int] = []
+    if years is not None:
+        for entry in years:
+            try:
+                normalized_years.append(int(entry))
+            except (TypeError, ValueError):
+                continue
+
+    schedule_items = [
+        (int(year), float(price)) for year, price in schedule.items()
+    ]
+    if not schedule_items:
+        return {}
+
+    schedule_items.sort(key=lambda item: item[0])
+    if not normalized_years:
+        return dict(schedule_items)
+
+    expanded: dict[int, float] = {}
+    sorted_years = sorted(dict.fromkeys(normalized_years))
+    first_price = schedule_items[0][1]
+    current_price = first_price
+    index = 0
+    total_schedule = len(schedule_items)
+
+    for year in sorted_years:
+        while index < total_schedule and schedule_items[index][0] <= year:
+            current_price = schedule_items[index][1]
+            index += 1
+        expanded[year] = float(current_price)
+
+    return expanded
+
+
 def _build_price_escalator_schedule(
     base_price: float,
     escalator_pct: float,
@@ -4115,6 +4158,10 @@ def run_policy_simulation(
         years=years,
         escalator_pct=carbon_price_escalator_pct,
     )
+
+    if price_cfg.schedule:
+        expanded_schedule = _expand_price_schedule(price_cfg.schedule, years)
+        price_cfg.schedule = expanded_schedule if expanded_schedule else {}
 
     if price_cfg.active:
         if carbon_policy_cfg.enabled and not deep_carbon_pricing:
