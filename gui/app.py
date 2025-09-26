@@ -5782,7 +5782,6 @@ def _render_results(result: Mapping[str, Any]) -> None:
             if price_chart_column and price_chart_column in chart_data.columns:
                 st.markdown(f'**{price_series_label}**')
                 st.line_chart(chart_data[[price_chart_column]])
-                st.bar_chart(chart_data[[price_chart_column]])
             else:
                 st.caption(price_missing_caption)
 
