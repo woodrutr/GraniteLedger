@@ -1411,6 +1411,65 @@ def run_end_to_end_from_frames(
             return float(price_schedule[None])
         return 0.0
 
+    def _emit_year_debug(
+        year_value: Any,
+        summary: Mapping[str, object],
+        record_snapshot: Mapping[str, object] | None,
+    ) -> None:
+        if not LOGGER.isEnabledFor(logging.DEBUG):
+            return
+
+        def _as_float(value: object, default: float = 0.0) -> float:
+            try:
+                return float(value) if value is not None else float(default)
+            except (TypeError, ValueError):
+                return float(default)
+
+        def _as_int(value: object, default: int) -> int:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return int(default)
+
+        record_snapshot = record_snapshot or {}
+
+        reserve_cap = _as_float(record_snapshot.get('cap'))
+        reserve_floor = _as_float(record_snapshot.get('floor'))
+        ecr_trigger = _as_float(record_snapshot.get('ecr_trigger'))
+        ccr1_trigger = _as_float(record_snapshot.get('ccr1_trigger'))
+        ccr2_trigger = _as_float(record_snapshot.get('ccr2_trigger'))
+        reserve_budget = _as_float(
+            summary.get('allowances_total'), _as_float(summary.get('available_allowances'))
+        )
+        reserve_available = _as_float(summary.get('available_allowances'))
+        reserve_withheld = max(0.0, reserve_cap - reserve_available)
+        reserve_released = max(0.0, reserve_available - reserve_cap)
+        payload = {
+            'year': _as_int(summary.get('year'), _as_int(year_value, 0)),
+            'price_raw': _as_float(summary.get('p_co2')),
+            'price_allowance': _as_float(summary.get('p_co2_allowance')),
+            'price_exogenous': _as_float(summary.get('p_co2_exogenous')),
+            'price_effective': _as_float(summary.get('p_co2_effective')),
+            'reserve_cap': reserve_cap,
+            'reserve_floor': reserve_floor,
+            'ecr_trigger': ecr_trigger,
+            'ccr1_trigger': ccr1_trigger,
+            'ccr2_trigger': ccr2_trigger,
+            'reserve_budget': reserve_budget,
+            'reserve_withheld': reserve_withheld,
+            'reserve_released': reserve_released,
+            'ccr1_release': _as_float(summary.get('ccr1_issued')),
+            'ccr2_release': _as_float(summary.get('ccr2_issued')),
+            'bank_in': _as_float(summary.get('bank_prev')),
+            'bank_out': _as_float(summary.get('bank_new')),
+            'bank_outstanding': _as_float(summary.get('obligation_new')),
+            'available_allowances': reserve_available,
+            'emissions': _as_float(summary.get('emissions')),
+            'shortage_flag': bool(summary.get('shortage_flag', False)),
+        }
+
+        LOGGER.debug('allowance_year_metrics %s', json.dumps(payload, sort_keys=True))
+
     for idx, year in enumerate(years_sequence):
         if progress_cb is not None:
             progress_cb(
@@ -1461,15 +1520,8 @@ def run_end_to_end_from_frames(
                 "_dispatch_result": dispatch_result,
             }
 
-            LOGGER.debug(
-                "Year %s allowance price %.4f, exogenous price %.4f, effective price %.4f (deep=%s)",
-                year,
-                0.0,
-                float(carbon_price_value),
-                effective_price,
-                deep_carbon_pricing,
-            )
             results[year] = summary_disabled
+            _emit_year_debug(year, summary_disabled, {})
             if progress_cb is not None:
                 progress_cb(
                     "year_complete",
@@ -1562,16 +1614,6 @@ def run_end_to_end_from_frames(
         summary["p_co2_exogenous"] = exogenous_price
         summary["p_co2_effective"] = effective_price
 
-        LOGGER.debug(
-            "Year %s allowance price %.4f, exogenous price %.4f, effective price %.4f (deep=%s)",
-            year,
-            allowance_price,
-            exogenous_price,
-            effective_price,
-            deep_carbon_pricing,
-        )
-
-
         emissions = float(summary.get('emissions', 0.0))
         surrendered = float(summary.get('surrendered', 0.0))
         bank_unadjusted = float(summary.get('bank_unadjusted', summary.get('bank_new', 0.0)))
@@ -1601,6 +1643,7 @@ def run_end_to_end_from_frames(
             bank_prev = float(summary.get('bank_new', 0.0)) if banking_enabled_year else 0.0
             if state is not None:
                 state['outstanding'] = 0.0
+            _emit_year_debug(year, summary, record)
             if progress_cb is not None:
                 payload: dict[str, object] = {
                     "year": _normalize_progress_year(year),
@@ -1686,6 +1729,7 @@ def run_end_to_end_from_frames(
 
         summary['finalize'] = finalize_summary
         results[year] = summary
+        _emit_year_debug(year, summary, record)
 
         if progress_cb is not None:
             payload = {
