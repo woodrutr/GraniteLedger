@@ -38,8 +38,13 @@ class CarbonModuleSettings:
     coverage_regions: list[str]
     control_period_years: int | None
     price_per_ton: float
+    price_escalator_pct: float = 0.0
     initial_bank: float = 0.0
     cap_regions: list[Any] = field(default_factory=list)
+    cap_start_value: float | None = None
+    cap_reduction_mode: str = "percent"
+    cap_reduction_value: float = 0.0
+    cap_schedule: dict[int, float] = field(default_factory=dict)
     price_schedule: dict[int, float] = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
 

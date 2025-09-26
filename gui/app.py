@@ -269,8 +269,13 @@ class CarbonModuleSettings:
     coverage_regions: list[str]
     control_period_years: int | None
     price_per_ton: float
+    price_escalator_pct: float = 0.0
     initial_bank: float = 0.0
     cap_regions: list[Any] = field(default_factory=list)
+    cap_start_value: float | None = None
+    cap_reduction_mode: str = "percent"
+    cap_reduction_value: float = 0.0
+    cap_schedule: dict[int, float] = field(default_factory=dict)
     price_schedule: dict[int, float] = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
 
@@ -625,6 +630,7 @@ class CarbonPriceConfig:
 
     enabled: bool = False
     price_per_ton: float = 0.0
+    escalator_pct: float = 0.0
     schedule: dict[int, float] = field(default_factory=dict)
 
     @property
@@ -642,19 +648,26 @@ class CarbonPriceConfig:
         value: float | None = None,
         schedule: Mapping[int, float] | Mapping[str, Any] | None = None,
         years: Iterable[int] | None = None,
+        escalator_pct: float | None = None,
     ) -> "CarbonPriceConfig":
         record = dict(mapping) if isinstance(mapping, Mapping) else {}
 
         enabled_val = bool(enabled) if enabled is not None else bool(record.get('enabled', False))
         price_raw = value if value is not None else record.get('price_per_ton', record.get('price', 0.0))
         price_value = _coerce_float(price_raw, default=0.0)
+        escalator_raw = (
+            escalator_pct
+            if escalator_pct is not None
+            else record.get('price_escalator_pct', record.get('escalator_pct', 0.0))
+        )
+        escalator_value = _coerce_float(escalator_raw, default=0.0)
 
         schedule_map = _merge_price_schedules(
             record.get('price_schedule'),
             schedule,
         )
 
-        if not schedule_map and price_value and years:
+        if not schedule_map and years:
             normalized_years: list[int] = []
             for year in years:
                 try:
@@ -662,10 +675,13 @@ class CarbonPriceConfig:
                 except (TypeError, ValueError):
                     continue
             if normalized_years:
-                schedule_map = {
-                    year: float(price_value)
-                    for year in sorted(set(normalized_years))
-                }
+                generated_schedule = _build_price_escalator_schedule(
+                    price_value,
+                    escalator_value,
+                    sorted(set(normalized_years)),
+                )
+                if generated_schedule:
+                    schedule_map = generated_schedule
 
         if schedule_map:
             schedule_map = dict(sorted(schedule_map.items()))
@@ -673,12 +689,14 @@ class CarbonPriceConfig:
         config = cls(
             enabled=bool(enabled_val),
             price_per_ton=float(price_value),
+            escalator_pct=float(escalator_value),
             schedule=schedule_map,
         )
 
         if not config.active:
             config.schedule = {}
             config.price_per_ton = 0.0
+            config.escalator_pct = 0.0
 
         return config
 
@@ -688,6 +706,7 @@ class CarbonPriceConfig:
         payload = {
             'enabled': bool(self.enabled),
             'price_per_ton': float(self.price_per_ton),
+            'price_escalator_pct': float(self.escalator_pct),
         }
         if self.schedule:
             payload['price_schedule'] = dict(self.schedule)
@@ -748,6 +767,91 @@ def _merge_price_schedules(
         return {}
 
     return dict(sorted(merged.items()))
+
+
+def _build_price_escalator_schedule(
+    base_price: float,
+    escalator_pct: float,
+    years: Iterable[int] | None,
+) -> dict[int, float]:
+    """Return a price schedule grown annually by ``escalator_pct``."""
+
+    if years is None:
+        return {}
+
+    try:
+        base_value = float(base_price)
+    except (TypeError, ValueError):
+        base_value = 0.0
+    try:
+        escalator_value = float(escalator_pct)
+    except (TypeError, ValueError):
+        escalator_value = 0.0
+
+    year_list: list[int] = []
+    for entry in years:
+        try:
+            year_list.append(int(entry))
+        except (TypeError, ValueError):
+            continue
+
+    if not year_list:
+        return {}
+
+    growth = max(escalator_value / 100.0, 0.0)
+    schedule: dict[int, float] = {}
+    for idx, year in enumerate(sorted(dict.fromkeys(year_list))):
+        if idx == 0:
+            value = base_value
+        else:
+            value = base_value * ((1.0 + growth) ** idx)
+        schedule[year] = float(value)
+    return schedule
+
+
+def _build_cap_reduction_schedule(
+    start_value: float,
+    reduction_mode: str,
+    reduction_value: float,
+    years: Iterable[int] | None,
+) -> dict[int, float]:
+    """Return a cap schedule reduced each year by the specified rule."""
+
+    if years is None:
+        return {}
+
+    try:
+        start_amount = float(start_value)
+    except (TypeError, ValueError):
+        start_amount = 0.0
+    try:
+        reduction_amount = float(reduction_value)
+    except (TypeError, ValueError):
+        reduction_amount = 0.0
+
+    year_list: list[int] = []
+    for entry in years:
+        try:
+            year_list.append(int(entry))
+        except (TypeError, ValueError):
+            continue
+
+    if not year_list:
+        return {}
+
+    normalized_mode = (reduction_mode or "").strip().lower()
+    if normalized_mode not in {"percent", "fixed"}:
+        normalized_mode = "percent"
+
+    schedule: dict[int, float] = {}
+    for idx, year in enumerate(sorted(dict.fromkeys(year_list))):
+        if normalized_mode == "percent":
+            decrement = start_amount * (max(reduction_amount, 0.0) / 100.0) * idx
+        else:
+            decrement = max(reduction_amount, 0.0) * idx
+        value = max(start_amount - decrement, 0.0)
+        schedule[year] = float(value)
+    return schedule
 
 
 def _merge_module_dicts(*sections: Mapping[str, Any] | None) -> dict[str, dict[str, Any]]:
@@ -1350,6 +1454,7 @@ def _render_carbon_policy_section(
     container: Any,
     run_config: dict[str, Any],
     *,
+    years: Iterable[int] | None = None,
     region_options: Iterable[Any] | None = None,
     lock_inputs: bool = False,
 ) -> CarbonModuleSettings:
@@ -1391,6 +1496,69 @@ def _render_carbon_policy_section(
     price_value_raw = price_defaults.get("price_per_ton", price_defaults.get("price", 0.0))
     price_default = _coerce_float(price_value_raw, default=0.0)
     price_schedule_default = _normalize_price_schedule(price_defaults.get("price_schedule"))
+    price_escalator_default = _coerce_float(price_defaults.get("price_escalator_pct", 0.0), 0.0)
+
+    allowance_defaults = modules.get("allowance_market", {}) or {}
+    cap_schedule_default = _normalize_price_schedule(defaults.get("cap_schedule"))
+    if not cap_schedule_default and isinstance(allowance_defaults, Mapping):
+        cap_schedule_default = _normalize_price_schedule(allowance_defaults.get("cap"))
+
+    cap_start_default = _coerce_float(defaults.get("cap_start_value"), 0.0)
+    if cap_start_default <= 0.0 and cap_schedule_default:
+        try:
+            first_year = next(iter(cap_schedule_default))
+        except StopIteration:
+            cap_start_default = 0.0
+        else:
+            cap_start_default = float(cap_schedule_default[first_year])
+    cap_reduction_mode_default = str(defaults.get("cap_reduction_mode", "percent")).strip().lower()
+    if cap_reduction_mode_default not in {"percent", "fixed"}:
+        cap_reduction_mode_default = "percent"
+    cap_reduction_value_default = _coerce_float(defaults.get("cap_reduction_value"), 0.0)
+
+    def _extend_years(source: Iterable[Any] | None) -> None:
+        if isinstance(source, Iterable) and not isinstance(source, (str, bytes, Mapping)):
+            for entry in source:
+                try:
+                    year_candidates.append(int(entry))
+                except (TypeError, ValueError):
+                    continue
+
+    year_candidates: list[int] = []
+    _extend_years(years)
+    if not year_candidates:
+        raw_years = run_config.get("years")
+        _extend_years(raw_years if isinstance(raw_years, Iterable) else None)
+    if not year_candidates:
+        start_raw = run_config.get("start_year")
+        end_raw = run_config.get("end_year")
+        start_val: int | None = None
+        end_val: int | None = None
+        try:
+            start_val = int(start_raw)
+        except (TypeError, ValueError):
+            start_val = None
+        try:
+            end_val = int(end_raw) if end_raw is not None else None
+        except (TypeError, ValueError):
+            end_val = None
+        if start_val is not None:
+            if end_val is None:
+                end_val = start_val
+            step = 1 if end_val >= start_val else -1
+            year_candidates.extend(range(start_val, end_val + step, step))
+        elif end_val is not None:
+            year_candidates.append(end_val)
+
+    active_years = sorted(dict.fromkeys(year_candidates))
+
+    cap_start_default_int = int(round(cap_start_default)) if cap_start_default > 0 else 0
+    cap_percent_default = (
+        float(cap_reduction_value_default) if cap_reduction_mode_default == "percent" else 0.0
+    )
+    cap_fixed_default = (
+        float(cap_reduction_value_default) if cap_reduction_mode_default == "fixed" else 0.0
+    )
 
     locked = bool(lock_inputs)
 
@@ -1455,10 +1623,35 @@ def _render_carbon_policy_section(
         st.session_state["carbon_ccr2_escalator"] = default_ccr2_escalator_value
         st.session_state["carbon_coverage_regions"] = list(coverage_default_display)
         st.session_state["carbon_price_value"] = default_price_value
+        st.session_state["carbon_price_escalator"] = float(price_escalator_default)
+        st.session_state["carbon_cap_start"] = int(cap_start_default_int)
+        st.session_state["carbon_cap_reduction_mode"] = cap_reduction_mode_default
+        st.session_state["carbon_cap_reduction_percent"] = float(cap_percent_default)
+        st.session_state["carbon_cap_reduction_fixed"] = float(cap_fixed_default)
 
     # -------------------------
     # Session defaults and change tracking
     # -------------------------
+    if st is not None:
+        price_escalator_default = float(
+            st.session_state.setdefault("carbon_price_escalator", float(price_escalator_default))
+        )
+        cap_start_default_int = int(
+            st.session_state.setdefault("carbon_cap_start", cap_start_default_int)
+        )
+        cap_reduction_mode_default = str(
+            st.session_state.setdefault("carbon_cap_reduction_mode", cap_reduction_mode_default)
+        ).strip().lower()
+        if cap_reduction_mode_default not in {"percent", "fixed"}:
+            cap_reduction_mode_default = "percent"
+            st.session_state["carbon_cap_reduction_mode"] = cap_reduction_mode_default
+        cap_percent_default = float(
+            st.session_state.setdefault("carbon_cap_reduction_percent", cap_percent_default)
+        )
+        cap_fixed_default = float(
+            st.session_state.setdefault("carbon_cap_reduction_fixed", cap_fixed_default)
+        )
+
     bank_value_default = bank_default
     if st is not None:  # GUI path
         bank_value_default = float(st.session_state.setdefault("carbon_bank0", bank_default))
@@ -1520,6 +1713,15 @@ def _render_carbon_policy_section(
         else:
             enabled = False
 
+    cap_schedule: dict[int, float] = dict(cap_schedule_default)
+    cap_start_value = float(cap_start_default_int)
+    cap_reduction_mode = cap_reduction_mode_default
+    cap_reduction_value = (
+        cap_percent_default if cap_reduction_mode_default == "percent" else cap_fixed_default
+    )
+    price_schedule: dict[int, float] = dict(price_schedule_default)
+    price_escalator_value = float(price_escalator_default)
+
     # -------------------------
     # Carbon Cap Panel
     # -------------------------
@@ -1548,6 +1750,73 @@ def _render_carbon_policy_section(
             key="carbon_ccr2",
             disabled=(not (enabled and enable_ccr)) or locked,
         )
+
+        cap_start_input = cap_panel.number_input(
+            "Starting carbon cap (tons)",
+            min_value=0,
+            value=int(cap_start_default_int),
+            step=1000,
+            format="%d",
+            key="carbon_cap_start",
+            disabled=(not enabled) or locked,
+        )
+        cap_start_value = float(cap_start_input)
+
+        reduction_options = ("percent", "fixed")
+        try:
+            reduction_index = reduction_options.index(cap_reduction_mode_default)
+        except ValueError:
+            reduction_index = 0
+        cap_reduction_mode = cap_panel.radio(
+            "Annual cap adjustment",
+            options=reduction_options,
+            index=reduction_index,
+            format_func=lambda option: (
+                "Decrease by % of starting value" if option == "percent" else "Decrease by fixed amount"
+            ),
+            key="carbon_cap_reduction_mode",
+            disabled=(not enabled) or locked,
+        )
+
+        if cap_reduction_mode == "percent":
+            cap_reduction_percent = float(
+                cap_panel.number_input(
+                    "Annual reduction (% of starting cap)",
+                    min_value=0.0,
+                    value=float(cap_percent_default),
+                    step=0.1,
+                    format="%0.2f",
+                    key="carbon_cap_reduction_percent",
+                    disabled=(not enabled) or locked,
+                )
+            )
+            cap_reduction_value = cap_reduction_percent
+        else:
+            cap_reduction_fixed = float(
+                cap_panel.number_input(
+                    "Annual reduction (tons)",
+                    min_value=0.0,
+                    value=float(cap_fixed_default),
+                    step=1000.0,
+                    format="%0.0f",
+                    key="carbon_cap_reduction_fixed",
+                    disabled=(not enabled) or locked,
+                )
+            )
+            cap_reduction_value = cap_reduction_fixed
+
+        schedule_years = active_years or list(cap_schedule_default.keys())
+        if enabled and schedule_years:
+            cap_schedule = _build_cap_reduction_schedule(
+                cap_start_value,
+                cap_reduction_mode,
+                cap_reduction_value,
+                schedule_years,
+            )
+        elif enabled:
+            cap_schedule = dict(cap_schedule_default)
+        else:
+            cap_schedule = dict(cap_schedule_default)
 
         if enabled and enable_ccr and ccr1_enabled:
             default_price1 = float(ccr1_price_default) if ccr1_price_default is not None else 0.0
@@ -1676,7 +1945,29 @@ def _render_carbon_policy_section(
             key="carbon_price_value",
             disabled=(not price_enabled) or locked,
         )
-        price_schedule = price_schedule_default.copy() if price_enabled else {}
+        price_escalator_value = float(
+            price_panel.number_input(
+                "Carbon price escalator (% per year)",
+                min_value=0.0,
+                value=float(price_escalator_default if price_escalator_default >= 0.0 else 0.0),
+                step=0.1,
+                format="%0.2f",
+                key="carbon_price_escalator",
+                disabled=(not price_enabled) or locked,
+            )
+        )
+
+        schedule_years = active_years or list(price_schedule_default.keys())
+        if price_enabled and schedule_years:
+            price_schedule = _build_price_escalator_schedule(
+                price_per_ton,
+                price_escalator_value,
+                schedule_years,
+            )
+        elif price_enabled:
+            price_schedule = price_schedule_default.copy()
+        else:
+            price_schedule = {}
 
     if locked:
         enabled = bool(enabled_default)
@@ -1697,11 +1988,21 @@ def _render_carbon_policy_section(
             control_period_years = None
         coverage_regions = list(coverage_default)
         price_per_ton = default_price_value
+        price_escalator_value = float(price_escalator_default)
         price_schedule = price_schedule_default.copy() if price_enabled else {}
+        cap_start_value = float(cap_start_default_int)
+        cap_reduction_mode = cap_reduction_mode_default
+        cap_reduction_value = (
+            cap_percent_default if cap_reduction_mode_default == "percent" else cap_fixed_default
+        )
+        cap_schedule = dict(cap_schedule_default)
 
     # -------------------------
     # Errors and Return
     # -------------------------
+    if not enabled:
+        cap_schedule = {}
+
     errors: list[str] = []
     deep_enabled = bool(
         modules.get("electricity_dispatch", {}).get("deep_carbon_pricing", False)
@@ -1733,6 +2034,9 @@ def _render_carbon_policy_section(
             "ccr2_enabled": bool(enabled and enable_ccr and ccr2_enabled),
             "allowance_banking_enabled": bool(enabled and banking_enabled),
             "coverage_regions": list(coverage_regions),
+            "cap_start_value": float(cap_start_value),
+            "cap_reduction_mode": str(cap_reduction_mode),
+            "cap_reduction_value": float(cap_reduction_value),
         }
     )
 
@@ -1746,20 +2050,35 @@ def _render_carbon_policy_section(
     else:
         carbon_module["bank0"] = 0.0
 
+    if enabled and cap_schedule:
+        carbon_module["cap_schedule"] = dict(cap_schedule)
+    else:
+        carbon_module.pop("cap_schedule", None)
+
     if cap_region_values:
         carbon_module["regions"] = list(cap_region_values)
     else:
         carbon_module.pop("regions", None)
 
+    allowance_market_module = modules.setdefault("allowance_market", {})
+    if enabled and cap_schedule:
+        allowance_market_module["cap"] = {
+            int(year): float(value) for year, value in cap_schedule.items()
+        }
+    elif not enabled:
+        allowance_market_module.pop("cap", None)
+
     price_module = modules.setdefault("carbon_price", {})
     price_module["enabled"] = bool(price_enabled)
     if price_enabled:
         price_module["price_per_ton"] = float(price_per_ton)
+        price_module["price_escalator_pct"] = float(price_escalator_value)
         if price_schedule:
             price_module["price_schedule"] = dict(price_schedule)
         else:
             price_module.pop("price_schedule", None)
     else:
+        price_module["price_escalator_pct"] = float(price_escalator_value)
         price_module.pop("price_schedule", None)
         price_module.pop("price", None)
         if "price_per_ton" in price_module:
@@ -1780,8 +2099,13 @@ def _render_carbon_policy_section(
         coverage_regions=coverage_regions,
         control_period_years=control_period_years,
         price_per_ton=float(price_per_ton),
+        price_escalator_pct=float(price_escalator_value),
         initial_bank=initial_bank,
         cap_regions=cap_region_values,
+        cap_start_value=float(cap_start_value),
+        cap_reduction_mode=str(cap_reduction_mode),
+        cap_reduction_value=float(cap_reduction_value),
+        cap_schedule=cap_schedule,
         price_schedule=price_schedule,
         errors=errors,
     )
@@ -3737,6 +4061,11 @@ def run_policy_simulation(
     carbon_price_enabled: bool | None = None,
     carbon_price_value: float | None = None,
     carbon_price_schedule: Mapping[int, float] | Mapping[str, Any] | None = None,
+    carbon_price_escalator_pct: float | None = None,
+    carbon_cap_start_value: float | None = None,
+    carbon_cap_reduction_mode: str | None = None,
+    carbon_cap_reduction_value: float | None = None,
+    carbon_cap_schedule: Mapping[int, float] | Mapping[str, Any] | None = None,
     dispatch_use_network: bool = False,
     dispatch_capacity_expansion: bool | None = None,
     deep_carbon_pricing: bool = False,
@@ -3791,6 +4120,7 @@ def run_policy_simulation(
         value=carbon_price_value,
         schedule=carbon_price_schedule,
         years=years,
+        escalator_pct=carbon_price_escalator_pct,
     )
 
     if price_cfg.active:
@@ -3818,6 +4148,42 @@ def run_policy_simulation(
     carbon_record = merged_modules.setdefault("carbon_policy", {})
     initial_bank_value = float(initial_bank) if banking_flag else 0.0
 
+    cap_start_value_norm: float | None
+    if carbon_cap_start_value is not None:
+        try:
+            cap_start_value_norm = float(carbon_cap_start_value)
+        except (TypeError, ValueError):
+            cap_start_value_norm = None
+    else:
+        existing_cap_start = carbon_record.get("cap_start_value")
+        try:
+            cap_start_value_norm = (
+                float(existing_cap_start) if existing_cap_start is not None else None
+            )
+        except (TypeError, ValueError):
+            cap_start_value_norm = None
+
+    raw_mode = (
+        carbon_cap_reduction_mode
+        if carbon_cap_reduction_mode is not None
+        else carbon_record.get("cap_reduction_mode")
+    )
+    cap_reduction_mode_norm = str(raw_mode or "percent").strip().lower()
+    if cap_reduction_mode_norm not in {"percent", "fixed"}:
+        cap_reduction_mode_norm = "percent"
+
+    if carbon_cap_reduction_value is not None:
+        try:
+            cap_reduction_value_norm = float(carbon_cap_reduction_value)
+        except (TypeError, ValueError):
+            cap_reduction_value_norm = 0.0
+    else:
+        existing_reduction = carbon_record.get("cap_reduction_value", 0.0)
+        try:
+            cap_reduction_value_norm = float(existing_reduction)
+        except (TypeError, ValueError):
+            cap_reduction_value_norm = 0.0
+
     carbon_record.update(
         {
             "enabled": policy_enabled,
@@ -3831,6 +4197,9 @@ def run_policy_simulation(
                 carbon_policy_cfg.control_period_years if policy_enabled else None
             ),
             "bank0": initial_bank_value,
+            "cap_start_value": cap_start_value_norm,
+            "cap_reduction_mode": cap_reduction_mode_norm,
+            "cap_reduction_value": float(cap_reduction_value_norm),
         }
     )
 
@@ -3839,6 +4208,31 @@ def run_policy_simulation(
         int(year): float(value) for year, value in price_cfg.schedule.items()
     }
     price_active = bool(price_cfg.active and price_schedule_map)
+
+    cap_schedule_map: dict[int, float] = {}
+    if isinstance(carbon_cap_schedule, Mapping):
+        for year_key, value in carbon_cap_schedule.items():
+            try:
+                year_int = int(year_key)
+                cap_schedule_map[year_int] = float(value)
+            except (TypeError, ValueError):
+                continue
+    if policy_enabled and not cap_schedule_map and cap_start_value_norm is not None:
+        cap_schedule_map = _build_cap_reduction_schedule(
+            cap_start_value_norm,
+            cap_reduction_mode_norm,
+            cap_reduction_value_norm,
+            years,
+        )
+    if cap_schedule_map:
+        carbon_record["cap_schedule"] = dict(sorted(cap_schedule_map.items()))
+    else:
+        carbon_record.pop("cap_schedule", None)
+    allowance_market_record = merged_modules.setdefault("allowance_market", {})
+    if policy_enabled and cap_schedule_map:
+        allowance_market_record["cap"] = dict(sorted(cap_schedule_map.items()))
+    elif not policy_enabled:
+        allowance_market_record.pop("cap", None)
     normalized_regions: list[Any] = []
     if cap_regions is not None:
         seen_labels: set[str] = set()
@@ -4753,9 +5147,14 @@ def main() -> None:
         banking_enabled=False,
         coverage_regions=["All"],
         control_period_years=None,
+        price_per_ton=0.0,
+        price_escalator_pct=0.0,
         initial_bank=0.0,
         cap_regions=[],
-        price_per_ton=0.0,
+        cap_start_value=None,
+        cap_reduction_mode="percent",
+        cap_reduction_value=0.0,
+        cap_schedule={},
         price_schedule={},
         errors=[],
     )
@@ -4986,9 +5385,18 @@ def main() -> None:
         "carbon_price_value": float(carbon_settings.price_per_ton)
         if carbon_settings.price_enabled
         else 0.0,
+        "carbon_price_escalator_pct": float(carbon_settings.price_escalator_pct),
         "carbon_price_schedule": (
             dict(carbon_settings.price_schedule) if carbon_settings.price_enabled else {}
         ),
+        "carbon_cap_start_value": (
+            float(carbon_settings.cap_start_value)
+            if carbon_settings.cap_start_value is not None
+            else None
+        ),
+        "carbon_cap_reduction_mode": str(carbon_settings.cap_reduction_mode),
+        "carbon_cap_reduction_value": float(carbon_settings.cap_reduction_value),
+        "carbon_cap_schedule": dict(carbon_settings.cap_schedule),
         "dispatch_use_network": dispatch_use_network,
         "dispatch_capacity_expansion": bool(
             getattr(dispatch_settings, "capacity_expansion", False)
