@@ -237,6 +237,60 @@ def test_surplus_branch_logs_bypass_warning(caplog):
     assert "solver bypassed; check configuration." in caplog.messages
 
 
+def test_allowance_solver_emits_debug_summary(caplog):
+    policy = policy_three_year()
+    supply = AllowanceSupply(
+        cap=float(policy.cap.loc[2025]),
+        floor=float(policy.floor.loc[2025]),
+        ccr1_trigger=float(policy.ccr1_trigger.loc[2025]),
+        ccr1_qty=float(policy.ccr1_qty.loc[2025]),
+        ccr2_trigger=float(policy.ccr2_trigger.loc[2025]),
+        ccr2_qty=float(policy.ccr2_qty.loc[2025]),
+        enabled=bool(policy.enabled),
+        enable_floor=True,
+        enable_ccr=True,
+    )
+
+    def dispatch_stub(
+        _year: int, _price: float, carbon_price: float = 0.0
+    ) -> dict[str, float]:
+        assert carbon_price >= 0.0
+        return {"emissions_tons": 120.0}
+
+    with caplog.at_level(logging.DEBUG, logger="engine.run_loop"):
+        _solve_allowance_market_year(
+            dispatch_stub,
+            2025,
+            supply,
+            bank_prev=float(policy.bank0),
+            outstanding_prev=0.0,
+            policy_enabled=bool(policy.enabled),
+            high_price=_PRICE_SOLVER_HIGH,
+            tol=_PRICE_SOLVER_TOL,
+            max_iter=_PRICE_SOLVER_MAX_ITER,
+            annual_surrender_frac=float(policy.annual_surrender_frac),
+            carry_pct=float(policy.carry_pct),
+            banking_enabled=bool(policy.banking_enabled),
+        )
+
+    debug_messages = [record.message for record in caplog.records if record.levelno == logging.DEBUG]
+    assert debug_messages, "expected debug log entry"
+    payload = debug_messages[-1]
+    for field in [
+        "price_estimate",
+        "reserve_budget",
+        "reserve_withheld",
+        "reserve_released",
+        "ecr_active",
+        "ccr_active",
+        "bank_prev",
+        "bank_new",
+        "emissions",
+        "shortage",
+    ]:
+        assert field in payload
+
+
 def test_true_up_full_compliance_year():
     policy = policy_three_year()
     state = allowance_initial_state()

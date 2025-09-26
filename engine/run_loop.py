@@ -1,9 +1,9 @@
 """Annual fixed-point integration between dispatch and allowance market."""
 from __future__ import annotations
 
+import json
 import logging
 from collections import defaultdict
-import logging
 from typing import Any, Callable, Iterable, Mapping, Sequence, cast
 
 try:  # pragma: no cover - optional dependency guard
@@ -405,6 +405,62 @@ def _solve_allowance_market_year(
         adjusted['finalize'] = finalize_section
         return adjusted
 
+    def _log_year_summary(summary: Mapping[str, object]) -> None:
+        if not LOGGER.isEnabledFor(logging.DEBUG):
+            return
+
+        def _as_float(value: object, default: float = 0.0) -> float:
+            try:
+                return float(value) if value is not None else float(default)
+            except (TypeError, ValueError):
+                return float(default)
+
+        def _as_int(value: object, default: int) -> int:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return int(default)
+
+        year_value = _as_int(summary.get('year'), year)
+        price_estimate = _as_float(summary.get('p_co2'))
+        reserve_budget = _as_float(getattr(supply, 'cap', 0.0) if supply.enabled else 0.0)
+        reserve_available = _as_float(summary.get('available_allowances'), reserve_budget)
+        reserve_withheld = max(0.0, reserve_budget - reserve_available)
+        reserve_released = max(0.0, reserve_available - reserve_budget)
+        ccr1_issued = _as_float(summary.get('ccr1_issued'))
+        ccr2_issued = _as_float(summary.get('ccr2_issued'))
+        ccr_active = (ccr1_issued > 0.0) or (ccr2_issued > 0.0)
+        ecr_active = reserve_withheld > 0.0
+        bank_prev_value = _as_float(summary.get('bank_prev'))
+        bank_unadjusted = _as_float(summary.get('bank_unadjusted'))
+        bank_new_value = _as_float(summary.get('bank_new'))
+        surrendered_value = _as_float(summary.get('surrendered'))
+        obligation_value = _as_float(summary.get('obligation_new'))
+        emissions_value = _as_float(summary.get('emissions'))
+        shortage_flag = bool(summary.get('shortage_flag', False))
+
+        payload = {
+            'year': year_value,
+            'price_estimate': price_estimate,
+            'reserve_budget': reserve_budget,
+            'reserve_available': reserve_available,
+            'reserve_withheld': reserve_withheld,
+            'reserve_released': reserve_released,
+            'ecr_active': ecr_active,
+            'ccr_active': ccr_active,
+            'ccr1_issued': ccr1_issued,
+            'ccr2_issued': ccr2_issued,
+            'bank_prev': bank_prev_value,
+            'bank_unadjusted': bank_unadjusted,
+            'bank_new': bank_new_value,
+            'surrendered': surrendered_value,
+            'obligation': obligation_value,
+            'emissions': emissions_value,
+            'shortage': shortage_flag,
+        }
+
+        LOGGER.debug('allowance_market_year %s', json.dumps(payload, sort_keys=True))
+
     if not policy_enabled or not supply.enabled:
         clearing_price = 0.0
         dispatch_result = dispatch_solver(
@@ -422,7 +478,7 @@ def _solve_allowance_market_year(
             status="policy-disabled",
             shortage=False,
         )
-        return {
+        summary = {
             'year': year,
             'p_co2': float(clearing_price),
             'available_allowances': minted_allowances,
@@ -445,6 +501,8 @@ def _solve_allowance_market_year(
             },
             '_dispatch_result': dispatch_result,
         }
+        _log_year_summary(summary)
+        return summary
 
     min_price = supply.floor if supply.enable_floor and supply.enabled else 0.0
     low = max(0.0, float(min_price))
@@ -499,9 +557,11 @@ def _solve_allowance_market_year(
             },
             '_dispatch_result': dispatch_low,
         }
+        finalized = _finalize(result)
         if policy_enabled and supply.enabled and int(result.get('iterations', 0)) == 0:
             LOGGER.warning("solver bypassed; check configuration.")
-        return _finalize(result)
+        _log_year_summary(finalized)
+        return finalized
 
     dispatch_high = dispatch_solver(year, high, carbon_price=carbon_price)
     emissions_high = _extract_emissions(dispatch_high)
@@ -551,7 +611,9 @@ def _solve_allowance_market_year(
             },
             '_dispatch_result': dispatch_high,
         }
-        return _finalize(result)
+        finalized = _finalize(result)
+        _log_year_summary(finalized)
+        return finalized
 
     best_price = high
     best_allowances = allowances_high
@@ -637,7 +699,9 @@ def _solve_allowance_market_year(
         },
         '_dispatch_result': best_dispatch,
     }
-    return _finalize(result)
+    finalized = _finalize(result)
+    _log_year_summary(finalized)
+    return finalized
 
 
 def run_annual_fixed_point(
