@@ -1671,13 +1671,13 @@ def _render_carbon_policy_section(
     session_price_default = price_enabled_default
     last_changed = None
     if st is not None:
-        last_changed = st.session_state.get("carbon_module_last_changed")
         session_enabled_default = bool(
-            st.session_state.get("carbon_enable", enabled_default)
+            st.session_state.setdefault("carbon_enable", enabled_default)
         )
         session_price_default = bool(
-            st.session_state.get("carbon_price_enable", price_enabled_default)
+            st.session_state.setdefault("carbon_price_enable", price_enabled_default)
         )
+        last_changed = st.session_state.get("carbon_module_last_changed")
         if session_enabled_default and session_price_default:
             if last_changed == "cap":
                 session_price_default = False
@@ -1685,6 +1685,7 @@ def _render_carbon_policy_section(
                 session_enabled_default = False
             st.session_state["carbon_enable"] = session_enabled_default
             st.session_state["carbon_price_enable"] = session_price_default
+
 
     # -------------------------
     # Cap vs Price toggles (mutually exclusive)
