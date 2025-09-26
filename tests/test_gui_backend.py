@@ -564,6 +564,7 @@ def test_backend_deep_carbon_combines_prices(monkeypatch):
 
     _cleanup_temp_dir(result)
 
+
 def test_backend_reports_missing_deep_support(monkeypatch):
     def legacy_runner(
         frames,
@@ -581,6 +582,7 @@ def test_backend_reports_missing_deep_support(monkeypatch):
         progress_cb=None,
     ):
         raise AssertionError("legacy runner should not be invoked when unsupported")
+
 
     monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: legacy_runner)
 
@@ -632,6 +634,7 @@ def test_backend_carbon_price_disables_cap(monkeypatch):
         carbon_price_value=37.0,
         module_config=module_config,
     )
+
 
     assert "error" not in result
     assert captured.get("carbon_enabled") is False
