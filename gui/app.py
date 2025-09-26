@@ -4079,6 +4079,7 @@ def run_policy_simulation(
 
     runner = _ensure_engine_runner()
     supports_deep = True
+    legacy_signature = False
     try:
         signature = inspect.signature(runner)
     except (TypeError, ValueError):  # pragma: no cover - builtin or C-accelerated callables
@@ -4095,16 +4096,25 @@ def run_policy_simulation(
             if has_var_kwargs:
                 supports_deep = True
             else:
+                supports_deep = False
                 modern_keywords = {"tol", "max_iter", "relaxation", "price_cap"}
-                supports_deep = not modern_keywords.issubset(params.keys())
+                legacy_signature = modern_keywords.issubset(params.keys())
+
+    if legacy_signature and deep_carbon_pricing:
+        if not _runner_supports_keyword(runner, "deep_carbon_pricing"):
+            return {
+                "error": (
+                    "Deep carbon pricing requires an updated engine. "
+                    "Please upgrade engine.run_loop.run_end_to_end_from_frames."
+                )
+            }
+        supports_deep = True
+
+    if not supports_deep:
+        supports_deep = _runner_supports_keyword(runner, "deep_carbon_pricing")
 
     if not supports_deep and deep_carbon_pricing:
-        return {
-            "error": (
-                "Deep carbon pricing requires an updated engine. "
-                "Please upgrade engine.run_loop.run_end_to_end_from_frames."
-            )
-        }
+        return {"error": DEEP_CARBON_UNSUPPORTED_MESSAGE}
 
     enable_floor_flag = bool(policy_enabled and carbon_policy_cfg.enable_floor)
     enable_ccr_flag = bool(
