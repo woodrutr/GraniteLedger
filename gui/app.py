@@ -1678,7 +1678,7 @@ def _render_carbon_policy_section(
         session_price_default = bool(
             st.session_state.get("carbon_price_enable", price_enabled_default)
         )
-        if session_enabled_default and session_price_default and not deep_pricing_allowed:
+        if session_enabled_default and session_price_default:
             if last_changed == "cap":
                 session_price_default = False
             else:
@@ -1689,29 +1689,43 @@ def _render_carbon_policy_section(
     # -------------------------
     # Cap vs Price toggles (mutually exclusive)
     # -------------------------
+    cap_toggle_disabled = locked or session_price_default
     enabled = container.toggle(
         "Enable carbon cap",
         value=session_enabled_default,
         key="carbon_enable",
         on_change=lambda: _mark_last_changed("cap"),
-        disabled=locked,
+        disabled=cap_toggle_disabled,
     )
+    price_toggle_disabled = locked or bool(enabled)
     price_enabled = container.toggle(
         "Enable carbon price",
         value=session_price_default,
         key="carbon_price_enable",
         on_change=lambda: _mark_last_changed("price"),
-        disabled=locked,
+        disabled=price_toggle_disabled,
     )
 
-    if locked:
-        enabled = bool(enabled_default)
-        price_enabled = bool(price_enabled_default)
-    elif enabled and price_enabled:
-        if last_changed == "cap":
-            price_enabled = False
-        else:
+    if price_enabled:
+        if enabled:
             enabled = False
+            if st is not None:
+                st.session_state["carbon_enable"] = False
+        if st is not None:
+            st.session_state["carbon_price_enable"] = True
+    elif enabled:
+        price_enabled = False
+        if st is not None:
+            st.session_state["carbon_price_enable"] = False
+            st.session_state["carbon_enable"] = True
+
+    if locked:
+        price_enabled = bool(price_enabled_default)
+        enabled = bool(enabled_default and not price_enabled)
+        if price_enabled and st is not None:
+            st.session_state["carbon_enable"] = False
+        elif enabled and st is not None:
+            st.session_state["carbon_price_enable"] = False
 
     cap_schedule: dict[int, float] = dict(cap_schedule_default)
     cap_start_value = float(cap_start_default_int)
@@ -4071,6 +4085,14 @@ def run_policy_simulation(
 
 
 
+    policy_override = bool(carbon_policy_enabled)
+    if carbon_price_enabled is None:
+        price_override: bool | None = None
+    else:
+        price_override = bool(carbon_price_enabled)
+        if price_override:
+            policy_override = False
+
     try:
         config = _load_config_data(config_source)
     except Exception as exc:  # pragma: no cover
@@ -4094,7 +4116,7 @@ def run_policy_simulation(
 
     carbon_policy_cfg = CarbonPolicyConfig.from_mapping(
         merged_modules.get("carbon_policy"),
-        enabled=carbon_policy_enabled,
+        enabled=policy_override,
         enable_floor=enable_floor,
         enable_ccr=enable_ccr,
         ccr1_enabled=ccr1_enabled,
@@ -4109,7 +4131,7 @@ def run_policy_simulation(
 
     price_cfg = CarbonPriceConfig.from_mapping(
         merged_modules.get("carbon_price"),
-        enabled=carbon_price_enabled,
+        enabled=price_override,
         value=carbon_price_value,
         schedule=carbon_price_schedule,
         years=years,
@@ -4308,7 +4330,7 @@ def run_policy_simulation(
     if frames is None:
         frames_obj = _build_default_frames(
             years,
-            carbon_policy_enabled=bool(carbon_policy_enabled),
+            carbon_policy_enabled=bool(policy_enabled),
             banking_enabled=bool(allowance_banking_enabled),
             carbon_price_schedule=carbon_price_for_frames,
         )
@@ -4316,7 +4338,7 @@ def run_policy_simulation(
     else:
         frames_obj = Frames.coerce(
             frames,
-            carbon_policy_enabled=bool(carbon_policy_enabled),
+            carbon_policy_enabled=bool(policy_enabled),
             banking_enabled=bool(allowance_banking_enabled),
             carbon_price_schedule=carbon_price_for_frames,
         )
@@ -4480,7 +4502,7 @@ def run_policy_simulation(
     policy_frame = _build_policy_frame(
         config,
         years,
-        bool(carbon_policy_enabled),
+        bool(policy_enabled),
         ccr1_enabled=bool(ccr1_enabled),
         ccr2_enabled=bool(ccr2_enabled),
         control_period_years=control_period_years,
@@ -5221,7 +5243,9 @@ def main() -> None:
             try:
                 frames_for_run = _build_default_frames(
                     selected_years or [start_year_val],
-                    carbon_policy_enabled=bool(carbon_settings.enabled),
+                    carbon_policy_enabled=bool(
+                        carbon_settings.enabled and not carbon_settings.price_enabled
+                    ),
                     banking_enabled=bool(carbon_settings.banking_enabled),
                     carbon_price_schedule=(
                         carbon_settings.price_schedule if carbon_settings.price_enabled else None
@@ -5315,7 +5339,9 @@ def main() -> None:
         try:
             frames_for_run = _build_default_frames(
                 selected_years or [start_year_val],
-                carbon_policy_enabled=bool(carbon_settings.enabled),
+                carbon_policy_enabled=bool(
+                    carbon_settings.enabled and not carbon_settings.price_enabled
+                ),
                 banking_enabled=bool(carbon_settings.banking_enabled),
                 carbon_price_schedule=(
                     carbon_settings.price_schedule if carbon_settings.price_enabled else None
