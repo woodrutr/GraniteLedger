@@ -5541,6 +5541,21 @@ def run_policy_simulation(
         if isinstance(frame, pd.DataFrame):
             result[key] = frame
 
+    processed_emissions = load_emissions_data(result)
+    if isinstance(processed_emissions, pd.DataFrame) and not processed_emissions.empty:
+        result['emissions_by_region'] = processed_emissions
+        csv_files = result.get('csv_files')
+        if isinstance(csv_files, Mapping):
+            try:
+                updated_csv = dict(csv_files)
+                updated_csv['emissions_by_region.csv'] = processed_emissions.to_csv(
+                    index=False
+                ).encode('utf-8')
+            except Exception:  # pragma: no cover - defensive guard
+                pass
+            else:
+                result['csv_files'] = updated_csv
+
     return result
 
     # Carbon price config
