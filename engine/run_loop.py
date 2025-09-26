@@ -217,6 +217,31 @@ def _modeled_years(policy: Any, periods: Iterable[Any]) -> list[int]:
     return sorted(years)
 
 
+def _normalize_run_years(years: Iterable[int] | None) -> list[int]:
+    """Return an inclusive range spanning the requested simulation years."""
+
+    if years is None:
+        return []
+
+    normalized: list[int] = []
+    for entry in years:
+        try:
+            normalized.append(int(entry))
+        except (TypeError, ValueError):
+            continue
+
+    if not normalized:
+        return []
+
+    normalized.sort()
+    start = normalized[0]
+    end = normalized[-1]
+    if end < start:
+        start, end = end, start
+
+    return list(range(int(start), int(end) + 1))
+
+
 def _initial_price_for_year(price_initial: float | Mapping[int, float], year: int, fallback: float) -> float:
     if isinstance(price_initial, Mapping):
         if year in price_initial:
@@ -1084,6 +1109,8 @@ def _build_engine_outputs(
     raw_results: Mapping[Any, Mapping[str, object]],
     dispatch_solver: Callable[..., object],
     policy: RGGIPolicyAnnual,
+    *,
+    limiting_factors: Sequence[str] | None = None,
 ) -> EngineOutputs:
     """Convert fixed-point results into structured engine outputs."""
 
@@ -1297,6 +1324,7 @@ def _build_engine_outputs(
         emissions_by_region=emissions_df,
         price_by_region=price_df,
         flows=flows_df,
+        limiting_factors=list(limiting_factors or []),
     )
 
 
@@ -1440,26 +1468,94 @@ def run_end_to_end_from_frames(
         carbon_price_value,
     )
 
+    run_years = _normalize_run_years(years)
+    price_schedule_defined_years = sorted(
+        int(key)
+        for key in schedule_lookup_source
+        if key is not None
+    )
+
     frames_obj = Frames.coerce(frames, carbon_price_schedule=schedule_lookup_source)
     policy_spec = frames_obj.policy()
     policy = policy_spec.to_policy()
-    years_sequence = _coerce_years(policy, years)
+
+    period_candidates: Iterable[int] | None = run_years if run_years else years
+    years_sequence = _coerce_years(policy, period_candidates)
     modeled_years = _modeled_years(policy, years_sequence)
-    if not modeled_years:
+
+    if run_years and modeled_years:
+        # use requested range directly when both are available
+        years_sequence = list(run_years)
+    elif run_years and not modeled_years:
+        years_sequence = list(run_years)
+        modeled_years = list(run_years)
+    elif not run_years and modeled_years:
+        start_modeled = modeled_years[0]
+        end_modeled = modeled_years[-1]
+        run_years = list(range(start_modeled, end_modeled + 1))
+        years_sequence = list(run_years)
+    else:
         fallback_years: list[int] = []
-        for year in schedule_lookup_source:
-            if year is None:
-                continue
-            try:
-                fallback_years.append(int(year))
-            except (TypeError, ValueError):
-                continue
-        modeled_years = sorted(dict.fromkeys(fallback_years))
+        for year in price_schedule_defined_years:
+            fallback_years.append(int(year))
+        if fallback_years:
+            start = fallback_years[0]
+            end = fallback_years[-1]
+            run_years = list(range(start, end + 1))
+            years_sequence = list(run_years)
+            modeled_years = list(run_years)
+        else:
+            years_sequence = list(years_sequence)
+
+    if not modeled_years:
+        modeled_years = list(run_years)
+
+    if not run_years and years_sequence:
+        try:
+            run_years = [int(year) for year in years_sequence]
+        except (TypeError, ValueError):
+            run_years = []
+
     period_weights = _compute_period_weights(policy, years_sequence)
     default_carbon_price = float(schedule_lookup_source.get(None, 0.0))
-    expanded_schedule = _expand_price_schedule(schedule_lookup_source, modeled_years)
+    expanded_schedule = _expand_price_schedule(
+        schedule_lookup_source,
+        run_years if run_years else modeled_years,
+    )
     schedule_lookup_source = expanded_schedule
     frames_obj = Frames.coerce(frames_obj, carbon_price_schedule=schedule_lookup_source)
+
+    limiting_factors: list[str] = []
+
+    if run_years and price_schedule_defined_years:
+        max_defined_year = max(price_schedule_defined_years)
+        if max_defined_year < run_years[-1]:
+            limiting_factors.append(f"Carbon price schedule truncated at {max_defined_year}")
+
+    if enable_floor and run_years:
+        floor_series = getattr(policy, 'floor', None)
+        floor_active = False
+        if floor_series is not None:
+            for year in run_years[1:]:
+                if _policy_value(floor_series, year, 0.0) > 0.0:
+                    floor_active = True
+                    break
+        if not floor_active:
+            limiting_factors.append("Floor schedule inactive")
+
+    if enable_ccr and run_years:
+        last_ccr_year: int | None = None
+        for year in run_years:
+            qty1 = _policy_value(getattr(policy, 'ccr1_qty', None), year, 0.0)
+            qty2 = _policy_value(getattr(policy, 'ccr2_qty', None), year, 0.0)
+            if qty1 > 0.0 or qty2 > 0.0:
+                last_ccr_year = year
+        if last_ccr_year is None:
+            limiting_factors.append(
+                f"CCR not triggered beyond {run_years[0] - 1 if run_years else 0}"
+            )
+        elif last_ccr_year < run_years[-1]:
+            limiting_factors.append(f"CCR not triggered beyond {last_ccr_year}")
     dispatch_kwargs = dict(
         use_network=use_network,
         period_weights=period_weights,
@@ -1490,6 +1586,7 @@ def run_end_to_end_from_frames(
     cp_track: dict[str, dict[str, float | list[int] | None]] = {}
 
     price_schedule = dict(schedule_lookup_source)
+    bank_exhausted_year: int | None = None
 
     def _price_for_year(period: Any) -> float:
         try:
@@ -1647,6 +1744,18 @@ def run_end_to_end_from_frames(
             carry_pct = 0.0
 
         bank_prev_effective = bank_prev if (banking_enabled_year and policy_enabled_year) else 0.0
+
+        if (
+            banking_enabled_global
+            and policy_enabled_year
+            and bank_exhausted_year is None
+            and idx < len(years_sequence) - 1
+            and bank_prev_effective <= 1e-9
+        ):
+            try:
+                bank_exhausted_year = int(year)
+            except (TypeError, ValueError):
+                bank_exhausted_year = None
 
         state: dict[str, float | list[int] | None] | None = None
         outstanding_prev = 0.0
@@ -1841,7 +1950,18 @@ def run_end_to_end_from_frames(
                 payload['iterations'] = 0
             progress_cb('year_complete', payload)
 
+    if bank_exhausted_year is not None:
+        limiting_factors.append(
+            f"Bank exhausted in {bank_exhausted_year}, no further carryforward"
+        )
+
     ordered_years = list(years_sequence)
     for period in ordered_years:
         results.setdefault(period, {})
-    return _build_engine_outputs(ordered_years, results, dispatch_solver, policy)
+    return _build_engine_outputs(
+        ordered_years,
+        results,
+        dispatch_solver,
+        policy,
+        limiting_factors=limiting_factors,
+    )

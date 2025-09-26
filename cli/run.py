@@ -110,12 +110,38 @@ def _extract_policy_flags(config: Mapping[str, Any]) -> dict[str, Any]:
         if control_period is not None and control_period <= 0:
             control_period = None
 
+    floor_mode = str(market_cfg.get('floor_escalator_mode', 'fixed')).strip().lower()
+    if floor_mode not in {'percent', 'fixed'}:
+        floor_mode = 'fixed'
+
+    floor_value = market_cfg.get('floor_escalator_value')
+    try:
+        floor_growth = float(floor_value)
+    except (TypeError, ValueError):
+        floor_growth = 0.0
+
+    ccr1_growth = market_cfg.get('ccr1_escalator_pct', 0.0)
+    try:
+        ccr1_growth = float(ccr1_growth)
+    except (TypeError, ValueError):
+        ccr1_growth = 0.0
+
+    ccr2_growth = market_cfg.get('ccr2_escalator_pct', 0.0)
+    try:
+        ccr2_growth = float(ccr2_growth)
+    except (TypeError, ValueError):
+        ccr2_growth = 0.0
+
     return {
         'carbon_policy_enabled': carbon_enabled,
         'ccr1_enabled': ccr1_enabled,
         'ccr2_enabled': ccr2_enabled,
         'banking_enabled': banking_enabled,
         'control_period_years': control_period,
+        'floor_escalator_mode': floor_mode,
+        'floor_escalator_value': floor_growth,
+        'ccr1_escalator_pct': ccr1_growth,
+        'ccr2_escalator_pct': ccr2_growth,
     }
 
 
@@ -148,6 +174,10 @@ def _run_engine(
         ccr2_enabled=ccr2_enabled,
         control_period_years=control_period,
         banking_enabled=banking_enabled,
+        floor_escalator_mode=flags.get('floor_escalator_mode'),
+        floor_escalator_value=flags.get('floor_escalator_value'),
+        ccr1_escalator_pct=flags.get('ccr1_escalator_pct'),
+        ccr2_escalator_pct=flags.get('ccr2_escalator_pct'),
     )
     frames = frames.with_frame('policy', policy_frame)
 
