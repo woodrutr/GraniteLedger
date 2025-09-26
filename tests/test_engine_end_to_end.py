@@ -8,9 +8,9 @@ import pytest
 
 pd = pytest.importorskip("pandas")
 
-run_end_to_end_from_frames = importlib.import_module(
-    "engine.run_loop"
-).run_end_to_end_from_frames
+engine_run_loop = importlib.import_module("engine.run_loop")
+run_end_to_end_from_frames = engine_run_loop.run_end_to_end_from_frames
+ANNUAL_OUTPUT_COLUMNS = engine_run_loop.ANNUAL_OUTPUT_COLUMNS
 baseline_frames = importlib.import_module(
     "tests.fixtures.dispatch_single_minimal"
 ).baseline_frames
@@ -201,8 +201,8 @@ def test_disabled_policy_produces_zero_price():
         relaxation=0.8,
     )
 
-    assert outputs.annual["p_co2"].eq(0.0).all()
-    assert outputs.annual["surrendered"].eq(0.0).all()
+    assert outputs.annual["allowance_price"].eq(0.0).all()
+    assert outputs.annual["allowances_surrendered"].eq(0.0).all()
     assert outputs.annual["bank"].eq(0.0).all()
 
 
@@ -273,11 +273,11 @@ def test_ccr_trigger_increases_allowances():
     first_year = YEARS[0]
     cap = float(policy.cap.loc[first_year])
     bank0 = float(policy.bank0)
-    available = float(annual.loc[first_year, "available_allowances"])
+    available = float(annual.loc[first_year, "allowances_minted"])
     allowances_issued = available - bank0
 
     assert allowances_issued > cap
-    assert annual.loc[first_year, "p_co2"] == pytest.approx(
+    assert annual.loc[first_year, "allowance_price"] == pytest.approx(
         policy.ccr1_trigger.loc[first_year], rel=1e-4
     )
 
@@ -299,7 +299,7 @@ def test_compliance_true_up_reconciles_obligations():
     final_year = YEARS[-1]
     final_obligation = float(annual.loc[final_year, "obligation"])
     assert final_obligation <= 1e-6
-    surrendered_final = float(annual.loc[final_year, "surrendered"])
+    surrendered_final = float(annual.loc[final_year, "allowances_surrendered"])
     required_fraction = 0.5 * float(annual.loc[final_year, "emissions_tons"])
     assert surrendered_final > required_fraction
 
@@ -324,8 +324,8 @@ def test_control_period_mass_balance():
             bank_prev.append(float(annual.iloc[idx - 1]["bank"]))
 
     bank_prev_series = pd.Series(bank_prev, index=YEARS)
-    allowances_minted = annual["available_allowances"]
-    allowances_total = annual["allowances_total"]
+    allowances_minted = annual["allowances_minted"]
+    allowances_total = annual["allowances_available"]
     pd.testing.assert_series_equal(
         allowances_total,
         bank_prev_series + allowances_minted,
@@ -335,11 +335,24 @@ def test_control_period_mass_balance():
     )
 
     total_supply = float(policy.bank0) + allowances_minted.sum()
-    total_surrendered = annual["surrendered"].sum()
+    total_surrendered = annual["allowances_surrendered"].sum()
     ending_bank = float(annual.iloc[-1]["bank"])
     remaining = float(annual.iloc[-1]["obligation"])
 
     assert total_supply == pytest.approx(total_surrendered + ending_bank + remaining)
+
+
+def test_annual_output_schema_matches_spec():
+    frames = _three_year_frames()
+    outputs = run_end_to_end_from_frames(
+        frames,
+        years=YEARS,
+        price_initial=0.0,
+        tol=1e-4,
+        relaxation=0.8,
+    )
+
+    assert list(outputs.annual.columns) == ANNUAL_OUTPUT_COLUMNS
 
 
 def test_daily_resolution_matches_annual_totals():
@@ -490,4 +503,4 @@ def test_zero_cap_policy_still_enforced():
 
     annual = outputs.annual.set_index("year")
     assert (annual["obligation"] > 0.0).any()
-    assert annual["p_co2"].gt(0.0).any()
+    assert annual["allowance_price"].gt(0.0).any()

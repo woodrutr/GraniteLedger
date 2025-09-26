@@ -90,7 +90,7 @@ def test_engine_matches_dispatch_when_policy_disabled():
     )
 
     annual = outputs.annual.set_index("year")
-    assert annual["p_co2"].eq(0.0).all()
+    assert annual["allowance_price"].eq(0.0).all()
     assert annual["bank"].eq(0.0).all()
     assert annual["obligation"].eq(0.0).all()
 
@@ -98,8 +98,8 @@ def test_engine_matches_dispatch_when_policy_disabled():
         dispatch = solve_single(year, 0.0, frames=frames)
         emissions = float(dispatch.emissions_tons)
         assert annual.loc[year, "emissions_tons"] == pytest.approx(emissions)
-        assert annual.loc[year, "available_allowances"] == pytest.approx(emissions)
-        assert annual.loc[year, "allowances_total"] == pytest.approx(emissions)
+        assert annual.loc[year, "allowances_minted"] == pytest.approx(emissions)
+        assert annual.loc[year, "allowances_available"] == pytest.approx(emissions)
         assert not bool(annual.loc[year, "finalized"])
         assert not bool(annual.loc[year, "shortage_flag"])
 
@@ -112,7 +112,7 @@ def test_policy_disabled_with_minimal_inputs():
     outputs = run_end_to_end_from_frames(frames, years=years)
 
     annual = outputs.annual.set_index("year")
-    assert annual.loc[years[0], "p_co2"] == pytest.approx(0.0)
+    assert annual.loc[years[0], "allowance_price"] == pytest.approx(0.0)
     assert annual.loc[years[0], "bank"] == pytest.approx(0.0)
     assert annual.loc[years[0], "obligation"] == pytest.approx(0.0)
 
@@ -128,7 +128,7 @@ def test_policy_disabled_applies_carbon_price_schedule():
     )
 
     annual = outputs.annual.set_index("year")
-    assert annual.loc[years[0], "p_co2"] == pytest.approx(price_value)
+    assert annual.loc[years[0], "allowance_price"] == pytest.approx(price_value)
 
     dispatch = solve_single(
         years[0],
@@ -174,9 +174,9 @@ def test_ccr_toggles_control_allowance_issuance():
     year = years[0]
     cap_value = float(base_policy.loc[base_policy['year'] == year, 'cap_tons'].iloc[0])
 
-    extra_enabled = annual_enabled.loc[year, "available_allowances"] - cap_value
-    extra_no_ccr1 = annual_no_ccr1.loc[year, "available_allowances"] - cap_value
-    extra_no_ccr2 = annual_no_ccr2.loc[year, "available_allowances"] - cap_value
+    extra_enabled = annual_enabled.loc[year, "allowances_minted"] - cap_value
+    extra_no_ccr1 = annual_no_ccr1.loc[year, "allowances_minted"] - cap_value
+    extra_no_ccr2 = annual_no_ccr2.loc[year, "allowances_minted"] - cap_value
 
     assert extra_enabled == pytest.approx(100_000.0)
     assert extra_no_ccr1 == pytest.approx(60_000.0)
