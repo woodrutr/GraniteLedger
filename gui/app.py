@@ -16,6 +16,7 @@ import shutil
 import sys
 import os
 import tempfile
+from datetime import date
 from collections.abc import Iterable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -1486,12 +1487,22 @@ def _render_general_config_section(
         )
 
     candidate_years = _years_from_config(base_config)
+    current_year = date.today().year
     if candidate_years:
         year_min = min(candidate_years)
         year_max = max(candidate_years)
     else:
-        year_min = int(base_config.get("start_year", 2025) or 2025)
-        year_max = int(base_config.get("end_year", year_min) or year_min)
+        try:
+            year_min = int(base_config.get("start_year", current_year) or current_year)
+        except (TypeError, ValueError):
+            year_min = int(current_year)
+        try:
+            fallback_end = base_config.get("end_year", year_min + 1)
+            year_max = int(fallback_end) if fallback_end not in (None, "") else year_min + 1
+        except (TypeError, ValueError):
+            year_max = year_min + 1
+        if year_max <= year_min:
+            year_max = year_min + 1
     if year_min > year_max:
         year_min, year_max = year_max, year_min
 
@@ -1501,24 +1512,51 @@ def _render_general_config_section(
         except (TypeError, ValueError):
             return int(fallback)
 
-    start_default = max(year_min, min(year_max, _coerce_year(base_config.get("start_year", year_min), year_min)))
-    end_default = max(year_min, min(year_max, _coerce_year(base_config.get("end_year", year_max), year_max)))
-    if start_default > end_default:
-        start_default, end_default = end_default, start_default
+    start_default = max(
+        year_min,
+        min(year_max, _coerce_year(base_config.get("start_year", year_min), year_min)),
+    )
+    end_default = max(
+        year_min,
+        min(year_max, _coerce_year(base_config.get("end_year", year_max), year_max)),
+    )
+    if end_default <= start_default:
+        end_default = start_default + 1
 
-    slider_min_default = 2025
-    slider_max_default = 2050
+    slider_min_dynamic = min(year_min, start_default, end_default)
+    slider_max_dynamic = max(year_max, start_default, end_default)
+    if slider_min_dynamic == slider_max_dynamic:
+        slider_min_dynamic -= 1
+        slider_max_dynamic += 1
+    if slider_min_dynamic >= slider_max_dynamic:
+        slider_max_dynamic = slider_min_dynamic + 1
+    slider_min_dynamic = int(slider_min_dynamic)
+    slider_max_dynamic = int(slider_max_dynamic)
     slider_min_value, slider_max_value = container.slider(
         "Simulation Years",
-        min_value=slider_min_default,
-        max_value=slider_max_default,
-        value=(start_default, end_default),
+        min_value=slider_min_dynamic,
+        max_value=slider_max_dynamic,
+        value=(
+            max(slider_min_dynamic, min(start_default, slider_max_dynamic - 1)),
+            max(
+                max(slider_min_dynamic + 1, min(end_default, slider_max_dynamic)),
+                slider_min_dynamic + 1,
+            ),
+        ),
         step=1,
         key="general_year_slider",
     )
 
-    start_year = slider_min_value
-    end_year = slider_max_value
+    start_year = int(slider_min_value)
+    end_year = int(slider_max_value)
+
+    if st is not None:
+        st.session_state["start_year_slider"] = start_year
+        st.session_state["end_year_slider"] = end_year
+
+    invalid_year_range = start_year >= end_year
+    if invalid_year_range:
+        container.error("End year must be greater than start year.")
 
     region_options = _regions_from_config(base_config)
     default_region_values = list(range(1, 26))
@@ -1677,10 +1715,19 @@ def _render_general_config_section(
     try:
         selected_years = _select_years(candidate_years, start_year, end_year)
     except Exception:
-        step = 1 if end_year >= start_year else -1
-        selected_years = list(range(start_year, end_year + step, step))
-    if not selected_years:
-        selected_years = [start_year]
+        selected_years = []
+    if selected_years:
+        try:
+            selected_min = min(int(year) for year in selected_years)
+            selected_max = max(int(year) for year in selected_years)
+        except ValueError:
+            selected_years = []
+        else:
+            selected_years = list(range(selected_min, selected_max + 1))
+    elif not invalid_year_range:
+        selected_years = list(range(start_year, end_year + 1))
+    else:
+        selected_years = []
 
     return GeneralConfigResult(
         config_label=config_label,
@@ -3942,7 +3989,7 @@ def _render_demand_controls(
     if not target_years and not demand_default.empty:
         target_years = sorted({int(year) for year in demand_default["year"].unique()})
     if not target_years:
-        target_years = [2025]
+        target_years = [int(date.today().year)]
 
     use_manual = st.checkbox("Create demand profile with controls", value=False, key="demand_manual_toggle")
     if use_manual:
@@ -4732,7 +4779,7 @@ def run_policy_simulation(
             "floor_escalator_value": float(floor_escalator_norm),
         }
     )
-
+    # Carbon price schedule will be populated after years are finalised below
     if floor_schedule_map:
         carbon_record["floor_schedule"] = dict(sorted(floor_schedule_map.items()))
     else:
@@ -4776,6 +4823,7 @@ def run_policy_simulation(
 
             growth_pct = float(price_cfg.escalator_pct)
 
+            # Back-adjust if provided base year is later than start_year
             if base_year is not None and base_year != start_year:
                 ratio = 1.0 + (growth_pct or 0.0) / 100.0
                 try:
@@ -4792,18 +4840,21 @@ def run_policy_simulation(
                 growth_pct,
             )
 
+            # Lock schedule to run_years if explicitly provided
             if run_years_sorted:
                 generated_schedule = {
                     year: generated_schedule.get(year, base_price_float)
                     for year in run_years_sorted
                 }
 
+            # Overlay provided overrides
             for year, value in provided_price_schedule.items():
                 generated_schedule[int(year)] = float(value)
 
             price_schedule_map = dict(sorted(generated_schedule.items()))
 
     price_active = bool(price_cfg.active and price_schedule_map)
+
 
     cap_schedule_map: dict[int, float] = {}
     if isinstance(carbon_cap_schedule, Mapping):
@@ -4918,12 +4969,97 @@ def run_policy_simulation(
         if fallback_year is not None:
             years = [int(fallback_year)]
         else:
-            years = [2025]
+            years = [int(date.today().year)]
 
-    years = sorted({int(year) for year in years})
+    normalized_years = sorted({int(year) for year in years})
+    if normalized_years:
+        year_start = normalized_years[0]
+        year_end = normalized_years[-1]
+        years = list(range(year_start, year_end + 1))
+    else:
+        current_year = int(date.today().year)
+        years = [current_year]
+
     config["years"] = list(years)
     config["start_year"] = int(years[0])
     config["end_year"] = int(years[-1])
+
+    provided_price_schedule: dict[int, float] = {}
+    if isinstance(price_cfg.schedule, Mapping):
+        for year, value in price_cfg.schedule.items():
+            try:
+                provided_price_schedule[int(year)] = float(value)
+            except (TypeError, ValueError):
+                continue
+
+    price_schedule_map: dict[int, float] = {}
+    if price_cfg.enabled and years:
+        run_years_sorted = sorted(dict.fromkeys(int(year) for year in years))
+        if run_years_sorted:
+            start_year_schedule = run_years_sorted[0]
+            end_year_schedule = run_years_sorted[-1]
+            base_year = (
+                min(provided_price_schedule)
+                if provided_price_schedule
+                else start_year_schedule
+            )
+            base_price = provided_price_schedule.get(base_year, price_cfg.price_per_ton)
+            try:
+                base_price_float = float(base_price)
+            except (TypeError, ValueError):
+                base_price_float = 0.0
+
+            growth_pct = float(price_cfg.escalator_pct)
+            if base_year is not None and base_year != start_year_schedule:
+                ratio = 1.0 + (growth_pct or 0.0) / 100.0
+                try:
+                    steps = base_year - start_year_schedule
+                    if ratio != 0.0:
+                        base_price_float = base_price_float / (ratio ** steps)
+                except OverflowError:
+                    base_price_float = 0.0
+
+            generated_schedule = _build_price_schedule(
+                start_year_schedule,
+                end_year_schedule,
+                base_price_float,
+                growth_pct,
+            )
+
+            combined_schedule = dict(sorted(generated_schedule.items()))
+            for year, value in provided_price_schedule.items():
+                try:
+                    combined_schedule[int(year)] = float(value)
+                except (TypeError, ValueError):
+                    continue
+
+            combined_items = sorted(combined_schedule.items())
+            if combined_items:
+                first_price = float(combined_items[0][1])
+            else:
+                first_price = float(base_price_float)
+            filled_schedule: dict[int, float] = {}
+            last_price: float | None = None
+            index = 0
+            total_items = len(combined_items)
+
+            for year in run_years_sorted:
+                while index < total_items and combined_items[index][0] <= year:
+                    last_price = float(combined_items[index][1])
+                    index += 1
+                if last_price is None:
+                    last_price = first_price
+                filled_schedule[year] = float(last_price)
+
+            price_schedule_map = filled_schedule
+
+    price_active = bool(price_cfg.enabled and price_schedule_map)
+    if price_active:
+        price_cfg.schedule = dict(price_schedule_map)
+    else:
+        price_cfg.schedule = {}
+
+    merged_modules["carbon_price"] = price_cfg.as_dict()
 
     carbon_price_for_frames: Mapping[int, float] | None = (
         price_schedule_map if price_active else None
@@ -5986,8 +6122,12 @@ def main() -> None:
     selected_years: list[int] = []
     candidate_years: list[int] = []
     frames_for_run: FramesType | None = None
-    start_year_val = int(run_config.get('start_year', 2025)) if run_config else 2025
-    end_year_val = int(run_config.get('end_year', start_year_val)) if run_config else start_year_val
+    current_year = date.today().year
+    start_year_val = int(run_config.get('start_year', current_year)) if run_config else int(current_year)
+    default_end_year = start_year_val + 1
+    end_year_val = int(run_config.get('end_year', default_end_year)) if run_config else int(default_end_year)
+    if end_year_val <= start_year_val:
+        end_year_val = start_year_val + 1
 
     carbon_settings = CarbonModuleSettings(
         enabled=False,
@@ -6073,6 +6213,11 @@ def main() -> None:
             end_year_val = general_result.end_year
             selected_years = general_result.selected_years
 
+            if start_year_val >= end_year_val:
+                year_error = "Simulation end year must be greater than start year."
+                if year_error not in module_errors:
+                    module_errors.append(year_error)
+
             # -------- Carbon --------
             carbon_label, carbon_expanded = SIDEBAR_SECTIONS[1]
             carbon_expander = st.expander(carbon_label, expanded=carbon_expanded)
@@ -6087,7 +6232,8 @@ def main() -> None:
             # Prepare default frames (defensive)
             try:
                 frames_for_run = _build_default_frames(
-                    selected_years or [start_year_val],
+                    selected_years
+                    or list(range(int(start_year_val), int(end_year_val) + 1)),
                     carbon_policy_enabled=bool(
                         carbon_settings.enabled and not carbon_settings.price_enabled
                     ),
@@ -6171,19 +6317,47 @@ def main() -> None:
             run_clicked = st.button("Run Model", type="primary", use_container_width=True)
 
     # Finalize selected years defensively
+    if st is not None:
+        try:
+            start_year_state = int(st.session_state.get("start_year_slider", start_year_val))
+        except (TypeError, ValueError):
+            start_year_state = int(start_year_val)
+        try:
+            end_year_state = int(st.session_state.get("end_year_slider", end_year_val))
+        except (TypeError, ValueError):
+            end_year_state = int(end_year_val)
+        start_year_val = start_year_state
+        end_year_val = end_year_state
+
+    default_years: list[int] = []
+    if start_year_val < end_year_val:
+        default_years = list(range(int(start_year_val), int(end_year_val) + 1))
+    elif start_year_val == end_year_val:
+        default_years = [int(start_year_val)]
+
     try:
         selected_years = _select_years(candidate_years, start_year_val, end_year_val)
     except Exception:
-        selected_years = selected_years or []
-    if not selected_years:
-        step = 1 if end_year_val >= start_year_val else -1
-        selected_years = list(range(start_year_val, end_year_val + step, step))
+        selected_years = []
+
+    if selected_years:
+        try:
+            selected_min = min(int(year) for year in selected_years)
+            selected_max = max(int(year) for year in selected_years)
+        except ValueError:
+            selected_years = []
+        else:
+            selected_years = list(range(selected_min, selected_max + 1))
+    else:
+        selected_years = list(default_years)
 
     # Ensure frames if earlier failed
     if frames_for_run is None:
         try:
             frames_for_run = _build_default_frames(
-                selected_years or [start_year_val],
+                selected_years
+                or default_years
+                or [int(start_year_val)],
                 carbon_policy_enabled=bool(
                     carbon_settings.enabled and not carbon_settings.price_enabled
                 ),
