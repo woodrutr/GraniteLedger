@@ -1255,9 +1255,6 @@ def _render_general_config_section(
         else:
             canonical_existing = previous_clean_selection
 
-        if list(existing_entries) != canonical_existing:
-            st.session_state["general_regions"] = list(canonical_existing)
-
         previous_clean_selection = canonical_existing
     else:
         previous_clean_selection = list(default_selection)
@@ -1266,7 +1263,7 @@ def _render_general_config_section(
         container.multiselect(
             "Regions",
             options=region_labels,
-            default=default_selection,
+            default=previous_clean_selection,
             key="general_regions",
         )
     )
