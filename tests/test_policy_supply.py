@@ -55,7 +55,9 @@ def _run_supply_simulation(
         use_network=False,
         period_weights=None,
         carbon_price_schedule=None,
+        deep_carbon_pricing=False,
     ):
+        _ = deep_carbon_pricing
         return dispatch
 
     monkeypatch.setattr(run_loop, "_dispatch_from_frames", fake_dispatch_from_frames)
@@ -116,10 +118,10 @@ def test_ccr_tiers_unlock_by_year(monkeypatch: pytest.MonkeyPatch):
     )
     annual = outputs.annual.set_index("year")
 
-    assert annual.loc[2025, "p_co2"] == pytest.approx(20.0, abs=1e-6)
-    assert annual.loc[2025, "available_allowances"] == pytest.approx(130.0)
-    assert annual.loc[2026, "p_co2"] == pytest.approx(50.0, abs=1e-6)
-    assert annual.loc[2026, "available_allowances"] == pytest.approx(230.0)
+    assert annual.loc[2025, "allowance_price"] == pytest.approx(20.0, abs=1e-6)
+    assert annual.loc[2025, "allowances_minted"] == pytest.approx(130.0)
+    assert annual.loc[2026, "allowance_price"] == pytest.approx(50.0, abs=1e-6)
+    assert annual.loc[2026, "allowances_minted"] == pytest.approx(230.0)
 
 
 def test_floor_changes_by_year(monkeypatch: pytest.MonkeyPatch):
@@ -167,10 +169,10 @@ def test_floor_changes_by_year(monkeypatch: pytest.MonkeyPatch):
     )
     annual = outputs.annual.set_index("year")
 
-    assert annual.loc[2027, "p_co2"] == pytest.approx(5.0, abs=1e-6)
-    assert annual.loc[2028, "p_co2"] == pytest.approx(15.0, abs=1e-6)
-    assert annual.loc[2027, "available_allowances"] == pytest.approx(200.0)
-    assert annual.loc[2028, "available_allowances"] == pytest.approx(200.0)
+    assert annual.loc[2027, "allowance_price"] == pytest.approx(5.0, abs=1e-6)
+    assert annual.loc[2028, "allowance_price"] == pytest.approx(15.0, abs=1e-6)
+    assert annual.loc[2027, "allowances_minted"] == pytest.approx(200.0)
+    assert annual.loc[2028, "allowances_minted"] == pytest.approx(200.0)
 
 
 def test_toggles_disable_features(monkeypatch: pytest.MonkeyPatch):
@@ -213,10 +215,10 @@ def test_toggles_disable_features(monkeypatch: pytest.MonkeyPatch):
     annual_with = with_ccr.annual.set_index("year")
     annual_without = without_ccr.annual.set_index("year")
 
-    assert annual_with.loc[2029, "available_allowances"] == pytest.approx(130.0)
-    assert annual_with.loc[2029, "p_co2"] == pytest.approx(20.0, abs=1e-6)
-    assert annual_without.loc[2029, "available_allowances"] == pytest.approx(100.0)
-    assert annual_without.loc[2029, "p_co2"] == pytest.approx(50.0, abs=1e-6)
+    assert annual_with.loc[2029, "allowances_minted"] == pytest.approx(130.0)
+    assert annual_with.loc[2029, "allowance_price"] == pytest.approx(20.0, abs=1e-6)
+    assert annual_without.loc[2029, "allowances_minted"] == pytest.approx(100.0)
+    assert annual_without.loc[2029, "allowance_price"] == pytest.approx(50.0, abs=1e-6)
 
     policy_floor = [
         {
@@ -257,10 +259,10 @@ def test_toggles_disable_features(monkeypatch: pytest.MonkeyPatch):
     annual_with_floor = with_floor.annual.set_index("year")
     annual_without_floor = without_floor.annual.set_index("year")
 
-    assert annual_with_floor.loc[2030, "p_co2"] == pytest.approx(20.0, abs=1e-6)
-    assert annual_without_floor.loc[2030, "p_co2"] == pytest.approx(10.0, abs=1e-6)
-    assert annual_with_floor.loc[2030, "available_allowances"] == pytest.approx(120.0)
-    assert annual_without_floor.loc[2030, "available_allowances"] == pytest.approx(120.0)
+    assert annual_with_floor.loc[2030, "allowance_price"] == pytest.approx(20.0, abs=1e-6)
+    assert annual_without_floor.loc[2030, "allowance_price"] == pytest.approx(10.0, abs=1e-6)
+    assert annual_with_floor.loc[2030, "allowances_minted"] == pytest.approx(120.0)
+    assert annual_without_floor.loc[2030, "allowances_minted"] == pytest.approx(120.0)
 
 
 def test_supply_disabled_returns_baseline(monkeypatch: pytest.MonkeyPatch):
@@ -294,7 +296,7 @@ def test_supply_disabled_returns_baseline(monkeypatch: pytest.MonkeyPatch):
     annual = outputs.annual.set_index("year")
     row = annual.loc[2031]
 
-    assert row["p_co2"] == pytest.approx(0.0, abs=1e-6)
-    assert row["available_allowances"] == pytest.approx(150.0)
-    assert row["allowances_total"] == pytest.approx(150.0)
-    assert row["available_allowances"] == pytest.approx(row["emissions_tons"])
+    assert row["allowance_price"] == pytest.approx(0.0, abs=1e-6)
+    assert row["allowances_minted"] == pytest.approx(150.0)
+    assert row["allowances_available"] == pytest.approx(150.0)
+    assert row["allowances_minted"] == pytest.approx(row["emissions_tons"])
