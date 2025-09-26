@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import importlib
 import pytest
 
@@ -194,6 +195,46 @@ def test_clear_year_matches_bisection_solver(emissions, enable_ccr):
 
     assert record["p_co2"] == pytest.approx(summary["p_co2"])
     assert bool(record["shortage_flag"]) == bool(summary["shortage_flag"])
+
+
+def test_surplus_branch_logs_bypass_warning(caplog):
+    policy = policy_three_year()
+    supply = AllowanceSupply(
+        cap=float(policy.cap.loc[2025]),
+        floor=float(policy.floor.loc[2025]),
+        ccr1_trigger=float(policy.ccr1_trigger.loc[2025]),
+        ccr1_qty=float(policy.ccr1_qty.loc[2025]),
+        ccr2_trigger=float(policy.ccr2_trigger.loc[2025]),
+        ccr2_qty=float(policy.ccr2_qty.loc[2025]),
+        enabled=bool(policy.enabled),
+        enable_floor=True,
+        enable_ccr=True,
+    )
+
+    def dispatch_stub(
+        _year: int, _price: float, carbon_price: float = 0.0
+    ) -> dict[str, float]:
+        assert carbon_price >= 0.0
+        return {"emissions_tons": 80.0}
+
+    with caplog.at_level(logging.WARNING, logger="engine.run_loop"):
+        summary = _solve_allowance_market_year(
+            dispatch_stub,
+            2025,
+            supply,
+            bank_prev=float(policy.bank0),
+            outstanding_prev=0.0,
+            policy_enabled=bool(policy.enabled),
+            high_price=_PRICE_SOLVER_HIGH,
+            tol=_PRICE_SOLVER_TOL,
+            max_iter=_PRICE_SOLVER_MAX_ITER,
+            annual_surrender_frac=float(policy.annual_surrender_frac),
+            carry_pct=float(policy.carry_pct),
+            banking_enabled=bool(policy.banking_enabled),
+        )
+
+    assert summary["iterations"] == 0
+    assert "solver bypassed; check configuration." in caplog.messages
 
 
 def test_true_up_full_compliance_year():

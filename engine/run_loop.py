@@ -499,6 +499,8 @@ def _solve_allowance_market_year(
             },
             '_dispatch_result': dispatch_low,
         }
+        if policy_enabled and supply.enabled and int(result.get('iterations', 0)) == 0:
+            LOGGER.warning("solver bypassed; check configuration.")
         return _finalize(result)
 
     dispatch_high = dispatch_solver(year, high, carbon_price=carbon_price)
