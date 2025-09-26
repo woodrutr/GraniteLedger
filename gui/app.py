@@ -4520,10 +4520,37 @@ def run_policy_simulation(
     else:
         carbon_record.pop("cap_schedule", None)
     allowance_market_record = merged_modules.setdefault("allowance_market", {})
+    allowance_market_record["enabled"] = policy_enabled
+    allowance_market_record["bank0"] = float(initial_bank_value)
+    allowance_market_record["ccr1_enabled"] = bool(
+        carbon_policy_cfg.ccr1_enabled if ccr_flag else False
+    )
+    allowance_market_record["ccr2_enabled"] = bool(
+        carbon_policy_cfg.ccr2_enabled if ccr_flag else False
+    )
     if policy_enabled and cap_schedule_map:
         allowance_market_record["cap"] = dict(sorted(cap_schedule_map.items()))
     elif not policy_enabled:
         allowance_market_record.pop("cap", None)
+
+    existing_allowance_cfg = config.get("allowance_market")
+    if isinstance(existing_allowance_cfg, Mapping):
+        allowance_config = dict(existing_allowance_cfg)
+    else:
+        allowance_config = {}
+    allowance_config["enabled"] = policy_enabled
+    allowance_config["bank0"] = float(initial_bank_value)
+    allowance_config["ccr1_enabled"] = bool(
+        carbon_policy_cfg.ccr1_enabled if ccr_flag else False
+    )
+    allowance_config["ccr2_enabled"] = bool(
+        carbon_policy_cfg.ccr2_enabled if ccr_flag else False
+    )
+    if policy_enabled and cap_schedule_map:
+        allowance_config["cap"] = dict(sorted(cap_schedule_map.items()))
+    elif not policy_enabled:
+        allowance_config.pop("cap", None)
+    config["allowance_market"] = allowance_config
     normalized_regions, unresolved_cap_regions = _normalize_cap_region_entries(cap_regions)
     if unresolved_cap_regions:
         unique_unresolved = list(dict.fromkeys(unresolved_cap_regions))

@@ -1022,6 +1022,76 @@ def test_backend_banking_toggle_disables_bank(tmp_path, caplog):
     _cleanup_temp_dir(result)
 
 
+def test_backend_updates_allowance_market_config():
+    config = _baseline_config()
+    config["allowance_market"]["cap"] = {}
+    frames = _frames_for_years([2025, 2026])
+
+    schedule = {2025: 345_000.0, 2026: 320_000.0}
+
+    result = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2026,
+        frames=frames,
+        cap_regions=[1],
+        carbon_cap_schedule=schedule,
+        initial_bank=1234.0,
+        allowance_banking_enabled=True,
+        ccr1_enabled=True,
+        ccr2_enabled=False,
+    )
+
+    assert "error" not in result
+
+    allowance_module = result["module_config"]["allowance_market"]
+    allowance_config = result["config"]["allowance_market"]
+    expected_schedule = {year: float(value) for year, value in schedule.items()}
+
+    assert allowance_module["enabled"] is True
+    assert allowance_config["enabled"] is True
+    assert allowance_module["cap"] == expected_schedule
+    assert allowance_config["cap"] == expected_schedule
+    assert allowance_module["bank0"] == pytest.approx(1234.0)
+    assert allowance_config["bank0"] == pytest.approx(1234.0)
+    assert allowance_module["ccr1_enabled"] is True
+    assert allowance_module["ccr2_enabled"] is False
+    assert allowance_config["ccr1_enabled"] is True
+    assert allowance_config["ccr2_enabled"] is False
+
+    _cleanup_temp_dir(result)
+
+
+def test_backend_zeroes_allowance_bank_when_disabled_config():
+    config = _baseline_config()
+    frames = _frames_for_years([2025, 2026])
+
+    schedule = {2025: 400_000.0, 2026: 390_000.0}
+
+    result = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2026,
+        frames=frames,
+        cap_regions=[1],
+        carbon_cap_schedule=schedule,
+        initial_bank=9876.0,
+        allowance_banking_enabled=False,
+    )
+
+    assert "error" not in result
+
+    allowance_module = result["module_config"]["allowance_market"]
+    allowance_config = result["config"]["allowance_market"]
+
+    assert allowance_module["bank0"] == pytest.approx(0.0)
+    assert allowance_config["bank0"] == pytest.approx(0.0)
+    assert allowance_module["enabled"] is True
+    assert allowance_config["enabled"] is True
+
+    _cleanup_temp_dir(result)
+
+
 def test_backend_builds_price_schedule_for_run_years(monkeypatch):
     real_runner = importlib.import_module("engine.run_loop").run_end_to_end_from_frames
     captured: dict[str, object] = {}
