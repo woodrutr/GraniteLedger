@@ -1707,26 +1707,14 @@ def _render_carbon_policy_section(
         disabled=price_toggle_disabled,
     )
 
-    if price_enabled:
-        if enabled:
-            enabled = False
-            if st is not None:
-                st.session_state["carbon_enable"] = False
-        if st is not None:
-            st.session_state["carbon_price_enable"] = True
-    elif enabled:
+    if price_enabled and enabled:
+        enabled = False
+    elif enabled and not price_enabled:
         price_enabled = False
-        if st is not None:
-            st.session_state["carbon_price_enable"] = False
-            st.session_state["carbon_enable"] = True
 
     if locked:
         price_enabled = bool(price_enabled_default)
         enabled = bool(enabled_default and not price_enabled)
-        if price_enabled and st is not None:
-            st.session_state["carbon_enable"] = False
-        elif enabled and st is not None:
-            st.session_state["carbon_price_enable"] = False
 
     cap_schedule: dict[int, float] = dict(cap_schedule_default)
     cap_start_value = float(cap_start_default_int)
@@ -4091,8 +4079,6 @@ def run_policy_simulation(
         price_override: bool | None = None
     else:
         price_override = bool(carbon_price_enabled)
-        if price_override:
-            policy_override = False
 
     try:
         config = _load_config_data(config_source)
@@ -4139,8 +4125,15 @@ def run_policy_simulation(
         escalator_pct=carbon_price_escalator_pct,
     )
 
+    explicit_cap_request = (coverage_regions is not None) or (cap_regions is not None)
+
     if price_cfg.active:
-        if carbon_policy_cfg.enabled and not deep_carbon_pricing:
+        if (
+            carbon_policy_cfg.enabled
+            and policy_override
+            and explicit_cap_request
+            and not deep_carbon_pricing
+        ):
             return {"error": "Cannot enable both carbon cap and carbon price simultaneously."}
         if not deep_carbon_pricing:
             carbon_policy_cfg.disable_for_price()
