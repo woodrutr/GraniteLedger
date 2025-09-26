@@ -45,6 +45,10 @@ class CarbonModuleSettings:
     cap_reduction_mode: str = "percent"
     cap_reduction_value: float = 0.0
     cap_schedule: dict[int, float] = field(default_factory=dict)
+    floor_value: float = 0.0
+    floor_escalator_mode: str = "fixed"
+    floor_escalator_value: float = 0.0
+    floor_schedule: dict[int, float] = field(default_factory=dict)
     price_schedule: dict[int, float] = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
 
