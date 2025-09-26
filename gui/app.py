@@ -1311,6 +1311,52 @@ def _normalize_coverage_selection(selection: Any) -> list[str]:
     return normalized
 
 
+def _normalize_cap_region_entries(
+    selection: Iterable[Any] | Mapping[str, Any] | None,
+) -> tuple[list[int | str], list[str]]:
+    """Return canonical cap region values and any unresolved entries."""
+
+    normalized: list[int | str] = []
+    unresolved: list[str] = []
+    seen: set[int | str] = set()
+
+    if selection is None:
+        return normalized, unresolved
+
+    if isinstance(selection, Mapping):
+        iterable: Iterable[Any] = selection.values()
+    elif isinstance(selection, (str, bytes)):
+        iterable = [selection]
+    else:
+        iterable = selection
+
+    for entry in iterable:
+        if entry in (None, ""):
+            continue
+
+        label = canonical_region_label(entry).strip()
+        resolved = canonical_region_value(entry)
+
+        if isinstance(resolved, str):
+            text = resolved.strip()
+            if not text:
+                continue
+            if label.lower() == "default":
+                canonical_value: int | str = "default"
+            else:
+                unresolved_text = text or str(entry)
+                unresolved.append(unresolved_text)
+                continue
+        else:
+            canonical_value = int(resolved)
+
+        if canonical_value not in seen:
+            seen.add(canonical_value)
+            normalized.append(canonical_value)
+
+    return normalized, unresolved
+
+
 # General Config UI
 # -------------------------
 def _render_general_config_section(
@@ -4516,26 +4562,15 @@ def run_policy_simulation(
         allowance_market_record["cap"] = dict(sorted(cap_schedule_map.items()))
     elif not policy_enabled:
         allowance_market_record.pop("cap", None)
-    normalized_regions: list[Any] = []
-    if cap_regions is not None:
-        seen_labels: set[str] = set()
-        for entry in cap_regions:
-            if entry in (None, ""):
-                continue
-            if isinstance(entry, str):
-                text = entry.strip()
-                if not text:
-                    continue
-                entry = text
-            label = str(entry)
-            if label in seen_labels:
-                continue
-            seen_labels.add(label)
-            try:
-                normalized_entry: Any = int(entry)  # type: ignore[arg-type]
-            except (TypeError, ValueError):
-                normalized_entry = entry
-            normalized_regions.append(normalized_entry)
+    normalized_regions, unresolved_cap_regions = _normalize_cap_region_entries(cap_regions)
+    if unresolved_cap_regions:
+        unique_unresolved = list(dict.fromkeys(unresolved_cap_regions))
+        if len(unique_unresolved) == 1:
+            return {"error": f"Unable to resolve cap region '{unique_unresolved[0]}'"}
+        unresolved_list = ", ".join(f"'{entry}'" for entry in unique_unresolved)
+        return {"error": f"Unable to resolve cap regions: {unresolved_list}"}
+
+    if normalized_regions:
         carbon_record["regions"] = list(normalized_regions)
 
     if not normalized_regions and normalized_coverage and normalized_coverage != ["All"]:

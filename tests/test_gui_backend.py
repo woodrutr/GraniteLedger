@@ -676,6 +676,49 @@ def test_backend_dispatch_and_carbon_modules(monkeypatch):
     _cleanup_temp_dir(result)
 
 
+def test_backend_canonicalizes_cap_region_aliases():
+    config = _baseline_config()
+    frames = _frames_for_years([2025])
+
+    alias_entries = [
+        "NYISO",
+        "Region 9 – NYUP (Northeast / MidAtlantic, NYISO Upstate)",
+        9,
+        "nyup",
+    ]
+
+    result = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2025,
+        cap_regions=alias_entries,
+        frames=frames,
+    )
+
+    assert "error" not in result
+    carbon_cfg = result["module_config"].get("carbon_policy", {})
+    assert carbon_cfg.get("regions") == [9]
+    assert result.get("cap_regions") == [9]
+
+    _cleanup_temp_dir(result)
+
+
+def test_backend_rejects_unknown_cap_region():
+    config = _baseline_config()
+    frames = _frames_for_years([2025])
+
+    result = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2025,
+        cap_regions=["Atlantis"],
+        frames=frames,
+    )
+
+    assert "error" in result
+    assert "Atlantis" in str(result["error"])
+
+
 def test_backend_mutual_exclusion_without_deep():
     config = _baseline_config()
     frames = _frames_for_years([2025])
