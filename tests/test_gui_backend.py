@@ -170,6 +170,43 @@ def test_backend_policy_toggle_affects_price():
     _cleanup_temp_dir(disabled)
 
 
+def test_backend_marks_allowance_price_output():
+    config = _baseline_config()
+    frames = _frames_for_years([2025])
+
+    result = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2025,
+        cap_regions=[1],
+        frames=frames,
+        carbon_policy_enabled=True,
+    )
+
+    assert result.get('_price_output_type') == 'allowance'
+
+    _cleanup_temp_dir(result)
+
+
+def test_backend_marks_carbon_price_output():
+    config = _baseline_config()
+    frames = _frames_for_years([2025])
+
+    result = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2025,
+        frames=frames,
+        carbon_policy_enabled=False,
+        carbon_price_enabled=True,
+        carbon_price_value=15.0,
+    )
+
+    assert result.get('_price_output_type') == 'carbon'
+
+    _cleanup_temp_dir(result)
+
+
 def test_dispatch_capacity_toggle_updates_config():
     config = _baseline_config()
     frames = _frames_for_years([2025])
