@@ -993,13 +993,15 @@ def _dispatch_from_frames(
         frames_for_year = _scaled_frames(year, weight)
         schedule_price = _price_for(year)
         allowance_component = float(allowance_cost)
+
         if carbon_price in (None, ""):
             exogenous_component = schedule_price
         else:
             exogenous_component = _normalize_extra_price(carbon_price)
 
-        dispatch_allowance_cost = allowance_component
-        dispatch_carbon_price = exogenous_component
+        dispatch_allowance_cost = float(allowance_component)
+        dispatch_carbon_price = max(0.0, float(exogenous_component))
+
 
         if use_network:
             raw_result = solve_network_from_frames(
