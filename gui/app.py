@@ -5413,6 +5413,24 @@ def _render_results(result: Mapping[str, Any]) -> None:
         chart_data = display_annual.copy()
 
     price_output_type = str(result.get('_price_output_type') or 'allowance')
+
+    if price_output_type == 'carbon':
+        carbon_field_aliases = {
+            'allowance_price': 'p_co2_all',
+            'allowance_price_exogenous_component': 'p_co2_exc',
+            'allowance_price_effective': 'p_co2_eff',
+        }
+
+        if not display_annual.empty:
+            display_annual = display_annual.rename(columns=carbon_field_aliases)
+            if 'p_co2' not in display_annual.columns and 'p_co2_all' in display_annual.columns:
+                display_annual['p_co2'] = display_annual['p_co2_all']
+
+        if not chart_data.empty:
+            chart_data = chart_data.rename(columns=carbon_field_aliases)
+            if 'p_co2' not in chart_data.columns and 'p_co2_all' in chart_data.columns:
+                chart_data['p_co2'] = chart_data['p_co2_all']
+
     if price_output_type == 'carbon':
         price_tab_label = 'Carbon price'
         price_section_title = 'Carbon price results'
@@ -5432,19 +5450,23 @@ def _render_results(result: Mapping[str, Any]) -> None:
     display_price_table = display_annual.copy()
 
     if price_output_type == 'carbon':
-        # Normalize carbon outputs if present
         if 'p_co2' in display_price_table.columns:
             display_price_table = display_price_table.rename(columns={'p_co2': price_series_label})
-        elif 'allowance_price' in display_price_table.columns:
+        else:
             rename_map = {'allowance_price': price_series_label}
             if 'allowance_price_exogenous_component' in display_price_table.columns:
-                rename_map['allowance_price_exogenous_component'] = 'p_co2_exogenous'
+                rename_map['allowance_price_exogenous_component'] = 'p_co2_exc'
             if 'allowance_price_effective' in display_price_table.columns:
-                rename_map['allowance_price_effective'] = 'p_co2_effective'
+                rename_map['allowance_price_effective'] = 'p_co2_eff'
             display_price_table = display_price_table.rename(columns=rename_map)
+
+        if price_series_label in display_price_table.columns and 'p_co2_all' not in display_price_table.columns:
+            display_price_table['p_co2_all'] = display_price_table[price_series_label]
+
         allowed_price_columns = [
             'year',
             price_series_label,
+            'p_co2',
             'p_co2_all',
             'p_co2_exc',
             'p_co2_eff',
