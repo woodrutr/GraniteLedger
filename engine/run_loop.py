@@ -188,6 +188,35 @@ def _compute_period_weights(policy: Any, periods: Sequence[Any]) -> dict[object,
     return weights
 
 
+def _modeled_years(policy: Any, periods: Iterable[Any]) -> list[int]:
+    """Return sorted calendar years represented by ``periods``."""
+
+    mapper = getattr(policy, "compliance_year_for", None)
+    years: set[int] = set()
+
+    for period in periods:
+        calendar_year: int | None = None
+        if callable(mapper):
+            try:
+                mapped = mapper(period)
+            except Exception:  # pragma: no cover - defensive guard
+                mapped = None
+            if mapped is not None:
+                try:
+                    calendar_year = int(mapped)
+                except (TypeError, ValueError):
+                    calendar_year = None
+        if calendar_year is None:
+            try:
+                calendar_year = int(period)
+            except (TypeError, ValueError):
+                calendar_year = None
+        if calendar_year is not None:
+            years.add(calendar_year)
+
+    return sorted(years)
+
+
 def _initial_price_for_year(price_initial: float | Mapping[int, float], year: int, fallback: float) -> float:
     if isinstance(price_initial, Mapping):
         if year in price_initial:
@@ -1327,6 +1356,60 @@ def _prepare_carbon_price_schedule(
     return normalised
 
 
+def _expand_price_schedule(
+    schedule: Mapping[int | None, float],
+    years: Iterable[int],
+) -> dict[int, float]:
+    """Forward-fill ``schedule`` across ``years`` returning a dense mapping."""
+
+    expanded: dict[int, float] = {}
+
+    normalized_years: list[int] = []
+    for entry in years:
+        try:
+            normalized_years.append(int(entry))
+        except (TypeError, ValueError):
+            continue
+
+    if not normalized_years:
+        return expanded
+
+    schedule_items: list[tuple[int, float]] = []
+    default_price = schedule.get(None)
+
+    for key, value in schedule.items():
+        if key is None:
+            continue
+        try:
+            year_key = int(key)
+        except (TypeError, ValueError):
+            continue
+        try:
+            price_value = float(value)
+        except (TypeError, ValueError):
+            continue
+        schedule_items.append((year_key, price_value))
+
+    schedule_items.sort(key=lambda item: item[0])
+
+    if default_price is None and schedule_items:
+        default_price = schedule_items[0][1]
+    if default_price is None:
+        default_price = 0.0
+
+    current_price = float(default_price)
+    total_schedule = len(schedule_items)
+    index = 0
+
+    for year in sorted(dict.fromkeys(normalized_years)):
+        while index < total_schedule and schedule_items[index][0] <= year:
+            current_price = float(schedule_items[index][1])
+            index += 1
+        expanded[year] = float(current_price)
+
+    return expanded
+
+
 def run_end_to_end_from_frames(
     frames: Frames | Mapping[str, pd.DataFrame],
     *,
@@ -1362,7 +1445,22 @@ def run_end_to_end_from_frames(
     policy_spec = frames_obj.policy()
     policy = policy_spec.to_policy()
     years_sequence = _coerce_years(policy, years)
+    modeled_years = _modeled_years(policy, years_sequence)
+    if not modeled_years:
+        fallback_years: list[int] = []
+        for year in schedule_lookup_source:
+            if year is None:
+                continue
+            try:
+                fallback_years.append(int(year))
+            except (TypeError, ValueError):
+                continue
+        modeled_years = sorted(dict.fromkeys(fallback_years))
     period_weights = _compute_period_weights(policy, years_sequence)
+    default_carbon_price = float(schedule_lookup_source.get(None, 0.0))
+    expanded_schedule = _expand_price_schedule(schedule_lookup_source, modeled_years)
+    schedule_lookup_source = expanded_schedule
+    frames_obj = Frames.coerce(frames_obj, carbon_price_schedule=schedule_lookup_source)
     dispatch_kwargs = dict(
         use_network=use_network,
         period_weights=period_weights,
@@ -1401,9 +1499,7 @@ def run_end_to_end_from_frames(
             year_int = None
         if year_int is not None and year_int in price_schedule:
             return float(price_schedule[year_int])
-        if None in price_schedule:
-            return float(price_schedule[None])
-        return 0.0
+        return float(default_carbon_price)
 
     def _emit_year_debug(
         year_value: Any,
