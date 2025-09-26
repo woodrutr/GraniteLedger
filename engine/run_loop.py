@@ -1093,9 +1093,10 @@ def _build_engine_outputs(
 
     for period in years:
         summary_raw = raw_results.get(period)
-        if summary_raw is None:
-            continue
-        summary = dict(summary_raw)
+        if isinstance(summary_raw, Mapping):
+            summary = dict(summary_raw)
+        else:
+            summary = {}
         price = float(summary.get("p_co2", 0.0))
         exogenous_component = float(summary.get("p_co2_exogenous", 0.0))
         dispatch_result = summary.pop("_dispatch_result", None)
@@ -1840,5 +1841,7 @@ def run_end_to_end_from_frames(
                 payload['iterations'] = 0
             progress_cb('year_complete', payload)
 
-    ordered_years = [period for period in years_sequence if period in results]
+    ordered_years = list(years_sequence)
+    for period in ordered_years:
+        results.setdefault(period, {})
     return _build_engine_outputs(ordered_years, results, dispatch_solver, policy)
