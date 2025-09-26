@@ -4,13 +4,18 @@ import io
 import shutil
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 pd = pytest.importorskip("pandas")
 
 from tests.fixtures.dispatch_single_minimal import baseline_frames
-from gui.app import DEEP_CARBON_UNSUPPORTED_MESSAGE, run_policy_simulation
+from gui.app import (
+    DEEP_CARBON_UNSUPPORTED_MESSAGE,
+    _build_price_schedule,
+    run_policy_simulation,
+)
 
 streamlit = pytest.importorskip("streamlit")
 
@@ -50,6 +55,12 @@ def _cleanup_temp_dir(result: dict) -> None:
     temp_dir = result.get("temp_dir")
     if temp_dir:
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def _assert_price_schedule(result: Mapping[str, Any], expected: Mapping[int, float]) -> None:
+    annual = result["annual"].set_index("year")
+    for year, price in expected.items():
+        assert annual.loc[year, "p_co2"] == pytest.approx(price, rel=0.0, abs=1e-9)
 
 
 def test_write_outputs_to_temp_falls_back_when_default_unwritable(monkeypatch):
@@ -382,6 +393,48 @@ def test_backend_disabled_toggle_propagates_flags(monkeypatch):
     _cleanup_temp_dir(result)
 
 
+def test_backend_enforces_carbon_mode_exclusivity(monkeypatch):
+    real_runner = importlib.import_module("engine.run_loop").run_end_to_end_from_frames
+    captured: dict[str, object] = {}
+
+    def capturing_runner(frames, **kwargs):
+        policy = frames.policy().to_policy()
+        captured["policy_enabled"] = policy.enabled
+        captured["price_schedule"] = kwargs.get("carbon_price_schedule")
+        return real_runner(frames, **kwargs)
+
+    monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: capturing_runner)
+
+    config = _baseline_config()
+    frames = _frames_for_years([2025, 2026])
+
+    result = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2026,
+        frames=frames,
+        carbon_policy_enabled=True,
+        carbon_price_enabled=True,
+        carbon_price_value=15.0,
+        carbon_price_escalator_pct=0.0,
+    )
+
+    assert "error" not in result
+    assert captured.get("policy_enabled") is False
+    schedule = captured.get("price_schedule")
+    assert isinstance(schedule, Mapping)
+    assert schedule  # non-empty schedule when price enabled
+
+    module_config = result["module_config"]
+    policy_cfg = module_config["carbon_policy"]
+    price_cfg = module_config["carbon_price"]
+    assert not policy_cfg.get("enabled")
+    assert price_cfg.get("enabled")
+    assert sum(1 for flag in (policy_cfg.get("enabled"), price_cfg.get("enabled")) if flag) == 1
+
+    _cleanup_temp_dir(result)
+
+
 def test_backend_control_period_defaults_to_config(monkeypatch):
     real_runner = importlib.import_module("engine.run_loop").run_end_to_end_from_frames
     captured: dict[str, object] = {}
@@ -440,6 +493,41 @@ def test_backend_control_period_override_applies(monkeypatch):
     assert carbon_cfg.get("control_period_years") == 4
 
     _cleanup_temp_dir(result)
+
+
+def test_price_schedule_forward_fills_without_cap_or_banking():
+    years = list(range(2025, 2031))
+    schedule = {2025: 45.0, 2030: 48.15}
+    expected = {
+        2025: 45.0,
+        2026: 45.0,
+        2027: 45.0,
+        2028: 45.0,
+        2029: 45.0,
+        2030: 48.15,
+    }
+
+    scenarios = [
+        {"carbon_policy_enabled": False, "allowance_banking_enabled": True},
+        {"carbon_policy_enabled": False, "allowance_banking_enabled": False},
+    ]
+
+    for options in scenarios:
+        config = _baseline_config()
+        frames = _frames_for_years(years)
+        result = run_policy_simulation(
+            config,
+            start_year=2025,
+            end_year=2030,
+            frames=frames,
+            carbon_price_enabled=True,
+            carbon_price_schedule=schedule,
+            **options,
+        )
+
+        assert "error" not in result
+        _assert_price_schedule(result, expected)
+        _cleanup_temp_dir(result)
 
 
 def test_backend_errors_when_demand_years_do_not_overlap():
@@ -676,6 +764,40 @@ def test_backend_banking_toggle_disables_bank(tmp_path, caplog):
     _cleanup_temp_dir(result)
 
 
+def test_backend_builds_price_schedule_for_run_years(monkeypatch):
+    real_runner = importlib.import_module("engine.run_loop").run_end_to_end_from_frames
+    captured: dict[str, object] = {}
+
+    def capturing_runner(frames, **kwargs):
+        captured["carbon_price_schedule"] = kwargs.get("carbon_price_schedule")
+        return real_runner(frames, **kwargs)
+
+    monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: capturing_runner)
+
+    config = _baseline_config()
+    frames = _frames_for_years([2025, 2026, 2027, 2028, 2029, 2030])
+
+    result = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2030,
+        frames=frames,
+        carbon_policy_enabled=False,
+        carbon_price_enabled=True,
+        carbon_price_value=45.0,
+        carbon_price_escalator_pct=7.0,
+    )
+
+    assert "error" not in result
+
+    schedule = captured.get("carbon_price_schedule")
+    assert isinstance(schedule, Mapping)
+    expected = _build_price_schedule(2025, 2030, 45.0, 7.0)
+    assert schedule == expected
+
+    _cleanup_temp_dir(result)
+
+
 def test_backend_bank_column_tracks_allowances(tmp_path):
     config = _baseline_config()
     frames = _frames_for_years([2025, 2026])
@@ -688,6 +810,7 @@ def test_backend_bank_column_tracks_allowances(tmp_path):
         frames=frames,
         allowance_banking_enabled=True,
     )
+
 
     assert "error" not in result
     annual = result["annual"].copy()
