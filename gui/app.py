@@ -769,27 +769,71 @@ def _merge_price_schedules(
     return dict(sorted(merged.items()))
 
 
-def _build_price_schedule(
-    start: int,
-    end: int,
-    base: float,
-    esc_pct: float,
+def _expand_or_build_price_schedule(
+    schedule: Mapping[int, float] | None,
+    years: Iterable[int] | None = None,
+    *,
+    start: int | None = None,
+    end: int | None = None,
+    base: float | None = None,
+    esc_pct: float | None = None,
 ) -> dict[int, float]:
-    """Return a contiguous price schedule grown by ``esc_pct`` per year."""
+    """
+    Expand an explicit schedule to all years, or build a schedule with escalator logic.
 
+    - If `schedule` is provided, expand it across the requested `years` with no gaps.
+    - If `schedule` is empty, but start/end/base/esc_pct are given, build a schedule
+      growing by esc_pct% per year.
+    """
+
+    # Case 1: Explicit schedule provided
+    if schedule:
+        normalized_years: list[int] = []
+        if years is not None:
+            for entry in years:
+                try:
+                    normalized_years.append(int(entry))
+                except (TypeError, ValueError):
+                    continue
+
+        schedule_items = [(int(year), float(price)) for year, price in schedule.items()]
+        if not schedule_items:
+            return {}
+
+        schedule_items.sort(key=lambda item: item[0])
+        if not normalized_years:
+            return dict(schedule_items)
+
+        expanded: dict[int, float] = {}
+        sorted_years = sorted(dict.fromkeys(normalized_years))
+        current_price = schedule_items[0][1]
+        index = 0
+        total_schedule = len(schedule_items)
+
+        for year in sorted_years:
+            while index < total_schedule and schedule_items[index][0] <= year:
+                current_price = schedule_items[index][1]
+                index += 1
+            expanded[year] = float(current_price)
+        return expanded
+
+    # Case 2: Build schedule from base + escalator
     try:
-        start_year = int(start)
-        end_year = int(end)
+        start_year = int(start) if start is not None else None
+        end_year = int(end) if end is not None else None
     except (TypeError, ValueError):
         return {}
 
+    if start_year is None or end_year is None:
+        return {}
+
     try:
-        base_value = float(base)
+        base_value = float(base) if base is not None else 0.0
     except (TypeError, ValueError):
         base_value = 0.0
 
     try:
-        escalator_value = float(esc_pct)
+        escalator_value = float(esc_pct) if esc_pct is not None else 0.0
     except (TypeError, ValueError):
         escalator_value = 0.0
 
@@ -806,6 +850,7 @@ def _build_price_schedule(
         schedule[year] = round(base_value * factor, 6)
         exponent += 1
     return schedule
+
 
 
 def _build_price_escalator_schedule(
@@ -4189,6 +4234,15 @@ def run_policy_simulation(
         escalator_pct=carbon_price_escalator_pct,
     )
 
+    # Expand any provided carbon price schedule across all modeled years
+    if price_cfg.schedule:
+        expanded_schedule = _expand_or_build_price_schedule(
+            price_cfg.schedule,
+            years,
+        )
+        price_cfg.schedule = expanded_schedule if expanded_schedule else {}
+
+    # Track whether cap constraints were explicitly requested
     explicit_cap_request = (coverage_regions is not None) or (cap_regions is not None)
 
     if price_cfg.active:
@@ -4198,7 +4252,9 @@ def run_policy_simulation(
             and explicit_cap_request
             and not deep_carbon_pricing
         ):
-            return {"error": "Cannot enable both carbon cap and carbon price simultaneously."}
+            return {
+                "error": "Cannot enable both carbon cap and carbon price simultaneously."
+            }
         if not deep_carbon_pricing:
             carbon_policy_cfg.disable_for_price()
 
@@ -4207,6 +4263,7 @@ def run_policy_simulation(
         if coverage_regions is not None
         else merged_modules.get("carbon_policy", {}).get("coverage_regions", ["All"])
     )
+
 
 
     policy_enabled = bool(carbon_policy_cfg.enabled)

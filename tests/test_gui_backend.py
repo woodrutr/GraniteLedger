@@ -3,6 +3,7 @@ import io
 import shutil
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -53,6 +54,12 @@ def _cleanup_temp_dir(result: dict) -> None:
     temp_dir = result.get("temp_dir")
     if temp_dir:
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def _assert_price_schedule(result: Mapping[str, Any], expected: Mapping[int, float]) -> None:
+    annual = result["annual"].set_index("year")
+    for year, price in expected.items():
+        assert annual.loc[year, "p_co2"] == pytest.approx(price, rel=0.0, abs=1e-9)
 
 
 def test_write_outputs_to_temp_falls_back_when_default_unwritable(monkeypatch):
@@ -485,6 +492,41 @@ def test_backend_control_period_override_applies(monkeypatch):
     assert carbon_cfg.get("control_period_years") == 4
 
     _cleanup_temp_dir(result)
+
+
+def test_price_schedule_forward_fills_without_cap_or_banking():
+    years = list(range(2025, 2031))
+    schedule = {2025: 45.0, 2030: 48.15}
+    expected = {
+        2025: 45.0,
+        2026: 45.0,
+        2027: 45.0,
+        2028: 45.0,
+        2029: 45.0,
+        2030: 48.15,
+    }
+
+    scenarios = [
+        {"carbon_policy_enabled": False, "allowance_banking_enabled": True},
+        {"carbon_policy_enabled": False, "allowance_banking_enabled": False},
+    ]
+
+    for options in scenarios:
+        config = _baseline_config()
+        frames = _frames_for_years(years)
+        result = run_policy_simulation(
+            config,
+            start_year=2025,
+            end_year=2030,
+            frames=frames,
+            carbon_price_enabled=True,
+            carbon_price_schedule=schedule,
+            **options,
+        )
+
+        assert "error" not in result
+        _assert_price_schedule(result, expected)
+        _cleanup_temp_dir(result)
 
 
 def test_backend_errors_when_demand_years_do_not_overlap():
