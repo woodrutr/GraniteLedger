@@ -62,6 +62,11 @@ except ModuleNotFoundError:  # pragma: no cover - compatibility fallback
         OutputsModuleSettings,
     )
 
+try:
+    from gui import price_floor
+except ModuleNotFoundError:  # pragma: no cover - compatibility fallback
+    import price_floor  # type: ignore[import-not-found]
+
 # Region metadata helpers (robust to running as a script)
 try:
     from gui.region_metadata import (
@@ -276,6 +281,10 @@ class CarbonModuleSettings:
     cap_reduction_mode: str = "percent"
     cap_reduction_value: float = 0.0
     cap_schedule: dict[int, float] = field(default_factory=dict)
+    floor_value: float = 0.0
+    floor_escalator_mode: str = "fixed"
+    floor_escalator_value: float = 0.0
+    floor_schedule: dict[int, float] = field(default_factory=dict)
     price_schedule: dict[int, float] = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
 
@@ -295,6 +304,9 @@ class CarbonPolicyConfig:
     ccr2_escalator_pct: float = 0.0
     allowance_banking_enabled: bool = True
     control_period_years: int | None = None
+    floor_value: float = 0.0
+    floor_escalator_mode: str = "fixed"
+    floor_escalator_value: float = 0.0
 
     @classmethod
     def from_mapping(
@@ -308,6 +320,9 @@ class CarbonPolicyConfig:
         ccr2_enabled: bool | None = None,
         allowance_banking_enabled: bool | None = None,
         control_period_years: int | None = None,
+        floor_value: float | None = None,
+        floor_escalator_mode: str | None = None,
+        floor_escalator_value: float | None = None,
         ccr1_price: float | None = None,
         ccr2_price: float | None = None,
         ccr1_escalator_pct: float | None = None,
@@ -334,6 +349,21 @@ class CarbonPolicyConfig:
             else record.get('control_period_years')
         )
 
+        floor_value_raw = floor_value if floor_value is not None else record.get("floor_value")
+        floor_value_val = price_floor.parse_currency_value(floor_value_raw, 0.0)
+        floor_mode_raw = (
+            floor_escalator_mode if floor_escalator_mode is not None else record.get("floor_escalator_mode")
+        )
+        floor_mode_val = str(floor_mode_raw or "fixed").strip().lower()
+        if floor_mode_val not in {"fixed", "percent"}:
+            floor_mode_val = "fixed"
+        floor_escalator_raw = (
+            floor_escalator_value if floor_escalator_value is not None else record.get("floor_escalator_value")
+        )
+        if floor_mode_val == "percent":
+            floor_escalator_val = price_floor.parse_percentage_value(floor_escalator_raw, 0.0)
+        else:
+            floor_escalator_val = price_floor.parse_currency_value(floor_escalator_raw, 0.0)
         def _coerce_optional(value: Any, fallback: float | None) -> float | None:
             if value in (None, ""):
                 return fallback
@@ -375,6 +405,9 @@ class CarbonPolicyConfig:
             ccr2_escalator_pct=float(ccr2_escalator_val),
             allowance_banking_enabled=banking_val,
             control_period_years=control_period_val,
+            floor_value=float(floor_value_val),
+            floor_escalator_mode=str(floor_mode_val),
+            floor_escalator_value=float(floor_escalator_val),
         )
 
         if not config.enabled:
@@ -1730,6 +1763,50 @@ def _render_carbon_policy_section(
         cap_reduction_mode_default = "percent"
     cap_reduction_value_default = _coerce_float(defaults.get("cap_reduction_value"), 0.0)
 
+    floor_schedule_default = _normalize_price_schedule(
+        defaults.get("floor_schedule")
+    )
+    if not floor_schedule_default and isinstance(allowance_defaults, Mapping):
+        floor_schedule_default = _normalize_price_schedule(
+            allowance_defaults.get("floor")
+        )
+
+    floor_value_default = price_floor.parse_currency_value(
+        defaults.get("floor_value"), 0.0
+    )
+    floor_mode_default = str(
+        defaults.get("floor_escalator_mode", "fixed")
+    ).strip().lower()
+    if floor_mode_default not in {"fixed", "percent"}:
+        floor_mode_default = "fixed"
+
+    raw_floor_escalator_default = defaults.get("floor_escalator_value")
+    if floor_mode_default == "percent":
+        floor_escalator_default = price_floor.parse_percentage_value(
+            raw_floor_escalator_default, 0.0
+        )
+    else:
+        floor_escalator_default = price_floor.parse_currency_value(
+            raw_floor_escalator_default, 0.0
+        )
+
+    inferred_floor = price_floor.infer_parameters(
+        floor_schedule_default,
+        default_base=floor_value_default,
+        default_type=floor_mode_default,
+        default_escalator=floor_escalator_default,
+    )
+    floor_value_default = inferred_floor.base_value
+    floor_mode_default = inferred_floor.escalation_type
+    if floor_mode_default == "percent":
+        floor_escalator_default = price_floor.parse_percentage_value(
+            raw_floor_escalator_default, inferred_floor.escalation_value
+        )
+    else:
+        floor_escalator_default = price_floor.parse_currency_value(
+            raw_floor_escalator_default, inferred_floor.escalation_value
+        )
+
     def _extend_years(source: Iterable[Any] | None) -> None:
         if isinstance(source, Iterable) and not isinstance(source, (str, bytes, Mapping)):
             for entry in source:
@@ -1858,6 +1935,9 @@ def _render_carbon_policy_section(
         st.session_state["carbon_cap_reduction_mode"] = cap_reduction_mode_default
         st.session_state["carbon_cap_reduction_percent"] = float(cap_percent_default)
         st.session_state["carbon_cap_reduction_fixed"] = float(cap_fixed_default)
+        st.session_state["carbon_floor_value_input"] = f"{floor_value_default:.2f}"
+        st.session_state["carbon_floor_mode"] = floor_mode_default
+        st.session_state["carbon_floor_escalator_input"] = f"{floor_escalator_default:.2f}"
 
     # -------------------------
     # Session defaults and change tracking
@@ -1881,6 +1961,29 @@ def _render_carbon_policy_section(
         cap_fixed_default = float(
             st.session_state.setdefault("carbon_cap_reduction_fixed", cap_fixed_default)
         )
+        floor_value_text_default = st.session_state.setdefault(
+            "carbon_floor_value_input", f"{floor_value_default:.2f}"
+        )
+        floor_value_default = price_floor.parse_currency_value(
+            floor_value_text_default, floor_value_default
+        )
+        floor_mode_default = str(
+            st.session_state.setdefault("carbon_floor_mode", floor_mode_default)
+        ).strip().lower()
+        if floor_mode_default not in {"fixed", "percent"}:
+            floor_mode_default = "fixed"
+            st.session_state["carbon_floor_mode"] = floor_mode_default
+        floor_escalator_text_default = st.session_state.setdefault(
+            "carbon_floor_escalator_input", f"{floor_escalator_default:.2f}"
+        )
+        if floor_mode_default == "percent":
+            floor_escalator_default = price_floor.parse_percentage_value(
+                floor_escalator_text_default, floor_escalator_default
+            )
+        else:
+            floor_escalator_default = price_floor.parse_currency_value(
+                floor_escalator_text_default, floor_escalator_default
+            )
 
     bank_value_default = bank_default
     if st is not None:  # GUI path
@@ -1975,6 +2078,11 @@ def _render_carbon_policy_section(
     # -------------------------
     # Carbon Cap Panel
     # -------------------------
+    floor_value = float(floor_value_default)
+    floor_mode = str(floor_mode_default)
+    floor_escalator_value = float(floor_escalator_default)
+    floor_schedule: dict[int, float] = dict(floor_schedule_default)
+
     with _sidebar_panel(container, enabled and not locked) as cap_panel:
         enable_floor = cap_panel.toggle(
             "Enable price floor",
@@ -1982,6 +2090,65 @@ def _render_carbon_policy_section(
             key="carbon_floor",
             disabled=(not enabled) or locked,
         )
+        if enable_floor:
+            floor_value_text = cap_panel.text_input(
+                "Price floor ($/ton)",
+                value=(st.session_state.get("carbon_floor_value_input") if st is not None else f"{floor_value_default:.2f}"),
+                key="carbon_floor_value_input",
+                disabled=(not enabled) or locked,
+                help="Specify the minimum auction clearing price. Values are rounded to two decimals.",
+            )
+            floor_value = price_floor.parse_currency_value(floor_value_text, floor_value_default)
+            floor_mode = cap_panel.radio(
+                "Floor escalates by",
+                options=("fixed", "percent"),
+                index=0 if floor_mode_default == "fixed" else 1,
+                format_func=lambda option: (
+                    "Fixed amount ($/ton per year)" if option == "fixed" else "Percent (% per year)"
+                ),
+                key="carbon_floor_mode",
+                disabled=(not enabled) or locked,
+            )
+            escalator_label = (
+                "Annual increase ($/ton)" if floor_mode == "fixed" else "Annual increase (%)"
+            )
+            escalator_value_default = (
+                f"{floor_escalator_default:.2f}"
+                if st is None
+                else st.session_state.get("carbon_floor_escalator_input", f"{floor_escalator_default:.2f}")
+            )
+            floor_escalator_text = cap_panel.text_input(
+                escalator_label,
+                value=escalator_value_default,
+                key="carbon_floor_escalator_input",
+                disabled=(not enabled) or locked,
+                help="Set to 0 for a constant floor across all modeled years.",
+            )
+            if floor_mode == "percent":
+                floor_escalator_value = price_floor.parse_percentage_value(
+                    floor_escalator_text, floor_escalator_default
+                )
+            else:
+                floor_escalator_value = price_floor.parse_currency_value(
+                    floor_escalator_text, floor_escalator_default
+                )
+            schedule_years = list(active_years)
+            if not schedule_years:
+                schedule_years = sorted(floor_schedule_default) if floor_schedule_default else []
+            if not schedule_years:
+                start_year_raw = run_config.get("start_year")
+                try:
+                    schedule_years = [int(start_year_raw)] if start_year_raw is not None else []
+                except (TypeError, ValueError):
+                    schedule_years = []
+            floor_schedule = price_floor.build_schedule(
+                schedule_years,
+                floor_value,
+                floor_mode,
+                floor_escalator_value,
+            )
+        else:
+            floor_schedule = {}
         enable_ccr = cap_panel.toggle(
             "Enable CCR",
             value=enable_ccr_default,
@@ -2067,6 +2234,10 @@ def _render_carbon_policy_section(
             cap_schedule = dict(cap_schedule_default)
         else:
             cap_schedule = dict(cap_schedule_default)
+        floor_value = float(floor_value_default)
+        floor_mode = str(floor_mode_default)
+        floor_escalator_value = float(floor_escalator_default)
+        floor_schedule = dict(floor_schedule_default) if enable_floor else {}
 
         if enabled and enable_ccr and ccr1_enabled:
             default_price1 = float(ccr1_price_default) if ccr1_price_default is not None else 0.0
@@ -2237,6 +2408,7 @@ def _render_carbon_policy_section(
     # -------------------------
     if not enabled:
         cap_schedule = {}
+        floor_schedule = {}
 
     errors: list[str] = []
     deep_enabled = bool(
@@ -2272,6 +2444,9 @@ def _render_carbon_policy_section(
             "cap_start_value": float(cap_start_value),
             "cap_reduction_mode": str(cap_reduction_mode),
             "cap_reduction_value": float(cap_reduction_value),
+            "floor_value": float(floor_value),
+            "floor_escalator_mode": str(floor_mode),
+            "floor_escalator_value": float(floor_escalator_value),
         }
     )
 
@@ -2290,6 +2465,10 @@ def _render_carbon_policy_section(
     else:
         carbon_module.pop("cap_schedule", None)
 
+    if enabled and enable_floor and floor_schedule:
+        carbon_module["floor_schedule"] = dict(floor_schedule)
+    else:
+        carbon_module.pop("floor_schedule", None)
     if policy_region_values:
         carbon_module["regions"] = list(policy_region_values)
     else:
@@ -2303,6 +2482,12 @@ def _render_carbon_policy_section(
     elif not enabled:
         allowance_market_module.pop("cap", None)
 
+    if enabled and enable_floor and floor_schedule:
+        allowance_market_module["floor"] = {
+            int(year): float(value) for year, value in floor_schedule.items()
+        }
+    elif not enabled or not enable_floor:
+        allowance_market_module.pop("floor", None)
     price_module = modules.setdefault("carbon_price", {})
     price_module["enabled"] = bool(price_enabled)
     if price_enabled:
@@ -2348,6 +2533,10 @@ def _render_carbon_policy_section(
         cap_reduction_mode=str(cap_reduction_mode),
         cap_reduction_value=float(cap_reduction_value),
         cap_schedule=cap_schedule,
+        floor_value=float(floor_value),
+        floor_escalator_mode=str(floor_mode),
+        floor_escalator_value=float(floor_escalator_value),
+        floor_schedule=floor_schedule,
         price_schedule=price_schedule,
         errors=errors,
     )
@@ -4301,6 +4490,10 @@ def run_policy_simulation(
     carbon_cap_reduction_mode: str | None = None,
     carbon_cap_reduction_value: float | None = None,
     carbon_cap_schedule: Mapping[int, float] | Mapping[str, Any] | None = None,
+    price_floor_value: float | None = None,
+    price_floor_escalator_mode: str | None = None,
+    price_floor_escalator_value: float | None = None,
+    price_floor_schedule: Mapping[int, float] | Mapping[str, Any] | None = None,
     dispatch_use_network: bool = False,
     dispatch_capacity_expansion: bool | None = None,
     deep_carbon_pricing: bool = False,
@@ -4467,6 +4660,57 @@ def run_policy_simulation(
         except (TypeError, ValueError):
             cap_reduction_value_norm = 0.0
 
+    floor_base_value = price_floor.parse_currency_value(
+        price_floor_value if price_floor_value is not None else carbon_policy_cfg.floor_value,
+        carbon_policy_cfg.floor_value,
+    )
+    floor_mode_norm = str(
+        price_floor_escalator_mode
+        if price_floor_escalator_mode is not None
+        else carbon_policy_cfg.floor_escalator_mode
+    ).strip().lower()
+    if floor_mode_norm not in {"fixed", "percent"}:
+        floor_mode_norm = "fixed"
+    escalator_input = (
+        price_floor_escalator_value
+        if price_floor_escalator_value is not None
+        else carbon_policy_cfg.floor_escalator_value
+    )
+    if floor_mode_norm == "percent":
+        floor_escalator_norm = price_floor.parse_percentage_value(
+            escalator_input, carbon_policy_cfg.floor_escalator_value
+        )
+    else:
+        floor_escalator_norm = price_floor.parse_currency_value(
+            escalator_input, carbon_policy_cfg.floor_escalator_value
+        )
+    provided_floor_schedule = price_floor_schedule
+    if not isinstance(provided_floor_schedule, Mapping) or not provided_floor_schedule:
+        provided_floor_schedule = carbon_record.get("floor_schedule")
+    if (
+        (not isinstance(provided_floor_schedule, Mapping) or not provided_floor_schedule)
+        and isinstance(market_cfg, Mapping)
+    ):
+        provided_floor_schedule = market_cfg.get("floor")
+    provided_schedule_map: dict[int, float] = {}
+    if isinstance(provided_floor_schedule, Mapping):
+        for year_key, value in provided_floor_schedule.items():
+            try:
+                year_int = int(year_key)
+                provided_schedule_map[year_int] = float(value)
+            except (TypeError, ValueError):
+                continue
+    baseline_floor_schedule: dict[int, float] = {}
+    if policy_enabled and floor_flag:
+        baseline_floor_schedule = price_floor.build_schedule(
+            years,
+            floor_base_value,
+            floor_mode_norm,
+            floor_escalator_norm,
+        )
+    if provided_schedule_map:
+        baseline_floor_schedule.update(provided_schedule_map)
+    floor_schedule_map = dict(sorted(baseline_floor_schedule.items())) if baseline_floor_schedule else {}
     carbon_record.update(
         {
             "enabled": policy_enabled,
@@ -4483,8 +4727,16 @@ def run_policy_simulation(
             "cap_start_value": cap_start_value_norm,
             "cap_reduction_mode": cap_reduction_mode_norm,
             "cap_reduction_value": float(cap_reduction_value_norm),
+            "floor_value": float(floor_base_value),
+            "floor_escalator_mode": str(floor_mode_norm),
+            "floor_escalator_value": float(floor_escalator_norm),
         }
     )
+
+    if floor_schedule_map:
+        carbon_record["floor_schedule"] = dict(sorted(floor_schedule_map.items()))
+    else:
+        carbon_record.pop("floor_schedule", None)
 
     merged_modules["carbon_price"] = price_cfg.as_dict()
 
@@ -4586,6 +4838,10 @@ def run_policy_simulation(
     elif not policy_enabled:
         allowance_market_record.pop("cap", None)
 
+    if policy_enabled and floor_schedule_map:
+        allowance_market_record["floor"] = dict(sorted(floor_schedule_map.items()))
+    elif not policy_enabled or not floor_flag:
+        allowance_market_record.pop("floor", None)
     existing_allowance_cfg = config.get("allowance_market")
     if isinstance(existing_allowance_cfg, Mapping):
         allowance_config = dict(existing_allowance_cfg)
@@ -4603,6 +4859,10 @@ def run_policy_simulation(
         allowance_config["cap"] = dict(sorted(cap_schedule_map.items()))
     elif not policy_enabled:
         allowance_config.pop("cap", None)
+    if policy_enabled and floor_schedule_map:
+        allowance_config["floor"] = dict(sorted(floor_schedule_map.items()))
+    elif not policy_enabled or not floor_flag:
+        allowance_config.pop("floor", None)
     config["allowance_market"] = allowance_config
     try:
         normalized_regions, cap_region_aliases = _normalize_cap_region_entries(cap_regions)
@@ -5752,6 +6012,10 @@ def main() -> None:
         cap_reduction_mode="percent",
         cap_reduction_value=0.0,
         cap_schedule={},
+        floor_value=0.0,
+        floor_escalator_mode="fixed",
+        floor_escalator_value=0.0,
+        floor_schedule={},
         price_schedule={},
         errors=[],
     )
@@ -5966,6 +6230,10 @@ def main() -> None:
         "end_year": int(end_year_val),
         "carbon_policy_enabled": bool(carbon_settings.enabled),
         "enable_floor": bool(carbon_settings.enable_floor),
+        "price_floor_value": float(carbon_settings.floor_value),
+        "price_floor_escalator_mode": str(carbon_settings.floor_escalator_mode),
+        "price_floor_escalator_value": float(carbon_settings.floor_escalator_value),
+        "price_floor_schedule": dict(carbon_settings.floor_schedule),
         "enable_ccr": bool(carbon_settings.enable_ccr),
         "ccr1_enabled": bool(carbon_settings.ccr1_enabled),
         "ccr2_enabled": bool(carbon_settings.ccr2_enabled),
@@ -6184,6 +6452,18 @@ def main() -> None:
                     ),
                     control_period_years=inputs_for_run.get(
                         "control_period_years", carbon_settings.control_period_years
+                    ),
+                    price_floor_value=inputs_for_run.get(
+                        "price_floor_value", carbon_settings.floor_value
+                    ),
+                    price_floor_escalator_mode=inputs_for_run.get(
+                        "price_floor_escalator_mode", carbon_settings.floor_escalator_mode
+                    ),
+                    price_floor_escalator_value=inputs_for_run.get(
+                        "price_floor_escalator_value", carbon_settings.floor_escalator_value
+                    ),
+                    price_floor_schedule=inputs_for_run.get(
+                        "price_floor_schedule", carbon_settings.floor_schedule
                     ),
                     cap_regions=inputs_for_run.get(
                         "cap_regions", getattr(carbon_settings, "cap_regions", [])
