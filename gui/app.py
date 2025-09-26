@@ -1523,15 +1523,10 @@ def _render_general_config_section(
     if end_default <= start_default:
         end_default = start_default + 1
 
-    slider_min_dynamic = min(year_min, start_default, end_default)
-    slider_max_dynamic = max(year_max, start_default, end_default)
-    if slider_min_dynamic == slider_max_dynamic:
-        slider_min_dynamic -= 1
-        slider_max_dynamic += 1
-    if slider_min_dynamic >= slider_max_dynamic:
-        slider_max_dynamic = slider_min_dynamic + 1
-    slider_min_dynamic = int(slider_min_dynamic)
-    slider_max_dynamic = int(slider_max_dynamic)
+    # Hard bounds
+    slider_min_dynamic = 2025
+    slider_max_dynamic = 2050
+
     slider_min_value, slider_max_value = container.slider(
         "Simulation Years",
         min_value=slider_min_dynamic,
@@ -1546,6 +1541,7 @@ def _render_general_config_section(
         step=1,
         key="general_year_slider",
     )
+
 
     start_year = int(slider_min_value)
     end_year = int(slider_max_value)
