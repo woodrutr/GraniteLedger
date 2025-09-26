@@ -4323,17 +4323,11 @@ def run_policy_simulation(
     explicit_cap_request = (coverage_regions is not None) or (cap_regions is not None)
 
     if price_cfg.active:
-        if (
-            carbon_policy_cfg.enabled
-            and policy_override
-            and explicit_cap_request
-            and not deep_carbon_pricing
-        ):
+        if carbon_policy_cfg.enabled and policy_override and explicit_cap_request:
             return {
                 "error": "Cannot enable both carbon cap and carbon price simultaneously."
             }
-        if not deep_carbon_pricing:
-            carbon_policy_cfg.disable_for_price()
+        carbon_policy_cfg.disable_for_price()
 
     normalized_coverage = _normalize_coverage_selection(
         coverage_regions

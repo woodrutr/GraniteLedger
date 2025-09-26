@@ -858,16 +858,12 @@ def test_backend_mutual_exclusion_without_deep():
     assert result.get("error") == "Cannot enable both carbon cap and carbon price simultaneously."
 
 
-def test_backend_deep_carbon_combines_prices(monkeypatch):
+def test_backend_rejects_combined_controls_even_in_deep_mode(monkeypatch):
     real_runner = importlib.import_module("engine.run_loop").run_end_to_end_from_frames
-    captured: dict[str, object] = {}
+    called: dict[str, bool] = {}
 
     def capturing_runner(frames, **kwargs):
-        captured["deep_carbon_pricing"] = kwargs.get("deep_carbon_pricing")
-        captured["capacity_expansion"] = kwargs.get("capacity_expansion")
-        captured["report_by_technology"] = kwargs.get("report_by_technology")
-        kwargs.pop("capacity_expansion", None)
-        kwargs.pop("report_by_technology", None)
+        called["executed"] = True
         return real_runner(frames, **kwargs)
 
     monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: capturing_runner)
@@ -887,23 +883,8 @@ def test_backend_deep_carbon_combines_prices(monkeypatch):
         deep_carbon_pricing=True,
     )
 
-    assert "error" not in result
-    assert captured.get("deep_carbon_pricing") is True
-
-    annual = result["annual"]
-    row = annual.loc[annual["year"] == 2025].iloc[0]
-    allowance_price = float(row["allowance_price_allowance_component"])
-    exogenous_price = float(row["allowance_price_exogenous_component"])
-    effective_price = float(row["allowance_price_effective"])
-
-    assert row["allowance_price"] == pytest.approx(allowance_price)
-    assert exogenous_price == pytest.approx(15.0)
-    assert effective_price == pytest.approx(allowance_price + exogenous_price)
-
-    dispatch_cfg = result["module_config"].get("electricity_dispatch", {})
-    assert dispatch_cfg.get("deep_carbon_pricing") is True
-
-    _cleanup_temp_dir(result)
+    assert result.get("error") == "Cannot enable both carbon cap and carbon price simultaneously."
+    assert "executed" not in called
 
 
 def test_backend_reports_missing_deep_support(monkeypatch):
@@ -935,8 +916,7 @@ def test_backend_reports_missing_deep_support(monkeypatch):
         start_year=2025,
         end_year=2025,
         frames=frames,
-        carbon_policy_enabled=True,
-        cap_regions=[1],
+        carbon_policy_enabled=False,
         carbon_price_enabled=True,
         carbon_price_value=20.0,
         deep_carbon_pricing=True,
