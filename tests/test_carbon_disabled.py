@@ -90,7 +90,7 @@ def test_engine_matches_dispatch_when_policy_disabled():
     )
 
     annual = outputs.annual.set_index("year")
-    assert annual["allowance_price"].eq(0.0).all()
+    assert annual["p_co2"].eq(0.0).all()
     assert annual["bank"].eq(0.0).all()
     assert annual["obligation"].eq(0.0).all()
 
@@ -112,7 +112,7 @@ def test_policy_disabled_with_minimal_inputs():
     outputs = run_end_to_end_from_frames(frames, years=years)
 
     annual = outputs.annual.set_index("year")
-    assert annual.loc[years[0], "allowance_price"] == pytest.approx(0.0)
+    assert annual.loc[years[0], "p_co2"] == pytest.approx(0.0)
     assert annual.loc[years[0], "bank"] == pytest.approx(0.0)
     assert annual.loc[years[0], "obligation"] == pytest.approx(0.0)
 
@@ -128,7 +128,7 @@ def test_policy_disabled_applies_carbon_price_schedule():
     )
 
     annual = outputs.annual.set_index("year")
-    assert annual.loc[years[0], "allowance_price"] == pytest.approx(price_value)
+    assert annual.loc[years[0], "p_co2"] == pytest.approx(price_value)
 
     dispatch = solve_single(
         years[0],
