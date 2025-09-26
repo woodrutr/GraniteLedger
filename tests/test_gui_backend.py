@@ -60,7 +60,7 @@ def _cleanup_temp_dir(result: dict) -> None:
 def _assert_price_schedule(result: Mapping[str, Any], expected: Mapping[int, float]) -> None:
     annual = result["annual"].set_index("year")
     for year, price in expected.items():
-        assert annual.loc[year, "allowance_price"] == pytest.approx(
+        assert annual.loc[year, "p_co2"] == pytest.approx(
             price, rel=0.0, abs=1e-9
         )
 
@@ -128,7 +128,7 @@ def test_backend_generates_outputs(tmp_path):
     assert "error" not in result
     annual = result["annual"]
     assert not annual.empty
-    assert {"allowance_price", "emissions_tons", "bank"}.issubset(annual.columns)
+    assert {"p_co2", "emissions_tons", "bank"}.issubset(annual.columns)
 
     csv_files = result["csv_files"]
     assert {
@@ -168,11 +168,11 @@ def test_backend_policy_toggle_affects_price():
     assert "error" not in disabled
 
     price_enabled = float(
-        enabled["annual"].loc[enabled["annual"]["year"] == 2025, "allowance_price"].iloc[0]
+        enabled["annual"].loc[enabled["annual"]["year"] == 2025, "p_co2"].iloc[0]
     )
     price_disabled = float(
         disabled["annual"].loc[
-            disabled["annual"]["year"] == 2025, "allowance_price"
+            disabled["annual"]["year"] == 2025, "p_co2"
         ].iloc[0]
     )
 
@@ -302,8 +302,9 @@ def test_render_results_carbon_price_hides_allowance_columns(monkeypatch):
     allowed_columns = {
         "year",
         "Carbon price ($/ton)",
-        "p_co2_exogenous",
-        "p_co2_effective",
+        "p_co2_all",
+        "p_co2_exc",
+        "p_co2_eff",
         "emissions_tons",
     }
     disallowed_columns = {"allowances_total", "bank"}
@@ -359,7 +360,7 @@ def test_backend_handles_renamed_engine_outputs(monkeypatch):
     config = _baseline_config()
     frames = _frames_for_years([2025])
 
-    annual = pd.DataFrame([{"year": 2025, "allowance_price": 12.0}])
+    annual = pd.DataFrame([{"year": 2025, "p_co2": 12.0}])
     emissions = pd.DataFrame([{"year": 2025, "region": "default", "emissions_tons": 1.0}])
     prices = pd.DataFrame([{"year": 2025, "region": "default", "price": 45.0}])
     flows = pd.DataFrame(
@@ -405,7 +406,7 @@ def test_backend_handles_legacy_runner_without_deep_kw(monkeypatch):
     config = _baseline_config()
     frames = _frames_for_years([2025])
 
-    annual = pd.DataFrame([{"year": 2025, "allowance_price": 12.0}])
+    annual = pd.DataFrame([{"year": 2025, "p_co2": 12.0}])
     emissions = pd.DataFrame([{"year": 2025, "region": "default", "emissions_tons": 1.0}])
     prices = pd.DataFrame([{"year": 2025, "region": "default", "price": 45.0}])
     flows = pd.DataFrame(
@@ -892,11 +893,11 @@ def test_backend_deep_carbon_combines_prices(monkeypatch):
 
     annual = result["annual"]
     row = annual.loc[annual["year"] == 2025].iloc[0]
-    allowance_price = float(row["allowance_price_allowance_component"])
-    exogenous_price = float(row["allowance_price_exogenous_component"])
-    effective_price = float(row["allowance_price_effective"])
+    allowance_price = float(row["p_co2_all"])
+    exogenous_price = float(row["p_co2_exc"])
+    effective_price = float(row["p_co2_eff"])
 
-    assert row["allowance_price"] == pytest.approx(allowance_price)
+    assert row["p_co2"] == pytest.approx(allowance_price)
     assert exogenous_price == pytest.approx(15.0)
     assert effective_price == pytest.approx(allowance_price + exogenous_price)
 
