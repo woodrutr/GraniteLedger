@@ -2165,17 +2165,6 @@ def _render_dispatch_section(
             disabled=not enabled,
             key="dispatch_reserve",
         )
-        deep_carbon_pricing = panel.toggle(
-            "Enable deep carbon pricing",
-            value=deep_default,
-            disabled=not enabled,
-            key="dispatch_deep_carbon",
-            help=(
-                "Allows simultaneous use of allowance clearing prices and exogenous "
-                "carbon prices when solving dispatch."
-            ),
-        )
-
         default_deep_value = deep_default
         if st is not None:
             default_deep_value = bool(
@@ -2186,6 +2175,10 @@ def _render_dispatch_section(
             value=default_deep_value,
             disabled=not enabled,
             key="dispatch_deep_carbon",
+            help=(
+                "Allows simultaneous use of allowance clearing prices and exogenous "
+                "carbon prices when solving dispatch."
+            ),
         )
 
         if enabled:
