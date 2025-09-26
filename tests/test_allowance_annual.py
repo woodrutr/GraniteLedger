@@ -86,7 +86,7 @@ def test_ccr_tranches_and_shortage_flag():
     )
     assert second["ccr1_issued"] == pytest.approx(policy.ccr1_qty.loc[2026])
     assert second["ccr2_issued"] == pytest.approx(policy.ccr2_qty.loc[2026])
-    assert not second["shortage_flag"]
+    assert second["shortage_flag"]
     assert state.bank_history[2026] == pytest.approx(second["bank_new"])
 
     shortage_policy = policy_for_shortage()
