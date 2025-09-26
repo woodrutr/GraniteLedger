@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib
+import json
+import logging
 from collections.abc import Mapping
 from types import SimpleNamespace
 
@@ -147,6 +149,50 @@ def test_progress_callback_reports_each_year():
     assert int(final_payload.get("index", -1)) == len(YEARS) - 1
     assert "price" in final_payload
     assert "iterations" in final_payload
+
+
+def test_debug_logging_includes_full_metrics(caplog):
+    frames = _three_year_frames()
+
+    with caplog.at_level(logging.DEBUG, logger="engine.run_loop"):
+        run_end_to_end_from_frames(
+            frames,
+            years=YEARS,
+            price_initial=0.0,
+            tol=1e-4,
+            relaxation=0.8,
+        )
+
+    prefix = "allowance_year_metrics "
+    metrics: list[dict[str, object]] = []
+    for record in caplog.records:
+        if record.name != "engine.run_loop":
+            continue
+        message = record.getMessage()
+        if not message.startswith(prefix):
+            continue
+        metrics.append(json.loads(message[len(prefix) :]))
+
+    assert len(metrics) == len(YEARS)
+    required_fields = {
+        "price_raw",
+        "reserve_cap",
+        "ecr_trigger",
+        "ccr1_trigger",
+        "ccr2_trigger",
+        "reserve_budget",
+        "reserve_withheld",
+        "ccr1_release",
+        "ccr2_release",
+        "bank_in",
+        "bank_out",
+        "available_allowances",
+        "emissions",
+        "shortage_flag",
+    }
+    for payload in metrics:
+        missing = required_fields.difference(payload)
+        assert not missing, f"missing fields: {sorted(missing)}"
 
 
 def test_bank_non_negative_after_compliance(three_year_outputs):
