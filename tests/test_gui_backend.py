@@ -221,6 +221,62 @@ def test_backend_marks_carbon_price_output():
     _cleanup_temp_dir(result)
 
 
+def test_cap_region_alias_resolution_collapses_duplicates():
+    config = _baseline_config()
+    frames = _frames_for_years([2025])
+
+    result = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2025,
+        cap_regions=["NYCW", "nyc", "8"],
+        frames=frames,
+    )
+
+    assert "error" not in result
+    assert result.get("cap_regions") == [8]
+    carbon_cfg = result["config"]["modules"]["carbon_policy"]
+    assert carbon_cfg.get("regions") == [8]
+
+    _cleanup_temp_dir(result)
+
+
+def test_cap_region_all_selection_collapses_to_empty():
+    config = _baseline_config()
+    frames = _frames_for_years([2025])
+
+    result = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2025,
+        cap_regions=["All"],
+        frames=frames,
+    )
+
+    assert "error" not in result
+    assert result.get("cap_regions") in (None, [])
+    carbon_cfg = result["config"]["modules"]["carbon_policy"]
+    assert carbon_cfg.get("regions") in (None, [])
+
+    _cleanup_temp_dir(result)
+
+
+def test_cap_region_unknown_label_errors():
+    config = _baseline_config()
+    frames = _frames_for_years([2025])
+
+    result = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2025,
+        cap_regions=["Atlantis"],
+        frames=frames,
+    )
+
+    assert "error" in result
+    assert "Unable to resolve cap region" in result["error"]
+
+
 def test_render_results_carbon_price_hides_allowance_columns(monkeypatch):
     from gui import app as gui_app
 

@@ -1275,15 +1275,41 @@ def _normalize_coverage_selection(selection: Any) -> list[str]:
 
 def _normalize_cap_region_entries(
     selection: Iterable[Any] | Mapping[str, Any] | None,
-) -> tuple[list[int | str], list[str]]:
-    """Return canonical cap region values and any unresolved entries."""
+) -> tuple[list[int | str], dict[str, int | str]]:
+    """Return canonical cap region values and an alias map for lookup."""
 
     normalized: list[int | str] = []
-    unresolved: list[str] = []
     seen: set[int | str] = set()
+    alias_source = {key.lower(): value for key, value in region_alias_map().items()}
+    alias_map: dict[str, int | str] = {}
+
+    def _register_alias(key: Any, value: int | str) -> None:
+        if key is None:
+            return
+        text = str(key).strip()
+        if not text:
+            return
+        alias_map.setdefault(text, value)
+        alias_map.setdefault(text.lower(), value)
+
+    for region_id, meta in DEFAULT_REGION_METADATA.items():
+        _register_alias(region_id, region_id)
+        _register_alias(str(region_id), region_id)
+        _register_alias(meta.code, region_id)
+        _register_alias(meta.code.lower(), region_id)
+        _register_alias(meta.label, region_id)
+        _register_alias(meta.label.lower(), region_id)
+        _register_alias(meta.area, region_id)
+        _register_alias(meta.area.lower(), region_id)
+        for alias in meta.aliases:
+            _register_alias(alias, region_id)
+            _register_alias(alias.lower(), region_id)
+
+    encountered_all = False
+    unresolved: list[str] = []
 
     if selection is None:
-        return normalized, unresolved
+        return normalized, alias_map
 
     if isinstance(selection, Mapping):
         iterable: Iterable[Any] = selection.values()
@@ -1297,26 +1323,53 @@ def _normalize_cap_region_entries(
             continue
 
         label = canonical_region_label(entry).strip()
-        resolved = canonical_region_value(entry)
+        lowered_label = label.lower()
+        if lowered_label in {"all", "all regions", _ALL_REGIONS_LABEL.lower()}:
+            encountered_all = True
+            continue
 
+        resolved = canonical_region_value(entry)
         if isinstance(resolved, str):
             text = resolved.strip()
             if not text:
                 continue
-            if label.lower() == "default":
+            lowered = text.lower()
+            if lowered in {"all", "all regions", _ALL_REGIONS_LABEL.lower()}:
+                encountered_all = True
+                continue
+            if lowered == "default":
                 canonical_value: int | str = "default"
             else:
-                unresolved_text = text or str(entry)
-                unresolved.append(unresolved_text)
-                continue
+                match = alias_source.get(lowered)
+                if match is None:
+                    unresolved.append(label or text or str(entry))
+                    continue
+                canonical_value = int(match)
         else:
             canonical_value = int(resolved)
+
+        _register_alias(entry, canonical_value)
+        _register_alias(label, canonical_value)
+        if not isinstance(canonical_value, str):
+            _register_alias(str(canonical_value), canonical_value)
+        else:
+            _register_alias(canonical_value, canonical_value)
 
         if canonical_value not in seen:
             seen.add(canonical_value)
             normalized.append(canonical_value)
 
-    return normalized, unresolved
+    if unresolved:
+        unique_unresolved = list(dict.fromkeys(unresolved))
+        if len(unique_unresolved) == 1:
+            raise ValueError(f"Unable to resolve cap region '{unique_unresolved[0]}'")
+        unresolved_list = ", ".join(f"'{entry}'" for entry in unique_unresolved)
+        raise ValueError(f"Unable to resolve cap regions: {unresolved_list}")
+
+    if encountered_all and not normalized:
+        return [], alias_map
+
+    return normalized, alias_map
 
 
 # General Config UI
@@ -4551,13 +4604,10 @@ def run_policy_simulation(
     elif not policy_enabled:
         allowance_config.pop("cap", None)
     config["allowance_market"] = allowance_config
-    normalized_regions, unresolved_cap_regions = _normalize_cap_region_entries(cap_regions)
-    if unresolved_cap_regions:
-        unique_unresolved = list(dict.fromkeys(unresolved_cap_regions))
-        if len(unique_unresolved) == 1:
-            return {"error": f"Unable to resolve cap region '{unique_unresolved[0]}'"}
-        unresolved_list = ", ".join(f"'{entry}'" for entry in unique_unresolved)
-        return {"error": f"Unable to resolve cap regions: {unresolved_list}"}
+    try:
+        normalized_regions, cap_region_aliases = _normalize_cap_region_entries(cap_regions)
+    except ValueError as exc:
+        return {"error": str(exc)}
 
     if normalized_regions:
         carbon_record["regions"] = list(normalized_regions)
@@ -4660,7 +4710,25 @@ def run_policy_simulation(
         LOGGER.exception("Unable to normalise demand frame for requested years")
         return {"error": str(exc)}
 
-    region_label_map: dict[str, Any] = {str(region): region for region in normalized_regions}
+    region_label_map: dict[str, Any] = {}
+
+    def _register_region_alias(alias: Any, value: Any) -> None:
+        if alias is None:
+            return
+        text = str(alias).strip()
+        if not text:
+            return
+        region_label_map.setdefault(text, value)
+        region_label_map.setdefault(text.lower(), value)
+
+    for alias, canonical_value in cap_region_aliases.items():
+        _register_region_alias(alias, canonical_value)
+
+    for region in normalized_regions:
+        _register_region_alias(region, region)
+        _register_region_alias(canonical_region_label(region), region)
+        if not isinstance(region, str):
+            _register_region_alias(str(region), region)
 
     def _ingest_region_values(values: Sequence[Any] | pd.Series | None) -> None:
         if values is None:
@@ -4674,7 +4742,16 @@ def run_policy_simulation(
                 continue
             if pd.isna(value):
                 continue
-            region_label_map.setdefault(str(value), value)
+            resolved_value = canonical_region_value(value)
+            if isinstance(resolved_value, str):
+                resolved_text = resolved_value.strip() or str(value)
+                _register_region_alias(value, resolved_text)
+                _register_region_alias(resolved_text, resolved_text)
+            else:
+                resolved_int = int(resolved_value)
+                _register_region_alias(value, resolved_int)
+                _register_region_alias(canonical_region_label(resolved_int), resolved_int)
+                _register_region_alias(str(resolved_int), resolved_int)
 
     demand_region_labels: set[str] = set()
     try:
@@ -4704,10 +4781,35 @@ def run_policy_simulation(
         else set()
     )
     for label in coverage_labels:
-        region_label_map.setdefault(label, label)
+        resolved_value = canonical_region_value(label)
+        if isinstance(resolved_value, str):
+            resolved_text = resolved_value.strip() or label
+            _register_region_alias(label, resolved_text)
+            _register_region_alias(resolved_text, resolved_text)
+        else:
+            resolved_int = int(resolved_value)
+            _register_region_alias(label, resolved_int)
+            _register_region_alias(canonical_region_label(resolved_int), resolved_int)
+            _register_region_alias(str(resolved_int), resolved_int)
+
+    coverage_region_values: set[int | str] = set()
+    for label in coverage_labels:
+        resolved_value = canonical_region_value(label)
+        if isinstance(resolved_value, str):
+            coverage_region_values.add(resolved_value.strip() or label)
+        else:
+            coverage_region_values.add(int(resolved_value))
 
     if not demand_region_labels:
         demand_region_labels = set(region_label_map) or set(coverage_labels)
+
+    demand_region_values: set[int | str] = set()
+    for label in demand_region_labels:
+        resolved_value = canonical_region_value(label)
+        if isinstance(resolved_value, str):
+            demand_region_values.add(resolved_value.strip() or label)
+        else:
+            demand_region_values.add(int(resolved_value))
 
     normalized_existing: pd.DataFrame | None = None
     existing_keys: set[tuple[str, int]] = set()
@@ -4729,30 +4831,39 @@ def run_policy_simulation(
             normalized_existing["year"], errors="coerce"
         ).fillna(-1).astype(int)
         normalized_existing["covered"] = normalized_existing["covered"].astype(bool)
-        existing_keys = {
-            (str(region), int(year))
-            for region, year in zip(normalized_existing["region"], normalized_existing["year"])
-        }
+        existing_keys: set[tuple[int | str, int]] = set()
+        for region, year in zip(normalized_existing["region"], normalized_existing["year"]):
+            resolved_region = canonical_region_value(region)
+            if isinstance(resolved_region, str):
+                normalized_region = resolved_region.strip() or str(region)
+            else:
+                normalized_region = int(resolved_region)
+            existing_keys.add((normalized_region, int(year)))
+
+    available_region_values: set[int | str] = set(region_label_map.values())
+    available_region_values |= coverage_region_values
+    available_region_values |= demand_region_values
+    if not available_region_values:
+        available_region_values = {region for region, _ in existing_keys}
 
     coverage_records: list[dict[str, Any]] = []
-    label_candidates = {*demand_region_labels, *coverage_labels, *region_label_map.keys()}
-    for label in sorted(label_candidates):
-        key = (label, -1)
-        if key in existing_keys:
+    seen_new_keys: set[tuple[int | str, int]] = set()
+    sorted_regions = sorted(
+        available_region_values,
+        key=lambda value: canonical_region_label(value).lower(),
+    )
+    for region_value in sorted_regions:
+        key = (region_value, -1)
+        if key in existing_keys or key in seen_new_keys:
             continue
-        region_value = region_label_map.get(label)
-        if region_value is None:
-            try:
-                region_value = int(label)
-            except (TypeError, ValueError):
-                region_value = label
         coverage_records.append(
             {
                 "region": region_value,
                 "year": -1,
-                "covered": True if cover_all else label in coverage_labels,
+                "covered": True if cover_all else region_value in coverage_region_values,
             }
         )
+        seen_new_keys.add(key)
 
     if coverage_records:
         coverage_df = pd.DataFrame(coverage_records, columns=["region", "year", "covered"])
@@ -4803,20 +4914,28 @@ def run_policy_simulation(
     frames_obj = frames_obj.with_frame('policy', policy_frame)
 
     policy_bank0 = 0.0
-    if isinstance(policy_frame, pd.DataFrame) and not policy_frame.empty and 'bank0' in policy_frame.columns:
+    if isinstance(policy_frame, pd.DataFrame) and not policy_frame.empty and "bank0" in policy_frame.columns:
         try:
-            bank_series = pd.to_numeric(policy_frame['bank0'], errors='coerce')
+            bank_series = pd.to_numeric(policy_frame["bank0"], errors="coerce")
         except Exception:  # pragma: no cover - defensive
             bank_series = None
         if bank_series is not None and not bank_series.empty:
             first_bank = bank_series.iloc[0]
             if pd.notna(first_bank):
                 policy_bank0 = float(first_bank)
-    if not policy_bank0 and bank0_from_config is not None:
+
+    # Apply config override if needed
+    if bank0_from_config is not None:
         try:
-            policy_bank0 = float(bank0_from_config)
+            bank0_val = float(bank0_from_config)
         except Exception:  # pragma: no cover - defensive
-            policy_bank0 = 0.0
+            bank0_val = 0.0
+
+        if banking_flag and bank0_val > 0.0 and policy_bank0 <= 0.0:
+            policy_bank0 = bank0_val
+        elif not policy_bank0:
+            policy_bank0 = bank0_val
+
 
     runner = _ensure_engine_runner()
     supports_deep = True
@@ -5316,6 +5435,13 @@ def _render_results(result: Mapping[str, Any]) -> None:
         # Normalize carbon outputs if present
         if 'p_co2' in display_price_table.columns:
             display_price_table = display_price_table.rename(columns={'p_co2': price_series_label})
+        elif 'allowance_price' in display_price_table.columns:
+            rename_map = {'allowance_price': price_series_label}
+            if 'allowance_price_exogenous_component' in display_price_table.columns:
+                rename_map['allowance_price_exogenous_component'] = 'p_co2_exogenous'
+            if 'allowance_price_effective' in display_price_table.columns:
+                rename_map['allowance_price_effective'] = 'p_co2_effective'
+            display_price_table = display_price_table.rename(columns=rename_map)
         allowed_price_columns = [
             'year',
             price_series_label,
