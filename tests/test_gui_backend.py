@@ -1,4 +1,5 @@
 import importlib
+import logging
 import io
 import shutil
 from collections.abc import Mapping
@@ -653,7 +654,29 @@ def test_backend_carbon_price_disables_cap(monkeypatch):
     _cleanup_temp_dir(result)
 
 
-def test_backend_banking_toggle_disables_bank(tmp_path):
+def test_backend_banking_toggle_disables_bank(tmp_path, caplog):
+    config = _baseline_config()
+    frames = _frames_for_years([2025, 2026])
+
+    with caplog.at_level(logging.WARNING):
+        result = run_policy_simulation(
+            config,
+            start_year=2025,
+            end_year=2026,
+            cap_regions=[1],
+            frames=frames,
+            allowance_banking_enabled=False,
+        )
+
+    assert "error" not in result
+    annual = result["annual"]
+    assert annual["bank"].eq(0.0).all()
+    assert any("Allowance banking disabled" in record.message for record in caplog.records)
+
+    _cleanup_temp_dir(result)
+
+
+def test_backend_bank_column_tracks_allowances(tmp_path):
     config = _baseline_config()
     frames = _frames_for_years([2025, 2026])
 
@@ -663,12 +686,24 @@ def test_backend_banking_toggle_disables_bank(tmp_path):
         end_year=2026,
         cap_regions=[1],
         frames=frames,
-        allowance_banking_enabled=False,
+        allowance_banking_enabled=True,
     )
 
     assert "error" not in result
-    annual = result["annual"]
-    assert annual["bank"].eq(0.0).all()
+    annual = result["annual"].copy()
+    assert not annual.empty
+
+    annual = annual.sort_values("year").reset_index(drop=True)
+    bank0 = float(config["allowance_market"]["bank0"])
+    expected = []
+    bank_prev = bank0
+    for _, row in annual.iterrows():
+        allowances_total = float(row["allowances_total"])
+        emissions = float(row["emissions_tons"])
+        bank_prev = max(bank_prev + allowances_total - emissions, 0.0)
+        expected.append(bank_prev)
+
+    assert annual["bank"].tolist() == pytest.approx(expected)
 
     _cleanup_temp_dir(result)
 
