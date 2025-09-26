@@ -1686,6 +1686,7 @@ def _render_carbon_policy_section(
             st.session_state["carbon_enable"] = session_enabled_default
             st.session_state["carbon_price_enable"] = session_price_default
 
+
     # -------------------------
     # Cap vs Price toggles (mutually exclusive)
     # -------------------------
