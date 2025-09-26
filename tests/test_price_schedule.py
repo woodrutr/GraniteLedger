@@ -74,6 +74,14 @@ def test_build_price_escalator_schedule_handles_empty_years() -> None:
     assert schedule == {}
 
 
+def test_build_price_escalator_schedule_handles_unsorted_years() -> None:
+    schedule = _build_price_escalator_schedule(10.0, 5.0, [2025, 2023, 2024])
+
+    assert list(schedule) == [2023, 2024, 2025]
+    assert schedule[2023] == pytest.approx(10.0)
+    assert schedule[2025] == pytest.approx(11.025)
+
+
 def test_build_price_schedule_generates_geometric_growth() -> None:
     schedule = _build_price_schedule(2025, 2030, 45.0, 7.0)
 
@@ -84,6 +92,14 @@ def test_build_price_schedule_generates_geometric_growth() -> None:
     assert schedule[2028] == pytest.approx(55.126935)
     assert schedule[2029] == pytest.approx(58.98582)
     assert schedule[2030] == pytest.approx(63.114828)
+
+
+def test_build_price_schedule_supports_descending_ranges() -> None:
+    schedule = _build_price_schedule(2030, 2025, 50.0, 5.0)
+
+    assert list(schedule) == [2025, 2026, 2027, 2028, 2029, 2030]
+    assert schedule[2030] == pytest.approx(50.0)
+    assert schedule[2025] == pytest.approx(63.814078)
 
 
 def test_build_cap_reduction_schedule_percent_and_fixed() -> None:

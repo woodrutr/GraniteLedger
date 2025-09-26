@@ -769,46 +769,6 @@ def _merge_price_schedules(
     return dict(sorted(merged.items()))
 
 
-def _build_price_schedule(
-    start_year: int,
-    end_year: int,
-    base_price: float,
-    escalator_pct: float,
-) -> dict[int, float]:
-    """Return a price schedule with geometric growth between ``start_year`` and ``end_year``."""
-
-    try:
-        start = int(start_year)
-        end = int(end_year)
-    except (TypeError, ValueError):
-        return {}
-
-    try:
-        price = float(base_price)
-    except (TypeError, ValueError):
-        price = 0.0
-
-    try:
-        escalator = float(escalator_pct)
-    except (TypeError, ValueError):
-        escalator = 0.0
-
-    step = 1 if end >= start else -1
-    ratio = 1.0 + (escalator or 0.0) / 100.0
-
-    schedule: dict[int, float] = {}
-    exponent = 0
-    for year in range(start, end + step, step):
-        try:
-            factor = ratio ** exponent
-        except OverflowError:
-            factor = float("inf")
-        schedule[year] = round(price * factor, 6)
-        exponent += 1
-
-    return dict(sorted(schedule.items()))
-
-
 def _expand_or_build_price_schedule(
     schedule: Mapping[int, float] | None,
     years: Iterable[int] | None = None,
@@ -910,16 +870,18 @@ def _build_price_schedule(
     step = 1 if end >= start else -1
     ratio = 1.0 + (escalator or 0.0) / 100.0
 
-    schedule: dict[int, float] = {}
-    exponent = 0
-    for year in range(start, end + step, step):
+    schedule_items: list[tuple[int, float]] = []
+    for exponent, year in enumerate(range(start, end + step, step)):
         try:
             factor = ratio ** exponent
         except OverflowError:
             factor = float("inf")
-        schedule[year] = round(base * factor, 6)
-        exponent += 1
-    return schedule
+        schedule_items.append((year, round(base * factor, 6)))
+
+    if not schedule_items:
+        return {}
+
+    return dict(sorted(schedule_items))
 
 
 def _build_price_escalator_schedule(
