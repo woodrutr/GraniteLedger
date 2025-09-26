@@ -411,6 +411,10 @@ def test_backend_disabled_toggle_propagates_flags(monkeypatch):
         captured["ccr2"] = policy.ccr2_enabled
         captured["control"] = policy.control_period_length
         captured["banking"] = policy.banking_enabled
+        captured["capacity_expansion"] = kwargs.get("capacity_expansion")
+        captured["report_by_technology"] = kwargs.get("report_by_technology")
+        kwargs.pop("capacity_expansion", None)
+        kwargs.pop("report_by_technology", None)
         return real_runner(frames, **kwargs)
 
     monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: capturing_runner)
@@ -449,6 +453,10 @@ def test_backend_enforces_carbon_mode_exclusivity(monkeypatch):
         captured["policy_enabled"] = policy.enabled
         captured["price_schedule"] = kwargs.get("carbon_price_schedule")
         captured["price_value"] = kwargs.get("carbon_price_value")
+        captured["capacity_expansion"] = kwargs.get("capacity_expansion")
+        captured["report_by_technology"] = kwargs.get("report_by_technology")
+        kwargs.pop("capacity_expansion", None)
+        kwargs.pop("report_by_technology", None)
         return real_runner(frames, **kwargs)
 
     monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: capturing_runner)
@@ -491,6 +499,10 @@ def test_backend_control_period_defaults_to_config(monkeypatch):
     def capturing_runner(frames, **kwargs):
         policy = frames.policy().to_policy()
         captured["control"] = policy.control_period_length
+        captured["capacity_expansion"] = kwargs.get("capacity_expansion")
+        captured["report_by_technology"] = kwargs.get("report_by_technology")
+        kwargs.pop("capacity_expansion", None)
+        kwargs.pop("report_by_technology", None)
         return real_runner(frames, **kwargs)
 
     monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: capturing_runner)
@@ -557,6 +569,10 @@ def test_backend_control_period_override_applies(monkeypatch):
     def capturing_runner(frames, **kwargs):
         policy = frames.policy().to_policy()
         captured["control"] = policy.control_period_length
+        captured["capacity_expansion"] = kwargs.get("capacity_expansion")
+        captured["report_by_technology"] = kwargs.get("report_by_technology")
+        kwargs.pop("capacity_expansion", None)
+        kwargs.pop("report_by_technology", None)
         return real_runner(frames, **kwargs)
 
     monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: capturing_runner)
@@ -634,6 +650,10 @@ def test_backend_dispatch_and_carbon_modules(monkeypatch):
         captured["carbon_enabled"] = policy.enabled
         captured["use_network"] = kwargs.get("use_network")
         captured["deep_carbon_pricing"] = kwargs.get("deep_carbon_pricing")
+        captured["capacity_expansion"] = kwargs.get("capacity_expansion")
+        captured["report_by_technology"] = kwargs.get("report_by_technology")
+        kwargs.pop("capacity_expansion", None)
+        kwargs.pop("report_by_technology", None)
         return real_runner(frames, **kwargs)
 
     monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: capturing_runner)
@@ -666,6 +686,8 @@ def test_backend_dispatch_and_carbon_modules(monkeypatch):
     assert captured.get("carbon_enabled") is True
     assert captured.get("use_network") is True
     assert captured.get("deep_carbon_pricing") is False
+    assert captured.get("capacity_expansion") is True
+    assert captured.get("report_by_technology") is True
     dispatch_cfg = result["module_config"]["electricity_dispatch"]
     assert dispatch_cfg["enabled"] is True
     assert dispatch_cfg["use_network"] is True
@@ -701,6 +723,10 @@ def test_backend_deep_carbon_combines_prices(monkeypatch):
 
     def capturing_runner(frames, **kwargs):
         captured["deep_carbon_pricing"] = kwargs.get("deep_carbon_pricing")
+        captured["capacity_expansion"] = kwargs.get("capacity_expansion")
+        captured["report_by_technology"] = kwargs.get("report_by_technology")
+        kwargs.pop("capacity_expansion", None)
+        kwargs.pop("report_by_technology", None)
         return real_runner(frames, **kwargs)
 
     monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: capturing_runner)
@@ -790,6 +816,10 @@ def test_backend_carbon_price_disables_cap(monkeypatch):
         captured["control"] = policy.control_period_length
         captured["price_schedule"] = kwargs.get("carbon_price_schedule")
         captured["price_value"] = kwargs.get("carbon_price_value")
+        captured["capacity_expansion"] = kwargs.get("capacity_expansion")
+        captured["report_by_technology"] = kwargs.get("report_by_technology")
+        kwargs.pop("capacity_expansion", None)
+        kwargs.pop("report_by_technology", None)
         return real_runner(frames, **kwargs)
 
     monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: capturing_runner)
@@ -858,6 +888,10 @@ def test_backend_builds_price_schedule_for_run_years(monkeypatch):
     def capturing_runner(frames, **kwargs):
         captured["carbon_price_schedule"] = kwargs.get("carbon_price_schedule")
         captured["carbon_price_value"] = kwargs.get("carbon_price_value")
+        captured["capacity_expansion"] = kwargs.get("capacity_expansion")
+        captured["report_by_technology"] = kwargs.get("report_by_technology")
+        kwargs.pop("capacity_expansion", None)
+        kwargs.pop("report_by_technology", None)
         return real_runner(frames, **kwargs)
 
     monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: capturing_runner)
@@ -939,6 +973,10 @@ def test_backend_preserves_explicit_coverage_overrides(monkeypatch):
 
     def capturing_runner(frames, **kwargs):
         captured["coverage"] = frames.coverage()
+        captured["capacity_expansion"] = kwargs.get("capacity_expansion")
+        captured["report_by_technology"] = kwargs.get("report_by_technology")
+        kwargs.pop("capacity_expansion", None)
+        kwargs.pop("report_by_technology", None)
         return real_runner(frames, **kwargs)
 
     monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: capturing_runner)
@@ -996,6 +1034,10 @@ def test_backend_coverage_selection_builds_frame(monkeypatch):
     def capturing_runner(frames, **kwargs):
         captured["coverage_df"] = frames.coverage()
         captured["coverage_map"] = frames.coverage_for_year(2025)
+        captured["capacity_expansion"] = kwargs.get("capacity_expansion")
+        captured["report_by_technology"] = kwargs.get("report_by_technology")
+        kwargs.pop("capacity_expansion", None)
+        kwargs.pop("report_by_technology", None)
         return real_runner(frames, **kwargs)
 
     monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: capturing_runner)
