@@ -4791,6 +4791,7 @@ def run_policy_simulation(
         'temp_dir': temp_dir,
         'documentation': documentation,
     }
+    result['_price_output_type'] = 'allowance' if policy_enabled else 'carbon'
     result['_price_field_flags'] = price_flags
     if normalized_regions:
         result['cap_regions'] = list(normalized_regions)
@@ -5083,7 +5084,28 @@ def _render_results(result: Mapping[str, Any]) -> None:
         display_annual = display_annual.sort_values('year')
         chart_data = display_annual.set_index('year')
     elif not display_annual.empty:
-        chart_data = display_annual
+        chart_data = display_annual.copy()
+
+    price_output_type = str(result.get('_price_output_type') or 'allowance')
+    if price_output_type == 'carbon':
+        price_tab_label = 'Carbon price'
+        price_section_title = 'Carbon price results'
+        price_series_label = 'Carbon price ($/ton)'
+        price_missing_caption = 'Carbon price data unavailable for this run.'
+    else:
+        price_tab_label = 'Allowance price'
+        price_section_title = 'Allowance market results'
+        price_series_label = 'Allowance clearing price ($/ton)'
+        price_missing_caption = 'Allowance clearing price data unavailable for this run.'
+
+    price_chart_column: str | None = None
+    if not chart_data.empty and 'p_co2' in chart_data.columns:
+        chart_data = chart_data.rename(columns={'p_co2': price_series_label})
+        price_chart_column = price_series_label
+
+    display_price_table = display_annual.copy()
+    if 'p_co2' in display_price_table.columns:
+        display_price_table = display_price_table.rename(columns={'p_co2': price_series_label})
 
     emissions_df = result.get('emissions_by_region')
     if not isinstance(emissions_df, pd.DataFrame):
@@ -5106,23 +5128,23 @@ def _render_results(result: Mapping[str, Any]) -> None:
     st.caption('Visualisations reflect the most recent model run.')
 
     price_tab, emissions_tab, bank_tab, dispatch_tab = st.tabs(
-        ['Allowance price', 'Emissions', 'Allowance bank', 'Dispatch costs']
+        [price_tab_label, 'Emissions', 'Allowance bank', 'Dispatch costs']
     )
 
     with price_tab:
-        st.subheader('Allowance market results')
+        st.subheader(price_section_title)
         if display_annual.empty:
             st.info('No annual results to display.')
         else:
-            if 'p_co2' in chart_data.columns:
-                st.markdown('**Allowance price ($/ton)**')
-                st.line_chart(chart_data[['p_co2']])
-                st.bar_chart(chart_data[['p_co2']])
+            if price_chart_column and price_chart_column in chart_data.columns:
+                st.markdown(f'**{price_series_label}**')
+                st.line_chart(chart_data[[price_chart_column]])
+                st.bar_chart(chart_data[[price_chart_column]])
             else:
-                st.caption('Allowance price data unavailable for this run.')
+                st.caption(price_missing_caption)
 
             st.markdown('---')
-            st.dataframe(display_annual, width="stretch")
+            st.dataframe(display_price_table, width="stretch")
 
     with emissions_tab:
         st.subheader('Emissions overview')
