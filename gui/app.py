@@ -769,6 +769,45 @@ def _merge_price_schedules(
     return dict(sorted(merged.items()))
 
 
+def _build_price_schedule(
+    start: int,
+    end: int,
+    base: float,
+    esc_pct: float,
+) -> dict[int, float]:
+    """Return a contiguous price schedule grown by ``esc_pct`` per year."""
+
+    try:
+        start_year = int(start)
+        end_year = int(end)
+    except (TypeError, ValueError):
+        return {}
+
+    try:
+        base_value = float(base)
+    except (TypeError, ValueError):
+        base_value = 0.0
+
+    try:
+        escalator_value = float(esc_pct)
+    except (TypeError, ValueError):
+        escalator_value = 0.0
+
+    step = 1 if end_year >= start_year else -1
+    ratio = 1.0 + (escalator_value or 0.0) / 100.0
+
+    schedule: dict[int, float] = {}
+    exponent = 0
+    for year in range(start_year, end_year + step, step):
+        try:
+            factor = ratio ** exponent
+        except OverflowError:
+            factor = float("inf")
+        schedule[year] = round(base_value * factor, 6)
+        exponent += 1
+    return schedule
+
+
 def _build_price_escalator_schedule(
     base_price: float,
     escalator_pct: float,
@@ -798,15 +837,15 @@ def _build_price_escalator_schedule(
     if not year_list:
         return {}
 
-    growth = max(escalator_value / 100.0, 0.0)
-    schedule: dict[int, float] = {}
-    for idx, year in enumerate(sorted(dict.fromkeys(year_list))):
-        if idx == 0:
-            value = base_value
-        else:
-            value = base_value * ((1.0 + growth) ** idx)
-        schedule[year] = float(value)
-    return schedule
+    ordered_years = sorted(dict.fromkeys(year_list))
+    base_year = ordered_years[0]
+    full_schedule = _build_price_schedule(
+        base_year,
+        ordered_years[-1],
+        base_value,
+        escalator_value,
+    )
+    return {year: float(full_schedule.get(year, base_value)) for year in ordered_years}
 
 
 def _build_cap_reduction_schedule(
@@ -1575,6 +1614,16 @@ def _render_carbon_policy_section(
         for entry in region_options:
             label = canonical_region_label(entry)
             coverage_value_map.setdefault(label, canonical_region_value(entry))
+    try:
+        alias_lookup = region_alias_map()
+    except Exception:
+        alias_lookup = {}
+    for alias, region_id in alias_lookup.items():
+        coverage_value_map.setdefault(alias, region_id)
+    for region_id in sorted(DEFAULT_REGION_METADATA):
+        label = region_display_label(region_id)
+        coverage_value_map.setdefault(label, region_id)
+        coverage_value_map.setdefault(str(region_id), region_id)
 
     # -------------------------
     # Coverage / Regions
@@ -1588,6 +1637,10 @@ def _render_carbon_policy_section(
     for label in coverage_default:
         if label != _ALL_REGIONS_LABEL and label not in region_labels:
             region_labels.append(label)
+    for region_id in sorted(DEFAULT_REGION_METADATA):
+        label = region_display_label(region_id)
+        if label not in region_labels:
+            region_labels.append(label)
     if not region_labels:
         region_labels = ["default"]
 
@@ -1598,6 +1651,8 @@ def _render_carbon_policy_section(
         coverage_default_display = [
             label for label in coverage_default if label in coverage_choices
         ] or [_ALL_REGIONS_LABEL]
+
+    coverage_regions = list(coverage_default)
 
     default_ccr1_price_value = float(ccr1_price_default) if ccr1_price_default is not None else 0.0
     default_ccr2_price_value = float(ccr2_price_default) if ccr2_price_default is not None else 0.0
@@ -1721,6 +1776,23 @@ def _render_carbon_policy_section(
     )
     price_schedule: dict[int, float] = dict(price_schedule_default)
     price_escalator_value = float(price_escalator_default)
+
+    coverage_panel_enabled = (enabled or price_enabled) and not locked
+    with _sidebar_panel(container, coverage_panel_enabled) as coverage_panel:
+        coverage_selection = coverage_panel.multiselect(
+            "Regions covered by carbon policies",
+            options=coverage_choices,
+            default=coverage_default_display,
+            disabled=(not (enabled or price_enabled)) or locked,
+            key="carbon_coverage_regions",
+            help=(
+                "Select the regions subject to the carbon cap or carbon price. "
+                "Choose “All regions” to apply the policy across every region."
+            ),
+        )
+        coverage_regions = _normalize_coverage_selection(
+            coverage_selection or coverage_default_display
+        )
 
     # -------------------------
     # Carbon Cap Panel
@@ -1917,21 +1989,6 @@ def _render_carbon_policy_section(
             else None
         )
 
-        coverage_selection = cap_panel.multiselect(
-            "Regions covered by carbon cap",
-            options=coverage_choices,
-            default=coverage_default_display,
-            disabled=(not enabled) or locked,
-            key="carbon_coverage_regions",
-            help=(
-                "Select the regions subject to the cap. Choose “All regions” to apply "
-                "the carbon policy across every region."
-            ),
-        )
-        coverage_regions = _normalize_coverage_selection(
-            coverage_selection or coverage_default_display
-        )
-
     # -------------------------
     # Carbon Price Panel
     # -------------------------
@@ -2012,17 +2069,17 @@ def _render_carbon_policy_section(
     if enabled and price_enabled and not deep_enabled:
         errors.append("Cannot enable both carbon cap and carbon price simultaneously.")
 
-    cap_region_values: list[Any] = []
+    policy_region_values: list[Any] = []
     if coverage_regions != ["All"]:
         for label in coverage_regions:
-            resolved = coverage_value_map.get(label, label)
+            resolved = coverage_value_map.get(label, canonical_region_value(label))
             if isinstance(resolved, str) and resolved.lower() in {"all", "all regions"}:
-                cap_region_values = []
+                policy_region_values = []
                 break
             try:
-                cap_region_values.append(int(resolved))
+                policy_region_values.append(int(resolved))
             except (TypeError, ValueError):
-                cap_region_values.append(resolved)
+                policy_region_values.append(resolved)
 
     carbon_module = modules.setdefault("carbon_policy", {})
     carbon_module.update(
@@ -2055,8 +2112,8 @@ def _render_carbon_policy_section(
     else:
         carbon_module.pop("cap_schedule", None)
 
-    if cap_region_values:
-        carbon_module["regions"] = list(cap_region_values)
+    if policy_region_values:
+        carbon_module["regions"] = list(policy_region_values)
     else:
         carbon_module.pop("regions", None)
 
@@ -2077,12 +2134,19 @@ def _render_carbon_policy_section(
             price_module["price_schedule"] = dict(price_schedule)
         else:
             price_module.pop("price_schedule", None)
+        price_module["coverage_regions"] = list(coverage_regions)
+        if policy_region_values:
+            price_module["regions"] = list(policy_region_values)
+        else:
+            price_module.pop("regions", None)
     else:
         price_module["price_escalator_pct"] = float(price_escalator_value)
         price_module.pop("price_schedule", None)
         price_module.pop("price", None)
         if "price_per_ton" in price_module:
             price_module["price_per_ton"] = float(price_per_ton)
+        price_module.pop("coverage_regions", None)
+        price_module.pop("regions", None)
 
     return CarbonModuleSettings(
         enabled=enabled,
@@ -2101,7 +2165,7 @@ def _render_carbon_policy_section(
         price_per_ton=float(price_per_ton),
         price_escalator_pct=float(price_escalator_value),
         initial_bank=initial_bank,
-        cap_regions=cap_region_values,
+        cap_regions=policy_region_values,
         cap_start_value=float(cap_start_value),
         cap_reduction_mode=str(cap_reduction_mode),
         cap_reduction_value=float(cap_reduction_value),
@@ -4197,9 +4261,70 @@ def run_policy_simulation(
     )
 
     merged_modules["carbon_price"] = price_cfg.as_dict()
-    price_schedule_map = {
-        int(year): float(value) for year, value in price_cfg.schedule.items()
-    }
+
+    raw_run_years = []
+    try:
+        raw_run_years = [int(year) for year in years]
+    except Exception:
+        raw_run_years = []
+    run_years_sorted = sorted(dict.fromkeys(raw_run_years))
+
+    provided_price_schedule: dict[int, float] = {}
+    if isinstance(price_cfg.schedule, Mapping):
+        for year, value in price_cfg.schedule.items():
+            try:
+                provided_price_schedule[int(year)] = float(value)
+            except (TypeError, ValueError):
+                continue
+
+    price_schedule_map: dict[int, float] = {}
+    if price_cfg.active:
+        if run_years_sorted:
+            start_year = run_years_sorted[0]
+            end_year = run_years_sorted[-1]
+        elif provided_price_schedule:
+            start_year = min(provided_price_schedule)
+            end_year = max(provided_price_schedule)
+        else:
+            start_year = end_year = None
+
+        if start_year is not None and end_year is not None:
+            base_year = min(provided_price_schedule) if provided_price_schedule else start_year
+            base_price = provided_price_schedule.get(base_year, price_cfg.price_per_ton)
+            try:
+                base_price_float = float(base_price)
+            except (TypeError, ValueError):
+                base_price_float = 0.0
+
+            growth_pct = float(price_cfg.escalator_pct)
+
+            if base_year is not None and base_year != start_year:
+                ratio = 1.0 + (growth_pct or 0.0) / 100.0
+                try:
+                    steps = base_year - start_year
+                    if ratio != 0.0:
+                        base_price_float = base_price_float / (ratio ** steps)
+                except OverflowError:
+                    base_price_float = 0.0
+
+            generated_schedule = _build_price_schedule(
+                start_year,
+                end_year,
+                base_price_float,
+                growth_pct,
+            )
+
+            if run_years_sorted:
+                generated_schedule = {
+                    year: generated_schedule.get(year, base_price_float)
+                    for year in run_years_sorted
+                }
+
+            for year, value in provided_price_schedule.items():
+                generated_schedule[int(year)] = float(value)
+
+            price_schedule_map = dict(sorted(generated_schedule.items()))
+
     price_active = bool(price_cfg.active and price_schedule_map)
 
     cap_schedule_map: dict[int, float] = {}
