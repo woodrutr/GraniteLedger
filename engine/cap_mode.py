@@ -16,6 +16,7 @@ P_MAX = 2_000.0
 PRICE_TOL = 1e-3
 MAX_ITERS = 60
 _SHORTAGE_TOL = 1e-6
+_EMISSIONS_TOL = 1e-6
 
 
 class _DispatchFrameLike(Protocol):
@@ -216,6 +217,12 @@ def solve_price_for_year(
     supply = _supply_y(y, clearing_price, par)
     emissions = _emissions_y(y, clearing_price, frames_for_year, demand_mwh)
     available = supply + (bank_prev if par.banking else 0.0)
+
+    if emissions > available + _EMISSIONS_TOL:
+        raise CapInfeasibleError(
+            "Clearing emissions exceed available allowances; cap infeasible at solved price."
+        )
+
     bank_new = float(max(available - emissions, 0.0)) if par.banking else 0.0
 
     return float(clearing_price), float(bank_new), iterations, float(p_raw)
@@ -260,6 +267,7 @@ def run_cap_mode(
             {
                 "year": year,
                 "p_co2": round(price, 6),
+                "allowance_price": round(price, 6),
                 "iterations": int(iterations),
                 "emissions_tons": round(emissions, 3),
                 "allowances_total": round(supply, 3),
@@ -299,6 +307,7 @@ def run_cap_mode(
     df = pd.DataFrame(records, columns=[
         "year",
         "p_co2",
+        "allowance_price",
         "iterations",
         "emissions_tons",
         "allowances_total",
