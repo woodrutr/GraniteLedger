@@ -704,7 +704,7 @@ def _solve_allowance_market_year(
         allowances_mid = supply.available_allowances(mid)
         total_allowances_mid = bank_prev + allowances_mid
         iteration_count = iteration
-        shortage_mid = emissions_mid > allowances_mid + tol
+        shortage_mid = emissions_mid > total_allowances_mid + tol
         _report_progress(
             "iteration",
             iteration,
@@ -712,13 +712,13 @@ def _solve_allowance_market_year(
             status="bisection",
             shortage=shortage_mid,
         )
-        if allowances_mid + tol >= emissions_mid:
+        if total_allowances_mid + tol >= emissions_mid:
             best_price = mid
             best_allowances = allowances_mid
             best_emissions = emissions_mid
             best_dispatch = dispatch_mid
             high_bound = mid
-            if abs(allowances_mid - emissions_mid) <= tol:
+            if abs(total_allowances_mid - emissions_mid) <= tol:
                 break
         else:
             low_bound = mid
@@ -737,7 +737,7 @@ def _solve_allowance_market_year(
     surrendered = min(surrender_frac * best_emissions, total_allowances)
     bank_unadjusted = max(total_allowances - surrendered, 0.0)
     obligation = max(outstanding_prev + best_emissions - surrendered, 0.0)
-    shortage_flag = best_emissions > best_allowances + tol
+    shortage_flag = best_emissions > (total_allowances + tol)
     ccr1_issued, ccr2_issued = _issued_quantities(clearing_price, best_allowances)
     bank_carry = max(bank_unadjusted * carry_pct, 0.0)
 

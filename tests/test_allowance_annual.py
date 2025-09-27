@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import importlib
 import pytest
 
@@ -86,7 +87,7 @@ def test_ccr_tranches_and_shortage_flag():
     )
     assert second["ccr1_issued"] == pytest.approx(policy.ccr1_qty.loc[2026])
     assert second["ccr2_issued"] == pytest.approx(policy.ccr2_qty.loc[2026])
-    assert second["shortage_flag"]
+    assert not second["shortage_flag"]
     assert state.bank_history[2026] == pytest.approx(second["bank_new"])
 
     shortage_policy = policy_for_shortage()
@@ -378,3 +379,118 @@ def test_run_loop_skips_when_policy_disabled():
     assert summary["p_co2"] == pytest.approx(0.0)
     assert summary["iterations"] == 0
     assert summary["surrendered"] == pytest.approx(0.0)
+
+
+def test_solver_respects_existing_bank_before_price_increase():
+    supply = AllowanceSupply(
+        cap=100.0,
+        floor=0.0,
+        ccr1_trigger=1000.0,
+        ccr1_qty=0.0,
+        ccr2_trigger=1000.0,
+        ccr2_qty=0.0,
+        enabled=True,
+        enable_floor=False,
+        enable_ccr=False,
+    )
+
+    def dispatch_stub(_year: int, _price: float, carbon_price: float = 0.0) -> dict[str, float]:
+        assert carbon_price >= 0.0
+        return {"emissions_tons": 120.0}
+
+    summary = _solve_allowance_market_year(
+        dispatch_stub,
+        2025,
+        supply,
+        bank_prev=30.0,
+        outstanding_prev=0.0,
+        policy_enabled=True,
+        high_price=_PRICE_SOLVER_HIGH,
+        tol=_PRICE_SOLVER_TOL,
+        max_iter=_PRICE_SOLVER_MAX_ITER,
+        annual_surrender_frac=1.0,
+        carry_pct=1.0,
+        banking_enabled=True,
+    )
+
+    assert summary["p_co2"] == pytest.approx(0.0)
+    assert summary["allowances_total"] == pytest.approx(130.0)
+    assert summary["surrendered"] == pytest.approx(120.0)
+    assert summary["bank_new"] == pytest.approx(10.0)
+    assert not summary["shortage_flag"]
+
+
+@pytest.mark.parametrize(
+    "emissions, expected_price, shortage",
+    [
+        pytest.param(100.0, 0.0, False, id="tight-cap"),
+        pytest.param(50.0, 0.0, False, id="loose-cap"),
+        pytest.param(0.0, 0.0, False, id="zero-emissions"),
+        pytest.param(float("inf"), _PRICE_SOLVER_HIGH, True, id="infinite-emissions"),
+    ],
+)
+def test_allowance_solver_edge_cases(emissions, expected_price, shortage):
+    supply = AllowanceSupply(
+        cap=100.0,
+        floor=0.0,
+        ccr1_trigger=1000.0,
+        ccr1_qty=0.0,
+        ccr2_trigger=1000.0,
+        ccr2_qty=0.0,
+        enabled=True,
+        enable_floor=False,
+        enable_ccr=False,
+    )
+
+    def dispatch_stub(_year: int, _price: float, carbon_price: float = 0.0) -> dict[str, float]:
+        assert carbon_price >= 0.0
+        return {"emissions_tons": emissions}
+
+    summary = _solve_allowance_market_year(
+        dispatch_stub,
+        2025,
+        supply,
+        bank_prev=0.0,
+        outstanding_prev=0.0,
+        policy_enabled=True,
+        high_price=_PRICE_SOLVER_HIGH,
+        tol=_PRICE_SOLVER_TOL,
+        max_iter=_PRICE_SOLVER_MAX_ITER,
+        annual_surrender_frac=1.0,
+        carry_pct=1.0,
+        banking_enabled=True,
+    )
+
+    assert summary["p_co2"] == pytest.approx(expected_price)
+    assert bool(summary["shortage_flag"]) is shortage
+    if math.isfinite(emissions):
+        assert summary["allowances_total"] >= emissions - _PRICE_SOLVER_TOL
+    else:
+        assert math.isinf(summary["obligation_new"])
+        assert summary["surrendered"] == pytest.approx(summary["allowances_total"])
+
+
+def test_run_loop_draws_down_bank_on_compliance_true_up():
+    policy = policy_three_year()
+    dispatch = LinearDispatch(
+        base={2025: 130.0, 2026: 220.0, 2027: 150.0},
+        slope=0.0,
+    )
+
+    outputs = run_annual_fixed_point(
+        policy,
+        dispatch,
+        years=[2025, 2026, 2027],
+        price_initial=0.0,
+    )
+
+    assert outputs[2025]["finalize"]["bank_final"] == pytest.approx(outputs[2025]["bank_new"])
+    assert outputs[2026]["finalize"]["bank_final"] == pytest.approx(outputs[2026]["bank_new"])
+
+    finalize_2027 = outputs[2027]["finalize"]
+    assert finalize_2027["finalized"]
+    assert finalize_2027["bank_final"] == pytest.approx(70.0)
+    assert finalize_2027["surrendered_additional"] == pytest.approx(250.0)
+    assert finalize_2027["bank_final"] == pytest.approx(
+        outputs[2027]["bank_new"] - finalize_2027["surrendered_additional"]
+    )
