@@ -16,6 +16,8 @@ _fixtures = importlib.import_module("tests.fixtures.dispatch_single_minimal")
 baseline_frames = _fixtures.baseline_frames
 baseline_units = _fixtures.baseline_units
 infeasible_frames = _fixtures.infeasible_frames
+frames_with_expansion = _fixtures.frames_with_expansion
+expansion_options = _fixtures.expansion_options
 
 
 def _collect_emissions(costs: Iterable[float]) -> list[float]:
@@ -130,3 +132,54 @@ def test_infeasible_load_reports_shortfall_and_price() -> None:
     result = solve(year, 10.0, frames=frames)
 
     assert pytest.approx(total_cap) == sum(result.gen_by_fuel.values())
+
+
+def test_capacity_expansion_inactive_without_trigger() -> None:
+    """Expansion audit should not build capacity when economics are unfavourable."""
+
+    frames = frames_with_expansion()
+    result = solve(2030, 0.0, frames=frames, capacity_expansion=True)
+
+    assert result.capacity_builds == []
+
+
+def test_capacity_expansion_resolves_shortage() -> None:
+    """Shortages trigger builds even when NPV would otherwise be negative."""
+
+    frames = infeasible_frames()
+    frames = frames.with_frame("expansion", expansion_options())
+    demand = frames.demand()
+    year = int(demand.iloc[0]["year"])
+    load = float(demand.loc[demand["year"] == year, "demand_mwh"].sum())
+
+    result = solve(year, 0.0, frames=frames, capacity_expansion=True)
+
+    assert result.capacity_builds, "expected at least one build to resolve shortage"
+    assert any(entry["reason"] == "supply_shortage" for entry in result.capacity_builds)
+    assert sum(result.gen_by_fuel.values()) == pytest.approx(load)
+
+    for entry in result.capacity_builds:
+        assert {"capex_cost", "opex_cost", "emissions_tons"}.issubset(entry)
+        if entry["reason"] == "supply_shortage":
+            assert entry["npv_positive"] in {True, False}
+
+
+def test_capacity_expansion_responds_to_carbon_price() -> None:
+    """Positive NPV triggered by high carbon prices induces clean builds."""
+
+    frames = frames_with_expansion()
+
+    baseline = solve(2030, 0.0, frames=frames, capacity_expansion=True, carbon_price=0.0)
+    high_price = solve(2030, 0.0, frames=frames, capacity_expansion=True, carbon_price=80.0)
+
+    assert baseline.capacity_builds == []
+    assert high_price.capacity_builds, "expected build under elevated carbon price"
+
+    clean_build = next(
+        entry for entry in high_price.capacity_builds if entry["reason"] == "npv_positive"
+    )
+    assert clean_build["npv_positive"] is True
+    assert clean_build["capex_cost"] > 0.0
+    assert clean_build["opex_cost"] >= 0.0
+    assert clean_build["emissions_tons"] == pytest.approx(0.0, abs=1e-9)
+    assert high_price.emissions_tons < baseline.emissions_tons
