@@ -126,3 +126,13 @@ def test_annual_coverage() -> None:
     years = list(range(2025, 2031))
     assert list(table["year"]) == years
 
+
+def test_cap_outputs_include_allowance_price_and_enforce_limit() -> None:
+    table, _ = run_case()
+
+    assert "allowance_price" in table.columns
+    pd.testing.assert_series_equal(
+        table["allowance_price"], table["p_co2"], check_names=False, rtol=0.0, atol=0.0
+    )
+    assert (table["emissions_tons"] <= table["available_allowances"] + 1e-6).all()
+

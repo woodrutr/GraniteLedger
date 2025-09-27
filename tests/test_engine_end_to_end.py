@@ -401,6 +401,27 @@ def test_annual_output_schema_matches_spec():
     assert list(outputs.annual.columns) == ANNUAL_OUTPUT_COLUMNS
 
 
+def test_allowance_price_column_matches_allowance_component():
+    frames = _three_year_frames()
+    outputs = run_end_to_end_from_frames(
+        frames,
+        years=YEARS,
+        price_initial=0.0,
+        tol=1e-4,
+        relaxation=0.8,
+    )
+
+    annual = outputs.annual
+    assert "allowance_price" in annual.columns
+    pd.testing.assert_series_equal(
+        annual["allowance_price"],
+        annual["p_co2_all"],
+        check_names=False,
+        rtol=1e-9,
+        atol=1e-9,
+    )
+
+
 def test_annual_output_csv_schema(tmp_path):
     frames = _three_year_frames()
     outputs = run_end_to_end_from_frames(

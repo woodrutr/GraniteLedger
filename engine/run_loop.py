@@ -15,6 +15,7 @@ except ImportError:  # pragma: no cover - optional dependency
 ANNUAL_OUTPUT_COLUMNS = [
     "year",
     "p_co2",
+    "allowance_price",
     "p_co2_all",
     "p_co2_exc",
     "p_co2_eff",
@@ -1259,6 +1260,7 @@ def _build_engine_outputs(
             {
                 "year": year,
                 "p_co2": price_value,
+                "allowance_price": allowance_value,
                 "p_co2_all": float(entry.get("allowance_price_last", price_value)),
                 "p_co2_exc": float(entry.get("exogenous_price_last", 0.0)),
                 "p_co2_eff": float(entry.get("effective_price_last", price_value)),
