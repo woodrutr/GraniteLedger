@@ -5667,6 +5667,37 @@ def run_policy_simulation(
         'temp_dir': temp_dir,
         'documentation': documentation,
     }
+
+    emissions_total_map = getattr(outputs, 'emissions_total', None)
+    if isinstance(emissions_total_map, Mapping):
+        try:
+            result['emissions_total'] = {
+                int(year): float(value) for year, value in emissions_total_map.items()
+            }
+        except Exception:  # pragma: no cover - defensive guard
+            LOGGER.exception('Unable to normalise aggregate emissions totals')
+
+    emissions_region_map = getattr(outputs, 'emissions_by_region_map', None)
+    if isinstance(emissions_region_map, Mapping):
+        normalized_regions: dict[str, dict[int, float]] = {}
+        for region, data in emissions_region_map.items():
+            try:
+                normalized_regions[str(region)] = {
+                    int(year): float(value) for year, value in data.items()
+                }
+            except Exception:  # pragma: no cover - defensive guard
+                LOGGER.exception('Unable to normalise emissions mapping for region %s', region)
+        if normalized_regions:
+            result['emissions_by_region_map'] = normalized_regions
+
+    if hasattr(outputs, 'emissions_summary_table'):
+        try:
+            summary_table = outputs.emissions_summary_table()
+        except Exception:  # pragma: no cover - defensive guard
+            LOGGER.exception('Unable to compute regional emissions summary table')
+        else:
+            if isinstance(summary_table, pd.DataFrame):
+                result['emissions_summary'] = summary_table
     if limiting_factors:
         result['limiting_factors'] = limiting_factors
     result['_price_output_type'] = 'allowance' if policy_enabled else 'carbon'

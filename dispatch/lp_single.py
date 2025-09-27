@@ -246,6 +246,10 @@ def solve(
     if not emissions_by_region:
         emissions_by_region = {_DEFAULT_REGION: 0.0}
 
+    demand_regions = {str(region) for region in demand.keys()}
+    for region in demand_regions:
+        emissions_by_region.setdefault(region, 0.0)
+
     # coverage and imports/exports (main branch)
     total_generation = float(generation.sum())
     generation_by_coverage = {"covered": 0.0, "non_covered": 0.0}

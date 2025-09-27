@@ -1117,6 +1117,7 @@ def _build_engine_outputs(
     _ensure_pandas()
 
     aggregated: dict[int, dict[str, object]] = {}
+    all_regions: set[str] = set()
 
     for period in years:
         summary_raw = raw_results.get(period)
@@ -1216,8 +1217,10 @@ def _build_engine_outputs(
         if isinstance(emissions_by_region, Mapping):
             for region, value in emissions_by_region.items():
                 key = str(region)
+                all_regions.add(key)
                 entry["emissions_by_region"][key] += float(value)
         else:
+            all_regions.add("system")
             entry["emissions_by_region"]["system"] += emissions_total
 
         region_prices = getattr(dispatch_result, "region_prices", {})
@@ -1238,6 +1241,9 @@ def _build_engine_outputs(
     emissions_rows: list[dict[str, object]] = []
     price_rows: list[dict[str, object]] = []
     flow_rows: list[dict[str, object]] = []
+    emissions_map: dict[str, dict[int, float]] = {}
+
+    region_order = sorted(all_regions) if all_regions else None
 
     for year in sorted(aggregated):
         entry = aggregated[year]
@@ -1248,9 +1254,6 @@ def _build_engine_outputs(
         bank_final = float(entry.get("bank_final", entry.get("bank_new_last", 0.0)))
         obligation_final = float(entry.get("obligation_last", 0.0))
         price_value = float(entry.get("price_last", 0.0))
-        allowance_value = float(entry.get("allowance_price_last", price_value))
-        exogenous_value = float(entry.get("exogenous_price_last", 0.0))
-        effective_value = float(entry.get("effective_price_last", price_value))
         iterations_value = int(entry.get("iterations_max", 0))
         shortage_flag = bool(entry.get("shortage_any", False))
         finalized = bool(entry.get("finalized", False))
@@ -1274,9 +1277,17 @@ def _build_engine_outputs(
             }
         )
 
+        emissions_by_region_entry = entry["emissions_by_region"]
+        if region_order is None:
+            region_keys = sorted(emissions_by_region_entry)
+        else:
+            region_keys = region_order
 
-        for region, value in entry["emissions_by_region"].items():
-            emissions_rows.append({"year": year, "region": region, "emissions_tons": float(value)})
+        for region in region_keys:
+            value = float(emissions_by_region_entry.get(region, 0.0))
+            emissions_rows.append({"year": year, "region": region, "emissions_tons": value})
+            region_record = emissions_map.setdefault(region, {})
+            region_record[int(year)] = value
 
         for region, value in entry["price_by_region"].items():
             price_rows.append({"year": year, "region": region, "price": float(value)})
@@ -1319,13 +1330,29 @@ def _build_engine_outputs(
     if not flows_df.empty:
         flows_df = flows_df.sort_values(flows_columns[:-1]).reset_index(drop=True)
 
-    return EngineOutputs(
+    emissions_total = {int(row["year"]): float(row["emissions_tons"]) for row in annual_rows}
+
+    outputs = EngineOutputs(
         annual=annual_df,
         emissions_by_region=emissions_df,
         price_by_region=price_df,
         flows=flows_df,
         limiting_factors=list(limiting_factors or []),
+        emissions_total=emissions_total,
+        emissions_by_region_map=emissions_map,
     )
+
+    if LOGGER.isEnabledFor(logging.INFO):
+        summary_table = outputs.emissions_summary_table()
+        if summary_table.empty:
+            LOGGER.info("Regional emissions summary: no data available for this run.")
+        else:
+            LOGGER.info(
+                "Regional emissions summary:\n%s",
+                summary_table.to_string(index=False),
+            )
+
+    return outputs
 
 
 def _coerce_price_schedule(

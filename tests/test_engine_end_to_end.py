@@ -529,6 +529,106 @@ def test_daily_resolution_matches_annual_totals():
     )
 
 
+def test_engine_outputs_expose_emissions_mappings() -> None:
+    frames = baseline_frames(year=2025, load_mwh=1_000_000.0)
+    policy = pd.DataFrame(
+        [
+            {
+                "year": 2025,
+                "cap_tons": 1_000_000.0,
+                "floor_dollars": 0.0,
+                "ccr1_trigger": 0.0,
+                "ccr1_qty": 0.0,
+                "ccr2_trigger": 0.0,
+                "ccr2_qty": 0.0,
+                "cp_id": "CP1",
+                "full_compliance": True,
+                "bank0": 0.0,
+                "annual_surrender_frac": 1.0,
+                "carry_pct": 1.0,
+                "policy_enabled": True,
+                "resolution": "annual",
+            }
+        ]
+    )
+    frames = frames.with_frame("policy", policy)
+    outputs = run_end_to_end_from_frames(
+        frames,
+        years=[2025],
+        price_initial=0.0,
+        tol=1e-4,
+        relaxation=0.8,
+    )
+
+    totals = dict(outputs.emissions_total)
+    assert 2025 in totals
+    total_value = float(totals[2025])
+    assert total_value == pytest.approx(outputs.annual.loc[outputs.annual['year'] == 2025, 'emissions_tons'].iloc[0])
+
+    regional_map = {region: dict(years) for region, years in outputs.emissions_by_region_map.items()}
+    assert 'default' in regional_map
+    assert 2025 in regional_map['default']
+    regional_value = float(regional_map['default'][2025])
+    df_value = float(
+        outputs.emissions_by_region.loc[
+            (outputs.emissions_by_region['year'] == 2025)
+            & (outputs.emissions_by_region['region'] == 'default'),
+            'emissions_tons',
+        ].iloc[0]
+    )
+    assert regional_value == pytest.approx(df_value)
+
+
+def test_engine_outputs_include_zero_rows_for_empty_regions() -> None:
+    frames = baseline_frames(year=2025, load_mwh=1_000_000.0)
+    demand = frames.demand()
+    demand_extra = pd.DataFrame(
+        [{"year": 2025, "region": "unused", "demand_mwh": 0.0}]
+    )
+    demand = pd.concat([demand, demand_extra], ignore_index=True)
+    frames = frames.with_frame("demand", demand)
+    policy = pd.DataFrame(
+        [
+            {
+                "year": 2025,
+                "cap_tons": 1_000_000.0,
+                "floor_dollars": 0.0,
+                "ccr1_trigger": 0.0,
+                "ccr1_qty": 0.0,
+                "ccr2_trigger": 0.0,
+                "ccr2_qty": 0.0,
+                "cp_id": "CP1",
+                "full_compliance": True,
+                "bank0": 0.0,
+                "annual_surrender_frac": 1.0,
+                "carry_pct": 1.0,
+                "policy_enabled": True,
+                "resolution": "annual",
+            }
+        ]
+    )
+    frames = frames.with_frame("policy", policy)
+
+    outputs = run_end_to_end_from_frames(
+        frames,
+        years=[2025],
+        price_initial=0.0,
+        tol=1e-4,
+        relaxation=0.8,
+    )
+
+    region_map = {region: dict(years) for region, years in outputs.emissions_by_region_map.items()}
+    assert 'unused' in region_map
+    assert region_map['unused'][2025] == pytest.approx(0.0)
+
+    unused_rows = outputs.emissions_by_region[
+        (outputs.emissions_by_region['year'] == 2025)
+        & (outputs.emissions_by_region['region'] == 'unused')
+    ]
+    assert not unused_rows.empty
+    assert unused_rows['emissions_tons'].iloc[0] == pytest.approx(0.0)
+
+
 def test_zero_cap_policy_still_enforced():
     frames = _three_year_frames()
 
