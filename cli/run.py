@@ -205,6 +205,13 @@ def _write_outputs(outputs: EngineOutputs, out_dir: Path) -> None:
         flows_filename='flows.csv',
     )
 
+    summary_table = outputs.emissions_summary_table()
+    if summary_table.empty:
+        typer.secho('Regional emissions summary: no data available.', fg=typer.colors.YELLOW)
+    else:
+        typer.secho('Regional emissions summary (tons):', fg=typer.colors.BLUE)
+        typer.echo(summary_table.to_string(index=False))
+
 
 @app.command()
 def main(
