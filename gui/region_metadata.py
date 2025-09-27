@@ -38,9 +38,10 @@ DEFAULT_REGION_METADATA: Mapping[int, RegionMetadata] = {
     ),
     3: RegionMetadata(
         id=3,
-        code="SPPC",
+        code="WNC",
         area="Midwest / WNCentral",
-        label="Region 3 – SPPC (Midwest / WNCentral)",
+        label="Region 3 – WNCentral aggregate (Midwest / WNCentral)",
+        aliases=("wncentral", "midwest wncentral", "wnc aggregate"),
     ),
     4: RegionMetadata(
         id=4,
