@@ -51,6 +51,28 @@ def _frames_for_years(years: list[int]) -> object:
     return base.with_frame("demand", demand)
 
 
+class _SimpleOutputs:
+    def __init__(
+        self,
+        annual: pd.DataFrame,
+        emissions: pd.DataFrame,
+        price: pd.DataFrame,
+        flows: pd.DataFrame,
+    ) -> None:
+        self.annual = annual
+        self.emissions_by_region = emissions
+        self.price_by_region = price
+        self.flows = flows
+
+    def to_csv(self, target: Path) -> None:
+        target = Path(target)
+        target.mkdir(parents=True, exist_ok=True)
+        self.annual.to_csv(target / "annual.csv", index=False)
+        self.emissions_by_region.to_csv(target / "emissions_by_region.csv", index=False)
+        self.price_by_region.to_csv(target / "price_by_region.csv", index=False)
+        self.flows.to_csv(target / "flows.csv", index=False)
+
+
 def _cleanup_temp_dir(result: dict) -> None:
     temp_dir = result.get("temp_dir")
     if temp_dir:
@@ -523,7 +545,7 @@ def test_backend_handles_renamed_engine_outputs(monkeypatch):
         frames=frames,
     )
 
-    pd.testing.assert_frame_equal(result["annual"], annual)
+    pd.testing.assert_frame_equal(result["annual"][annual.columns], annual)
     emissions_result = result["emissions_by_region"]
     assert {"region_canonical", "region_label"}.issubset(emissions_result.columns)
     pd.testing.assert_frame_equal(
@@ -578,7 +600,7 @@ def test_recent_results_repository_tracks_outputs(monkeypatch):
 
     stored = recent_results.get_recent_result()
     assert stored is result
-    pd.testing.assert_frame_equal(stored["annual"], annual)
+    pd.testing.assert_frame_equal(stored["annual"][annual.columns], annual)
     emissions_result = stored["emissions_by_region"]
     assert {"region_canonical", "region_label"}.issubset(emissions_result.columns)
     pd.testing.assert_frame_equal(
@@ -644,7 +666,7 @@ def test_backend_handles_legacy_runner_without_deep_kw(monkeypatch):
 
     assert "error" not in result
     assert called.get("executed") is True
-    pd.testing.assert_frame_equal(result["annual"], annual)
+    pd.testing.assert_frame_equal(result["annual"][annual.columns], annual)
     emissions_result = result["emissions_by_region"]
     assert {"region_canonical", "region_label"}.issubset(emissions_result.columns)
     pd.testing.assert_frame_equal(
@@ -1124,6 +1146,177 @@ def test_backend_deep_carbon_combines_prices(monkeypatch):
 
     dispatch_cfg = result["module_config"].get("electricity_dispatch", {})
     assert dispatch_cfg.get("deep_carbon_pricing") is True
+
+    _cleanup_temp_dir(result)
+
+
+def test_backend_slider_range_covers_all_years(monkeypatch):
+    config = _baseline_config()
+    config["years"] = [2025, 2030]
+    frames = _frames_for_years(list(range(2025, 2034)))
+
+    captured: dict[str, list[int]] = {}
+
+    def capturing_runner(frames_obj, **kwargs):
+        years = list(kwargs.get("years", []))
+        captured["years"] = years
+        annual_rows = [
+            {
+                "year": year,
+                "p_co2": 0.0,
+                "allowance_price": 0.0,
+                "p_co2_all": 0.0,
+                "p_co2_exc": 0.0,
+                "p_co2_eff": 0.0,
+                "iterations": 0,
+                "emissions_tons": 0.0,
+                "allowances_minted": 0.0,
+                "allowances_available": 0.0,
+                "bank": 0.0,
+                "surrender": 0.0,
+                "obligation": 0.0,
+                "finalized": False,
+                "shortage_flag": False,
+                "ccr1_trigger": 0.0,
+                "ccr1_issued": 0.0,
+                "ccr2_trigger": 0.0,
+                "ccr2_issued": 0.0,
+            }
+            for year in years
+        ]
+        annual = pd.DataFrame(annual_rows)
+        emissions = pd.DataFrame(
+            [{"year": year, "region": "default", "emissions_tons": 0.0} for year in years]
+        )
+        price = pd.DataFrame(
+            [{"year": year, "region": "default", "price": 0.0} for year in years]
+        )
+        flows = pd.DataFrame(columns=["year", "from_region", "to_region", "flow_mwh"])
+        return _SimpleOutputs(annual, emissions, price, flows)
+
+    monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: capturing_runner)
+
+    result = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2033,
+        frames=frames,
+    )
+
+    expected_years = list(range(2025, 2034))
+    assert captured.get("years") == expected_years
+    assert result["annual"]["year"].tolist() == expected_years
+
+    _cleanup_temp_dir(result)
+
+
+def test_backend_deep_carbon_adjusts_dispatch_costs(monkeypatch):
+    config = _baseline_config()
+    frames = _frames_for_years([2025])
+
+    def stub_runner(frames_obj, **kwargs):
+        deep = bool(kwargs.get("deep_carbon_pricing"))
+        price = 30.0 + (5.0 if deep else 0.0)
+        annual = pd.DataFrame(
+            [
+                {
+                    "year": 2025,
+                    "p_co2": price,
+                    "allowance_price": 25.0,
+                    "p_co2_all": 25.0,
+                    "p_co2_exc": price - 25.0,
+                    "p_co2_eff": price,
+                    "iterations": 0,
+                    "emissions_tons": 0.0,
+                    "allowances_minted": 0.0,
+                    "allowances_available": 0.0,
+                    "bank": 0.0,
+                    "surrender": 0.0,
+                    "obligation": 0.0,
+                    "finalized": False,
+                    "shortage_flag": False,
+                    "ccr1_trigger": 0.0,
+                    "ccr1_issued": 0.0,
+                    "ccr2_trigger": 0.0,
+                    "ccr2_issued": 0.0,
+                }
+            ]
+        )
+        emissions = pd.DataFrame(
+            [{"year": 2025, "region": "default", "emissions_tons": 0.0}]
+        )
+        price_df = pd.DataFrame(
+            [{"year": 2025, "region": "default", "price": price}]
+        )
+        flows = pd.DataFrame(columns=["year", "from_region", "to_region", "flow_mwh"])
+        return _SimpleOutputs(annual, emissions, price_df, flows)
+
+    monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: stub_runner)
+
+    result_off = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2025,
+        frames=frames,
+        carbon_price_enabled=True,
+        carbon_price_value=15.0,
+        deep_carbon_pricing=False,
+    )
+    result_on = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2025,
+        frames=frames,
+        carbon_price_enabled=True,
+        carbon_price_value=15.0,
+        deep_carbon_pricing=True,
+    )
+
+    assert "error" not in result_off
+    assert "error" not in result_on
+
+    off_price = float(result_off["price_by_region"]["price"].iloc[0])
+    on_price = float(result_on["price_by_region"]["price"].iloc[0])
+    assert on_price > off_price
+
+    _cleanup_temp_dir(result_off)
+    _cleanup_temp_dir(result_on)
+
+
+def test_backend_ccr_triggers_reported():
+    config = _baseline_config()
+    config["allowance_market"]["ccr1_qty"] = 40_000.0
+    config["allowance_market"]["ccr2_qty"] = 60_000.0
+    frames = _frames_for_years([2025])
+
+    result = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2025,
+        cap_regions=[1],
+        frames=frames,
+        enable_ccr=True,
+        ccr1_enabled=True,
+        ccr2_enabled=True,
+    )
+
+    assert "error" not in result
+    annual = result["annual"].set_index("year")
+    assert {"ccr1_trigger", "ccr2_trigger"}.issubset(annual.columns)
+
+    first_year = annual.index[0]
+    assert annual.loc[first_year, "ccr1_trigger"] == pytest.approx(
+        config["allowance_market"]["ccr1_trigger"],
+        rel=0.0,
+        abs=1e-9,
+    )
+    assert annual.loc[first_year, "ccr2_trigger"] == pytest.approx(
+        config["allowance_market"]["ccr2_trigger"],
+        rel=0.0,
+        abs=1e-9,
+    )
+    assert "ccr1_issued" in annual.columns
+    assert "ccr2_issued" in annual.columns
 
     _cleanup_temp_dir(result)
 
