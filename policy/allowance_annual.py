@@ -459,7 +459,7 @@ def clear_year(
                     best_ccr1 = ccr1_mid
                     best_ccr2 = ccr2_mid
                     high_current = mid
-                    if abs(minted_mid - emissions) <= tol:
+                    if abs(total_allowances_mid - emissions) <= tol:
                         break
                 else:
                     low_current = mid
@@ -498,7 +498,7 @@ def clear_year(
         carry_pct = 0.0
     bank_new = bank_unadjusted * carry_pct
 
-    shortage_flag = emissions > minted_final + tol
+    shortage_flag = emissions > total_allowances + tol
 
     record = {
         'year': year,
