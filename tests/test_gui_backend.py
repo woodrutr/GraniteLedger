@@ -143,6 +143,28 @@ def test_backend_generates_outputs(tmp_path):
     _cleanup_temp_dir(result)
 
 
+def test_backend_year_slider_generates_contiguous_range():
+    years = list(range(2025, 2034))
+    config = _baseline_config()
+    frames = _frames_for_years(years)
+
+    result = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2033,
+        cap_regions=[1],
+        frames=frames,
+    )
+
+    assert "error" not in result
+
+    annual_years = sorted(result["annual"]["year"].astype(int).unique().tolist())
+    assert annual_years == years
+    assert result["config"]["years"] == years
+
+    _cleanup_temp_dir(result)
+
+
 def test_backend_policy_toggle_affects_price():
     config = _baseline_config()
     frames = _frames_for_years([2025])
@@ -1128,6 +1150,89 @@ def test_backend_deep_carbon_combines_prices(monkeypatch):
     _cleanup_temp_dir(result)
 
 
+def test_backend_deep_carbon_toggle_controls_dispatch(monkeypatch):
+    config = _baseline_config()
+    config["allowance_market"]["cap"] = {}
+    frames = _frames_for_years([2025])
+
+    captured: list[bool] = []
+
+    class StubOutputs:
+        def __init__(self, deep: bool) -> None:
+            allowance_price = 30.0
+            exogenous = 5.0 if deep else 0.0
+            effective_price = allowance_price + exogenous
+            self.annual = pd.DataFrame(
+                [
+                    {
+                        "year": 2025,
+                        "p_co2": allowance_price,
+                        "allowance_price": allowance_price,
+                        "allowances_available": 500_000.0,
+                        "emissions_tons": 490_000.0,
+                        "allowance_price_last": allowance_price,
+                        "exogenous_price_last": exogenous,
+                        "effective_price_last": effective_price,
+                    }
+                ]
+            )
+            self.emissions_by_region = pd.DataFrame(
+                [{"year": 2025, "region": "default", "emissions_tons": 490_000.0}]
+            )
+            dispatch_price = allowance_price + exogenous
+            self.price_by_region = pd.DataFrame(
+                [{"year": 2025, "region": "default", "price": dispatch_price}]
+            )
+            self.flows = pd.DataFrame()
+            self.limiting_factors: list[str] = []
+
+        def to_csv(self, target: Path) -> None:
+            target = Path(target)
+            target.mkdir(parents=True, exist_ok=True)
+            self.annual.to_csv(target / "annual.csv", index=False)
+            self.emissions_by_region.to_csv(target / "emissions_by_region.csv", index=False)
+            self.price_by_region.to_csv(target / "price_by_region.csv", index=False)
+
+    def fake_runner(frames, **kwargs):
+        deep_flag = bool(kwargs.get("deep_carbon_pricing"))
+        captured.append(deep_flag)
+        return StubOutputs(deep_flag)
+
+    monkeypatch.setattr("gui.app._ensure_engine_runner", lambda: fake_runner)
+
+    base = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2025,
+        frames=frames,
+        carbon_policy_enabled=False,
+        carbon_price_enabled=True,
+        carbon_price_value=15.0,
+        deep_carbon_pricing=False,
+    )
+    deep = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2025,
+        frames=frames,
+        carbon_policy_enabled=False,
+        carbon_price_enabled=True,
+        carbon_price_value=15.0,
+        deep_carbon_pricing=True,
+    )
+
+    assert captured == [False, True]
+
+    base_prices = base["price_by_region"].set_index(["year", "region"])["price"]
+    deep_prices = deep["price_by_region"].set_index(["year", "region"])["price"]
+
+    assert (deep_prices >= base_prices).all()
+    assert (deep_prices > base_prices).any()
+
+    _cleanup_temp_dir(base)
+    _cleanup_temp_dir(deep)
+
+
 def test_backend_reports_missing_deep_support(monkeypatch):
     def legacy_runner(
         frames,
@@ -1280,6 +1385,33 @@ def test_backend_updates_allowance_market_config():
     assert allowance_module["ccr2_enabled"] is False
     assert allowance_config["ccr1_enabled"] is True
     assert allowance_config["ccr2_enabled"] is False
+
+    _cleanup_temp_dir(result)
+
+
+def test_backend_ccr_triggers_surface_in_results():
+    config = _baseline_config()
+    frames = _frames_for_years([2025, 2026])
+
+    result = run_policy_simulation(
+        config,
+        start_year=2025,
+        end_year=2026,
+        frames=frames,
+        cap_regions=[1],
+        carbon_policy_enabled=True,
+        enable_ccr=True,
+        ccr1_enabled=True,
+        ccr2_enabled=False,
+    )
+
+    assert "error" not in result
+
+    allowance_module = result["module_config"]["allowance_market"]
+    assert allowance_module["ccr1_enabled"] is True
+    assert allowance_module.get("ccr1_trigger") == pytest.approx(10.0)
+    assert allowance_module.get("ccr1_qty") == pytest.approx(0.0)
+    assert "ccr2_trigger" in allowance_module
 
     _cleanup_temp_dir(result)
 

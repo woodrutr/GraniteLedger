@@ -1259,6 +1259,8 @@ def _build_engine_outputs(
         shortage_flag = bool(entry.get("shortage_any", False))
         finalized = bool(entry.get("finalized", False))
 
+        allowance_value = float(entry.get("allowance_price_last", price_value))
+
         annual_rows.append(
             {
                 "year": year,

@@ -5035,6 +5035,7 @@ def run_policy_simulation(
         allowance_market_record["floor"] = dict(sorted(floor_schedule_map.items()))
     elif not policy_enabled or not floor_flag:
         allowance_market_record.pop("floor", None)
+
     existing_allowance_cfg = config.get("allowance_market")
     if isinstance(existing_allowance_cfg, Mapping):
         allowance_config = dict(existing_allowance_cfg)
@@ -5057,6 +5058,12 @@ def run_policy_simulation(
     elif not policy_enabled or not floor_flag:
         allowance_config.pop("floor", None)
     config["allowance_market"] = allowance_config
+
+    for key in ("ccr1_trigger", "ccr1_qty", "ccr2_trigger", "ccr2_qty"):
+        if key in allowance_config:
+            allowance_market_record[key] = allowance_config[key]
+        else:
+            allowance_market_record.pop(key, None)
     try:
         normalized_regions, cap_region_aliases = _normalize_cap_region_entries(cap_regions)
     except ValueError as exc:
@@ -5668,6 +5675,9 @@ def run_policy_simulation(
         'documentation': documentation,
     }
 
+    if normalized_regions:
+        result['cap_regions'] = list(normalized_regions)
+
     emissions_total_map = getattr(outputs, 'emissions_total', None)
     if isinstance(emissions_total_map, Mapping):
         try:
@@ -5679,16 +5689,16 @@ def run_policy_simulation(
 
     emissions_region_map = getattr(outputs, 'emissions_by_region_map', None)
     if isinstance(emissions_region_map, Mapping):
-        normalized_regions: dict[str, dict[int, float]] = {}
+        normalized_emissions_map: dict[str, dict[int, float]] = {}
         for region, data in emissions_region_map.items():
             try:
-                normalized_regions[str(region)] = {
+                normalized_emissions_map[str(region)] = {
                     int(year): float(value) for year, value in data.items()
                 }
             except Exception:  # pragma: no cover - defensive guard
                 LOGGER.exception('Unable to normalise emissions mapping for region %s', region)
-        if normalized_regions:
-            result['emissions_by_region_map'] = normalized_regions
+        if normalized_emissions_map:
+            result['emissions_by_region_map'] = normalized_emissions_map
 
     if hasattr(outputs, 'emissions_summary_table'):
         try:
@@ -5702,9 +5712,6 @@ def run_policy_simulation(
         result['limiting_factors'] = limiting_factors
     result['_price_output_type'] = 'allowance' if policy_enabled else 'carbon'
     result['_price_field_flags'] = price_flags
-    if normalized_regions:
-        result['cap_regions'] = list(normalized_regions)
-
     optional_frames = {
         'capacity_by_technology': ['capacity_by_technology'],
         'generation_by_technology': ['generation_by_technology'],
@@ -5770,11 +5777,11 @@ def _render_technology_section(
     st.subheader(section_title)
 
     if frame is None or frame.empty:
-        st.caption(f'{section_title} data not available for this run.')
+        st.caption(f'Engine did not return {section_title.lower()} data for this run.')
         return
 
     if 'technology' not in frame.columns:
-        st.caption('Technology detail unavailable; displaying raw data instead.')
+        st.caption('Engine did not return technology detail; displaying raw data instead.')
         st.dataframe(frame, width="stretch")
         return
 
@@ -5792,7 +5799,7 @@ def _render_technology_section(
             value_col = numeric_cols[0]
             value_label = numeric_cols[0]
         else:
-            st.caption('No numeric values available to chart; showing raw data.')
+            st.caption('Engine did not return numeric values to chart; showing raw data.')
             st.dataframe(frame, width="stretch")
             return
 
@@ -5802,7 +5809,7 @@ def _render_technology_section(
         display_frame = display_frame.dropna(subset=['year'])
 
     if display_frame.empty:
-        st.caption('No valid year entries available; showing raw data.')
+        st.caption('Engine did not return valid year entries; showing raw data.')
         st.dataframe(frame, width="stretch")
         return
 
@@ -5815,7 +5822,7 @@ def _render_technology_section(
     )
 
     if pivot.empty:
-        st.caption('No data available to chart; showing raw data.')
+        st.caption('Engine did not return chartable data for this run; showing raw data.')
         st.dataframe(frame, width="stretch")
         return
 
@@ -6015,11 +6022,15 @@ def _render_results(result: Mapping[str, Any]) -> None:
         }
 
         if not display_annual.empty:
+            if 'p_co2_all' in display_annual.columns:
+                display_annual = display_annual.drop(columns=['allowance_price'], errors='ignore')
             display_annual = display_annual.rename(columns=carbon_field_aliases)
             if 'p_co2' not in display_annual.columns and 'p_co2_all' in display_annual.columns:
                 display_annual['p_co2'] = display_annual['p_co2_all']
 
         if not chart_data.empty:
+            if 'p_co2_all' in chart_data.columns:
+                chart_data = chart_data.drop(columns=['allowance_price'], errors='ignore')
             chart_data = chart_data.rename(columns=carbon_field_aliases)
             if 'p_co2' not in chart_data.columns and 'p_co2_all' in chart_data.columns:
                 chart_data['p_co2'] = chart_data['p_co2_all']
@@ -6028,12 +6039,12 @@ def _render_results(result: Mapping[str, Any]) -> None:
         price_tab_label = 'Carbon price'
         price_section_title = 'Carbon price results'
         price_series_label = 'Carbon price ($/ton)'
-        price_missing_caption = 'Carbon price data unavailable for this run.'
+        price_missing_caption = 'Engine did not return carbon price data for this run.'
     else:
         price_tab_label = 'Allowance price'
         price_section_title = 'Allowance market results'
         price_series_label = 'Allowance clearing price ($/ton)'
-        price_missing_caption = 'Allowance clearing price data unavailable for this run.'
+        price_missing_caption = 'Engine did not return allowance clearing price data for this run.'
 
     price_chart_column: str | None = None
     if not chart_data.empty and 'p_co2' in chart_data.columns:
@@ -6108,7 +6119,7 @@ def _render_results(result: Mapping[str, Any]) -> None:
     with price_tab:
         st.subheader(price_section_title)
         if display_annual.empty:
-            st.info('No annual results to display.')
+            st.info('Engine did not return annual results for this run.')
         else:
             if price_chart_column and price_chart_column in chart_data.columns:
                 st.markdown(f'**{price_series_label}**')
@@ -6122,17 +6133,17 @@ def _render_results(result: Mapping[str, Any]) -> None:
     with emissions_tab:
         st.subheader('Emissions overview')
         if display_annual.empty and emissions_df.empty:
-            st.info('No emissions data available for this run.')
+            st.info('Engine did not return emissions data for this run.')
         else:
             if not chart_data.empty and 'emissions_tons' in chart_data.columns:
                 st.markdown('**Total emissions (tons)**')
                 st.bar_chart(chart_data[['emissions_tons']])
             elif not display_annual.empty:
-                st.caption('Total emissions data unavailable for this run.')
+                st.caption('Engine did not return total emissions data for this run.')
 
             if emissions_df.empty:
                 if not display_annual.empty:
-                    st.caption('No regional emissions data available for this run.')
+                    st.caption('Engine did not return regional emissions data for this run.')
             else:
                 display_emissions = emissions_df.copy()
                 if 'year' in display_emissions.columns:
@@ -6183,7 +6194,7 @@ def _render_results(result: Mapping[str, Any]) -> None:
                         width="stretch",
                     )
                 else:
-                    st.caption('Regional emissions data unavailable; showing raw table below.')
+                    st.caption('Engine did not return canonical regional emissions detail; showing raw data below.')
                     st.dataframe(
                         display_emissions.drop(
                             columns=['region_canonical'], errors='ignore'
@@ -6195,18 +6206,18 @@ def _render_results(result: Mapping[str, Any]) -> None:
         with bank_tab:
             st.subheader('Allowance bank balance')
             if display_annual.empty:
-                st.info('No annual results to display.')
+                st.info('Engine did not return annual results for this run.')
             elif 'bank' in chart_data.columns:
                 st.markdown('**Bank balance (tons)**')
                 st.line_chart(chart_data[['bank']])
                 st.bar_chart(chart_data[['bank']])
             else:
-                st.caption('Allowance bank data unavailable for this run.')
+                st.caption('Engine did not return allowance bank data for this run.')
 
     with dispatch_tab:
         st.subheader('Dispatch costs and network results')
         if price_df.empty and flows_df.empty:
-            st.info('No dispatch outputs are available for this run.')
+            st.info('Engine did not return any dispatch outputs for this run.')
         else:
             if not price_df.empty:
                 if all(price_flags.get(key, False) for key in ('year', 'region', 'price')):
@@ -6227,7 +6238,7 @@ def _render_results(result: Mapping[str, Any]) -> None:
                         st.line_chart(price_pivot)
                     else:
                         st.caption(
-                            'Regional dispatch cost data unavailable; showing raw table below.'
+                            'Engine did not return regional dispatch cost detail; showing raw data below.'
                         )
                         st.dataframe(display_price, width="stretch")
                 else:
@@ -6245,7 +6256,7 @@ def _render_results(result: Mapping[str, Any]) -> None:
                 st.markdown('**Interregional energy flows (MWh)**')
                 st.dataframe(flows_df, width="stretch")
             elif price_df.empty:
-                st.caption('No dispatch network data available for this run.')
+                st.caption('Engine did not return dispatch network data for this run.')
 
     # --- Technology sections ---
     capacity_df = _extract_result_frame(result, 'capacity_by_technology')
