@@ -24,6 +24,16 @@ def _ensure_pandas() -> None:
         )
 
 
+STANDARD_REPORT_COLUMNS = ["year", "region", "tech", "value"]
+
+
+def _empty_report_frame() -> "pd.DataFrame":
+    """Return an empty DataFrame matching the standard report schema."""
+
+    _ensure_pandas()
+    return pd.DataFrame(columns=STANDARD_REPORT_COLUMNS)
+
+
 @dataclass(frozen=True)
 class EngineOutputs:
     """Container bundling the primary outputs of the annual engine."""
@@ -33,6 +43,11 @@ class EngineOutputs:
     price_by_region: pd.DataFrame
     flows: pd.DataFrame
     limiting_factors: list[str] = field(default_factory=list)
+    emissions_report: pd.DataFrame = field(default_factory=_empty_report_frame)
+    generation_by_technology: pd.DataFrame = field(default_factory=_empty_report_frame)
+    allowance_prices: pd.DataFrame = field(default_factory=_empty_report_frame)
+    demand_by_region: pd.DataFrame = field(default_factory=_empty_report_frame)
+    imports_by_region: pd.DataFrame = field(default_factory=_empty_report_frame)
 
     def __post_init__(self) -> None:
         _ensure_pandas()
@@ -45,6 +60,11 @@ class EngineOutputs:
         emissions_filename: str = 'emissions_by_region.csv',
         price_filename: str = 'price_by_region.csv',
         flows_filename: str = 'flows.csv',
+        emissions_report_filename: str = 'emissions_report.csv',
+        generation_filename: str = 'generation_by_technology.csv',
+        allowance_filename: str = 'allowance_prices.csv',
+        demand_filename: str = 'demand_by_region.csv',
+        imports_filename: str = 'imports_by_region.csv',
     ) -> None:
         """Persist the stored DataFrames to ``outdir`` as CSV files."""
 
@@ -57,7 +77,12 @@ class EngineOutputs:
         self.emissions_by_region.to_csv(output_dir / emissions_filename, index=False)
         self.price_by_region.to_csv(output_dir / price_filename, index=False)
         self.flows.to_csv(output_dir / flows_filename, index=False)
+        self.emissions_report.to_csv(output_dir / emissions_report_filename, index=False)
+        self.generation_by_technology.to_csv(output_dir / generation_filename, index=False)
+        self.allowance_prices.to_csv(output_dir / allowance_filename, index=False)
+        self.demand_by_region.to_csv(output_dir / demand_filename, index=False)
+        self.imports_by_region.to_csv(output_dir / imports_filename, index=False)
 
 
-__all__ = ['EngineOutputs']
+__all__ = ['EngineOutputs', 'STANDARD_REPORT_COLUMNS']
 

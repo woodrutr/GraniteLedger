@@ -32,7 +32,8 @@ ANNUAL_OUTPUT_COLUMNS = [
 from dispatch.interface import DispatchResult
 from dispatch.lp_network import solve_from_frames as solve_network_from_frames
 from dispatch.lp_single import solve as solve_single
-from engine.outputs import EngineOutputs
+from engine.outputs import EngineOutputs, STANDARD_REPORT_COLUMNS
+from engine.reporting import export_standard_reports
 from policy.allowance_annual import (
     RGGIPolicyAnnual,
     allowance_initial_state,
@@ -1109,6 +1110,7 @@ def _build_engine_outputs(
     raw_results: Mapping[Any, Mapping[str, object]],
     dispatch_solver: Callable[..., object],
     policy: RGGIPolicyAnnual,
+    frames: Frames,
     *,
     limiting_factors: Sequence[str] | None = None,
 ) -> EngineOutputs:
@@ -1117,6 +1119,25 @@ def _build_engine_outputs(
     _ensure_pandas()
 
     aggregated: dict[int, dict[str, object]] = {}
+
+    demand_lookup: dict[int, dict[str, float]] = {}
+    try:
+        demand_df = frames.demand()
+    except Exception:  # pragma: no cover - demand data optional
+        demand_df = None
+    if demand_df is not None:
+        for row in demand_df.itertuples(index=False):
+            try:
+                year = int(row.year)
+            except (TypeError, ValueError):
+                continue
+            region = str(getattr(row, "region", ""))
+            try:
+                value = float(getattr(row, "demand_mwh", 0.0))
+            except (TypeError, ValueError):
+                continue
+            year_map = demand_lookup.setdefault(year, {})
+            year_map[region] = value
 
     for period in years:
         summary_raw = raw_results.get(period)
@@ -1171,6 +1192,10 @@ def _build_engine_outputs(
                 "emissions_by_region": defaultdict(float),
                 "price_by_region": {},
                 "flows": defaultdict(float),
+                "generation_by_technology": defaultdict(float),
+                "generation_by_region": defaultdict(float),
+                "imports_net": defaultdict(float),
+                "demand_by_region": None,
             },
         )
 
@@ -1226,18 +1251,43 @@ def _build_engine_outputs(
             for region, value in region_prices.items():
                 price_map[str(region)] = float(value)
 
+        gen_by_fuel = getattr(dispatch_result, "gen_by_fuel", None)
+        if isinstance(gen_by_fuel, Mapping):
+            tech_map = entry["generation_by_technology"]
+            for tech, value in gen_by_fuel.items():
+                tech_map[str(tech)] += float(value)
+
+        generation_by_region = getattr(dispatch_result, "generation_by_region", None)
+        if isinstance(generation_by_region, Mapping):
+            region_gen = entry["generation_by_region"]
+            for region, value in generation_by_region.items():
+                region_gen[str(region)] += float(value)
+
         flows = getattr(dispatch_result, "flows", {})
         if isinstance(flows, Mapping):
             flow_map = entry["flows"]
+            imports_map = entry["imports_net"]
             for key, value in flows.items():
                 if isinstance(key, tuple) and len(key) == 2:
                     key_norm = (str(key[0]), str(key[1]))
                     flow_map[key_norm] += float(value)
+                    flow_value = float(value)
+                    region_a, region_b = key_norm
+                    imports_map[region_a] -= flow_value
+                    imports_map[region_b] += flow_value
+
+        if entry.get("demand_by_region") is None:
+            entry["demand_by_region"] = dict(demand_lookup.get(calendar_year, {}))
 
     annual_rows: list[dict[str, object]] = []
     emissions_rows: list[dict[str, object]] = []
     price_rows: list[dict[str, object]] = []
     flow_rows: list[dict[str, object]] = []
+    emissions_report_rows: list[dict[str, object]] = []
+    generation_rows: list[dict[str, object]] = []
+    allowance_rows: list[dict[str, object]] = []
+    demand_rows: list[dict[str, object]] = []
+    imports_rows: list[dict[str, object]] = []
 
     for year in sorted(aggregated):
         entry = aggregated[year]
@@ -1277,6 +1327,14 @@ def _build_engine_outputs(
 
         for region, value in entry["emissions_by_region"].items():
             emissions_rows.append({"year": year, "region": region, "emissions_tons": float(value)})
+            emissions_report_rows.append(
+                {
+                    "year": year,
+                    "region": region,
+                    "tech": "emissions",
+                    "value": float(value),
+                }
+            )
 
         for region, value in entry["price_by_region"].items():
             price_rows.append({"year": year, "region": region, "price": float(value)})
@@ -1302,6 +1360,61 @@ def _build_engine_outputs(
                     }
                 )
 
+        for tech, value in entry["generation_by_technology"].items():
+            generation_rows.append(
+                {
+                    "year": year,
+                    "region": "system",
+                    "tech": str(tech),
+                    "value": float(value),
+                }
+            )
+
+        demand_map = entry.get("demand_by_region") or {}
+        for region, value in demand_map.items():
+            demand_rows.append(
+                {
+                    "year": year,
+                    "region": str(region),
+                    "tech": "demand",
+                    "value": float(value),
+                }
+            )
+
+        imports_map = entry.get("imports_net") or {}
+        for region, value in imports_map.items():
+            imports_rows.append(
+                {
+                    "year": year,
+                    "region": str(region),
+                    "tech": "imports",
+                    "value": float(value),
+                }
+            )
+
+        allowance_rows.extend(
+            [
+                {
+                    "year": year,
+                    "region": "system",
+                    "tech": "allowance",
+                    "value": float(entry.get("allowance_price_last", 0.0)),
+                },
+                {
+                    "year": year,
+                    "region": "system",
+                    "tech": "exogenous",
+                    "value": float(entry.get("exogenous_price_last", 0.0)),
+                },
+                {
+                    "year": year,
+                    "region": "system",
+                    "tech": "effective",
+                    "value": float(entry.get("effective_price_last", 0.0)),
+                },
+            ]
+        )
+
     annual_df = pd.DataFrame(annual_rows, columns=ANNUAL_OUTPUT_COLUMNS)
     if not annual_df.empty:
         annual_df = annual_df.sort_values("year").reset_index(drop=True)
@@ -1319,13 +1432,45 @@ def _build_engine_outputs(
     if not flows_df.empty:
         flows_df = flows_df.sort_values(flows_columns[:-1]).reset_index(drop=True)
 
-    return EngineOutputs(
+    emissions_report_df = pd.DataFrame(emissions_report_rows, columns=STANDARD_REPORT_COLUMNS)
+    if not emissions_report_df.empty:
+        emissions_report_df = emissions_report_df.sort_values(STANDARD_REPORT_COLUMNS[:-1]).reset_index(drop=True)
+
+    generation_df = pd.DataFrame(generation_rows, columns=STANDARD_REPORT_COLUMNS)
+    if not generation_df.empty:
+        generation_df = generation_df.sort_values(STANDARD_REPORT_COLUMNS[:-1]).reset_index(drop=True)
+
+    allowance_df = pd.DataFrame(allowance_rows, columns=STANDARD_REPORT_COLUMNS)
+    if not allowance_df.empty:
+        allowance_df = allowance_df.sort_values(STANDARD_REPORT_COLUMNS[:-1]).reset_index(drop=True)
+
+    demand_df = pd.DataFrame(demand_rows, columns=STANDARD_REPORT_COLUMNS)
+    if not demand_df.empty:
+        demand_df = demand_df.sort_values(STANDARD_REPORT_COLUMNS[:-1]).reset_index(drop=True)
+
+    imports_df = pd.DataFrame(imports_rows, columns=STANDARD_REPORT_COLUMNS)
+    if not imports_df.empty:
+        imports_df = imports_df.sort_values(STANDARD_REPORT_COLUMNS[:-1]).reset_index(drop=True)
+
+    outputs = EngineOutputs(
         annual=annual_df,
         emissions_by_region=emissions_df,
         price_by_region=price_df,
         flows=flows_df,
         limiting_factors=list(limiting_factors or []),
+        emissions_report=emissions_report_df,
+        generation_by_technology=generation_df,
+        allowance_prices=allowance_df,
+        demand_by_region=demand_df,
+        imports_by_region=imports_df,
     )
+
+    try:  # pragma: no cover - defensive IO guard
+        export_standard_reports(outputs)
+    except Exception:
+        LOGGER.exception("Failed to export standard reports", exc_info=True)
+
+    return outputs
 
 
 def _coerce_price_schedule(
@@ -1963,5 +2108,6 @@ def run_end_to_end_from_frames(
         results,
         dispatch_solver,
         policy,
+        frames_obj,
         limiting_factors=limiting_factors,
     )
