@@ -4,7 +4,8 @@ from __future__ import annotations
 import json
 import logging
 from collections import defaultdict
-from typing import Any, Callable, Iterable, Mapping, Sequence, cast
+from dataclasses import dataclass, field
+from typing import Any, Callable, DefaultDict, Iterable, Mapping, Sequence, cast
 
 try:  # pragma: no cover - optional dependency guard
     import pandas as pd
@@ -1120,6 +1121,38 @@ def run_fixed_point_from_frames(
     )
 
 
+@dataclass
+class AnnualAggregation:
+    periods: list[Any] = field(default_factory=list)
+    price_last: float = 0.0
+    allowance_price_last: float = 0.0
+    exogenous_price_last: float = 0.0
+    effective_price_last: float = 0.0
+    iterations_max: int = 0
+    emissions_sum: float = 0.0
+    available_allowances_sum: float = 0.0
+    bank_prev_first: float | None = None
+    bank_new_last: float = 0.0
+    obligation_last: float = 0.0
+    shortage_any: bool = False
+    finalize_last: dict[str, object] = field(default_factory=dict)
+    finalized: bool = False
+    bank_final: float = 0.0
+    surrendered_sum: float = 0.0
+    surrendered_extra: float = 0.0
+    ccr1_trigger_last: float | None = None
+    ccr2_trigger_last: float | None = None
+    ccr1_issued_sum: float = 0.0
+    ccr2_issued_sum: float = 0.0
+    emissions_by_region: DefaultDict[str, float] = field(
+        default_factory=lambda: defaultdict(float)
+    )
+    price_by_region: dict[str, float] = field(default_factory=dict)
+    flows: DefaultDict[tuple[str, str], float] = field(
+        default_factory=lambda: defaultdict(float)
+    )
+
+
 def _build_engine_outputs(
     years: Sequence[Any],
     raw_results: Mapping[Any, Mapping[str, object]],
@@ -1132,8 +1165,28 @@ def _build_engine_outputs(
 
     _ensure_pandas()
 
-    aggregated: dict[int, dict[str, object]] = {}
+    aggregated: dict[int, AnnualAggregation] = {}
     all_regions: set[str] = set()
+
+    def _float(value: object, default: float = 0.0) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _int(value: object, default: int = 0) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _optional_float(value: object) -> float | None:
+        try:
+            result = float(value)
+        except (TypeError, ValueError):
+            return None
+        else:
+            return result
 
     for period in years:
         summary_raw = raw_results.get(period)
@@ -1150,9 +1203,6 @@ def _build_engine_outputs(
             )
         emissions_total = float(summary.get("emissions", _extract_emissions(dispatch_result)))
 
-        allowance_component = float(summary.get("p_co2_allowance", price))
-        effective_component = float(summary.get("p_co2_effective", price))
-
         compliance_year = getattr(policy, "compliance_year_for", None)
         if callable(compliance_year):
             try:
@@ -1165,120 +1215,77 @@ def _build_engine_outputs(
             except (TypeError, ValueError):
                 calendar_year = hash(period)
 
-        entry = aggregated.setdefault(
-            calendar_year,
-            {
-                "periods": [],
-                "price_last": 0.0,
-                "allowance_price_last": 0.0,
-                "exogenous_price_last": 0.0,
-                "effective_price_last": 0.0,
-                "iterations_max": 0,
-                "emissions_sum": 0.0,
-                "available_allowances_sum": 0.0,
-                "bank_prev_first": None,
-                "bank_new_last": 0.0,
-                "obligation_last": 0.0,
-                "shortage_any": False,
-                "finalize_last": {},
-                "finalized": False,
-                "bank_final": 0.0,
-                "surrendered_sum": 0.0,
-                "surrendered_extra": 0.0,
-                "ccr1_trigger_last": None,
-                "ccr2_trigger_last": None,
-                "ccr1_issued_sum": 0.0,
-                "ccr2_issued_sum": 0.0,
-                "emissions_by_region": defaultdict(float),
-                "price_by_region": {},
-                "flows": defaultdict(float),
-            },
-        )
+        entry = aggregated.setdefault(calendar_year, AnnualAggregation())
 
-        entry["periods"].append(period)
-        entry["price_last"] = price
-        entry["allowance_price_last"] = float(summary.get("p_co2_allowance", price))
-        entry["exogenous_price_last"] = float(summary.get("p_co2_exogenous", 0.0))
-        entry["effective_price_last"] = float(summary.get("p_co2_effective", price))
+        entry.periods.append(period)
+        entry.price_last = price
+        entry.allowance_price_last = _float(summary.get("p_co2_allowance"), price)
+        entry.exogenous_price_last = _float(summary.get("p_co2_exogenous"), 0.0)
+        entry.effective_price_last = _float(summary.get("p_co2_effective"), price)
         iterations_value = summary.get("iterations", 0)
 
-        try:
-            iterations_int = int(iterations_value)
-        except (TypeError, ValueError):
-            iterations_int = 0
-        entry["iterations_max"] = max(entry["iterations_max"], iterations_int)
-        entry["emissions_sum"] += emissions_total
-        entry["available_allowances_sum"] += float(summary.get("available_allowances", 0.0))
-        if entry["bank_prev_first"] is None:
-            entry["bank_prev_first"] = float(summary.get("bank_prev", 0.0))
-        entry["bank_new_last"] = float(summary.get("bank_new", 0.0))
-        entry["obligation_last"] = float(summary.get("obligation_new", 0.0))
-        entry["shortage_any"] = entry["shortage_any"] or bool(summary.get("shortage_flag", False))
-        entry["surrendered_sum"] += float(summary.get("surrendered", 0.0))
+        entry.iterations_max = max(entry.iterations_max, _int(iterations_value, 0))
+        entry.emissions_sum += emissions_total
+        entry.available_allowances_sum += _float(summary.get("available_allowances"), 0.0)
+        if entry.bank_prev_first is None:
+            entry.bank_prev_first = _float(summary.get("bank_prev"), 0.0)
+        entry.bank_new_last = _float(summary.get("bank_new"), 0.0)
+        entry.obligation_last = _float(summary.get("obligation_new"), 0.0)
+        entry.shortage_any = entry.shortage_any or bool(summary.get("shortage_flag", False))
+        entry.surrendered_sum += _float(summary.get("surrendered"), 0.0)
 
-        ccr1_trigger_value = summary.get("ccr1_trigger")
-        if ccr1_trigger_value not in (None, ""):
-            try:
-                entry["ccr1_trigger_last"] = float(ccr1_trigger_value)
-            except (TypeError, ValueError):
-                pass
+        ccr1_trigger = _optional_float(summary.get("ccr1_trigger"))
+        if ccr1_trigger is not None:
+            entry.ccr1_trigger_last = ccr1_trigger
 
-        ccr2_trigger_value = summary.get("ccr2_trigger")
-        if ccr2_trigger_value not in (None, ""):
-            try:
-                entry["ccr2_trigger_last"] = float(ccr2_trigger_value)
-            except (TypeError, ValueError):
-                pass
+        ccr2_trigger = _optional_float(summary.get("ccr2_trigger"))
+        if ccr2_trigger is not None:
+            entry.ccr2_trigger_last = ccr2_trigger
 
-        try:
-            entry["ccr1_issued_sum"] += float(summary.get("ccr1_issued", 0.0))
-        except (TypeError, ValueError):
-            pass
-        try:
-            entry["ccr2_issued_sum"] += float(summary.get("ccr2_issued", 0.0))
-        except (TypeError, ValueError):
-            pass
+        entry.ccr1_issued_sum += _float(summary.get("ccr1_issued"), 0.0)
+        entry.ccr2_issued_sum += _float(summary.get("ccr2_issued"), 0.0)
 
-        finalize_raw = dict(summary.get("finalize", {}))
-        entry["finalize_last"] = finalize_raw
-        if finalize_raw:
-            entry["finalized"] = bool(finalize_raw.get("finalized", entry["finalized"]))
-            entry["bank_final"] = float(finalize_raw.get("bank_final", entry["bank_new_last"]))
-            entry["obligation_last"] = float(
-                finalize_raw.get("remaining_obligation", entry["obligation_last"])
+        finalize_raw = summary.get("finalize", {})
+        finalize_data = dict(finalize_raw) if isinstance(finalize_raw, Mapping) else {}
+        entry.finalize_last = finalize_data
+        if finalize_data:
+            entry.finalized = bool(finalize_data.get("finalized", entry.finalized))
+            entry.bank_final = _float(
+                finalize_data.get("bank_final"), entry.bank_new_last
             )
-            entry["shortage_any"] = entry["shortage_any"] or bool(
-                finalize_raw.get("shortage_flag", False)
+            entry.obligation_last = _float(
+                finalize_data.get("remaining_obligation"), entry.obligation_last
             )
-            entry["surrendered_extra"] = float(
-                finalize_raw.get("surrendered_additional", entry["surrendered_extra"])
+            entry.shortage_any = entry.shortage_any or bool(
+                finalize_data.get("shortage_flag", False)
             )
-        else:
-            entry["bank_final"] = entry.get("bank_final", entry["bank_new_last"])
+            entry.surrendered_extra = _float(
+                finalize_data.get("surrendered_additional"), entry.surrendered_extra
+            )
+        elif not entry.finalized:
+            entry.bank_final = entry.bank_new_last
 
         emissions_by_region = getattr(dispatch_result, "emissions_by_region", None)
         if isinstance(emissions_by_region, Mapping):
             for region, value in emissions_by_region.items():
                 key = str(region)
                 all_regions.add(key)
-                entry["emissions_by_region"][key] += float(value)
+                entry.emissions_by_region[key] += _float(value, 0.0)
         else:
             all_regions.add("system")
-            entry["emissions_by_region"]["system"] += emissions_total
+            entry.emissions_by_region["system"] += emissions_total
 
         region_prices = getattr(dispatch_result, "region_prices", {})
         if isinstance(region_prices, Mapping):
-            price_map = entry["price_by_region"]
             for region, value in region_prices.items():
-                price_map[str(region)] = float(value)
+                entry.price_by_region[str(region)] = _float(value, 0.0)
 
         flows = getattr(dispatch_result, "flows", {})
         if isinstance(flows, Mapping):
-            flow_map = entry["flows"]
             for key, value in flows.items():
                 if isinstance(key, tuple) and len(key) == 2:
                     key_norm = (str(key[0]), str(key[1]))
-                    flow_map[key_norm] += float(value)
+                    entry.flows[key_norm] += _float(value, 0.0)
 
     annual_rows: list[dict[str, object]] = []
     emissions_rows: list[dict[str, object]] = []
@@ -1290,24 +1297,24 @@ def _build_engine_outputs(
 
     for year in sorted(aggregated):
         entry = aggregated[year]
-        minted = float(entry["available_allowances_sum"])
-        bank_prev = float(entry.get("bank_prev_first") or 0.0)
+        minted = float(entry.available_allowances_sum)
+        bank_prev = float(entry.bank_prev_first or 0.0)
         allowances_total = bank_prev + minted
-        surrendered_total = float(entry["surrendered_sum"]) + float(entry.get("surrendered_extra", 0.0))
-        bank_final = float(entry.get("bank_final", entry.get("bank_new_last", 0.0)))
-        obligation_final = float(entry.get("obligation_last", 0.0))
-        price_value = float(entry.get("price_last", 0.0))
-        iterations_value = int(entry.get("iterations_max", 0))
-        shortage_flag = bool(entry.get("shortage_any", False))
-        finalized = bool(entry.get("finalized", False))
+        surrendered_total = float(entry.surrendered_sum + entry.surrendered_extra)
+        bank_final = float(entry.bank_final if entry.finalized else entry.bank_new_last)
+        obligation_final = float(entry.obligation_last)
+        price_value = float(entry.price_last)
+        iterations_value = int(entry.iterations_max)
+        shortage_flag = bool(entry.shortage_any)
+        finalized = bool(entry.finalized)
 
-        allowance_value = float(entry.get("allowance_price_last", price_value))
-        exogenous_value = float(entry.get("exogenous_price_last", 0.0))
-        effective_value = float(entry.get("effective_price_last", price_value))
-        ccr1_trigger = float(entry.get("ccr1_trigger_last") or 0.0)
-        ccr2_trigger = float(entry.get("ccr2_trigger_last") or 0.0)
-        ccr1_issued = float(entry.get("ccr1_issued_sum", 0.0))
-        ccr2_issued = float(entry.get("ccr2_issued_sum", 0.0))
+        allowance_value = float(entry.allowance_price_last)
+        exogenous_value = float(entry.exogenous_price_last)
+        effective_value = float(entry.effective_price_last)
+        ccr1_trigger = float(entry.ccr1_trigger_last or 0.0)
+        ccr2_trigger = float(entry.ccr2_trigger_last or 0.0)
+        ccr1_issued = float(entry.ccr1_issued_sum)
+        ccr2_issued = float(entry.ccr2_issued_sum)
 
         annual_rows.append(
             {
@@ -1318,7 +1325,7 @@ def _build_engine_outputs(
                 "p_co2_exc": exogenous_value,
                 "p_co2_eff": effective_value,
                 "iterations": iterations_value,
-                "emissions_tons": float(entry.get("emissions_sum", 0.0)),
+                "emissions_tons": float(entry.emissions_sum),
                 "allowances_minted": minted,
                 "allowances_available": allowances_total,
                 "bank": bank_final,
@@ -1333,7 +1340,7 @@ def _build_engine_outputs(
             }
         )
 
-        emissions_by_region_entry = entry["emissions_by_region"]
+        emissions_by_region_entry = entry.emissions_by_region
         if region_order is None:
             region_keys = sorted(emissions_by_region_entry)
         else:
@@ -1345,10 +1352,10 @@ def _build_engine_outputs(
             region_record = emissions_map.setdefault(region, {})
             region_record[int(year)] = value
 
-        for region, value in entry["price_by_region"].items():
+        for region, value in entry.price_by_region.items():
             price_rows.append({"year": year, "region": region, "price": float(value)})
 
-        for (region_a, region_b), value in entry["flows"].items():
+        for (region_a, region_b), value in entry.flows.items():
             flow_value = float(value)
             if flow_value >= 0.0:
                 flow_rows.append(
