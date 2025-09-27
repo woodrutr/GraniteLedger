@@ -28,6 +28,10 @@ ANNUAL_OUTPUT_COLUMNS = [
     "obligation",
     "finalized",
     "shortage_flag",
+    "ccr1_trigger",
+    "ccr1_issued",
+    "ccr2_trigger",
+    "ccr2_issued",
 ]
 
 from dispatch.interface import DispatchResult
@@ -1181,6 +1185,10 @@ def _build_engine_outputs(
                 "bank_final": 0.0,
                 "surrendered_sum": 0.0,
                 "surrendered_extra": 0.0,
+                "ccr1_trigger_last": None,
+                "ccr2_trigger_last": None,
+                "ccr1_issued_sum": 0.0,
+                "ccr2_issued_sum": 0.0,
                 "emissions_by_region": defaultdict(float),
                 "price_by_region": {},
                 "flows": defaultdict(float),
@@ -1207,6 +1215,29 @@ def _build_engine_outputs(
         entry["obligation_last"] = float(summary.get("obligation_new", 0.0))
         entry["shortage_any"] = entry["shortage_any"] or bool(summary.get("shortage_flag", False))
         entry["surrendered_sum"] += float(summary.get("surrendered", 0.0))
+
+        ccr1_trigger_value = summary.get("ccr1_trigger")
+        if ccr1_trigger_value not in (None, ""):
+            try:
+                entry["ccr1_trigger_last"] = float(ccr1_trigger_value)
+            except (TypeError, ValueError):
+                pass
+
+        ccr2_trigger_value = summary.get("ccr2_trigger")
+        if ccr2_trigger_value not in (None, ""):
+            try:
+                entry["ccr2_trigger_last"] = float(ccr2_trigger_value)
+            except (TypeError, ValueError):
+                pass
+
+        try:
+            entry["ccr1_issued_sum"] += float(summary.get("ccr1_issued", 0.0))
+        except (TypeError, ValueError):
+            pass
+        try:
+            entry["ccr2_issued_sum"] += float(summary.get("ccr2_issued", 0.0))
+        except (TypeError, ValueError):
+            pass
 
         finalize_raw = dict(summary.get("finalize", {}))
         entry["finalize_last"] = finalize_raw
@@ -1270,14 +1301,22 @@ def _build_engine_outputs(
         shortage_flag = bool(entry.get("shortage_any", False))
         finalized = bool(entry.get("finalized", False))
 
+        allowance_value = float(entry.get("allowance_price_last", price_value))
+        exogenous_value = float(entry.get("exogenous_price_last", 0.0))
+        effective_value = float(entry.get("effective_price_last", price_value))
+        ccr1_trigger = float(entry.get("ccr1_trigger_last") or 0.0)
+        ccr2_trigger = float(entry.get("ccr2_trigger_last") or 0.0)
+        ccr1_issued = float(entry.get("ccr1_issued_sum", 0.0))
+        ccr2_issued = float(entry.get("ccr2_issued_sum", 0.0))
+
         annual_rows.append(
             {
                 "year": year,
                 "p_co2": price_value,
                 "allowance_price": allowance_value,
-                "p_co2_all": float(entry.get("allowance_price_last", price_value)),
-                "p_co2_exc": float(entry.get("exogenous_price_last", 0.0)),
-                "p_co2_eff": float(entry.get("effective_price_last", price_value)),
+                "p_co2_all": allowance_value,
+                "p_co2_exc": exogenous_value,
+                "p_co2_eff": effective_value,
                 "iterations": iterations_value,
                 "emissions_tons": float(entry.get("emissions_sum", 0.0)),
                 "allowances_minted": minted,
@@ -1287,6 +1326,10 @@ def _build_engine_outputs(
                 "obligation": obligation_final,
                 "finalized": finalized,
                 "shortage_flag": shortage_flag,
+                "ccr1_trigger": ccr1_trigger,
+                "ccr1_issued": ccr1_issued,
+                "ccr2_trigger": ccr2_trigger,
+                "ccr2_issued": ccr2_issued,
             }
         )
 
