@@ -10,6 +10,106 @@ from io_loader import Frames
 from policy.generation_standard import GenerationStandardPolicy, TechnologyStandard
 
 
+def _two_unit_frames(load_mwh: float) -> Frames:
+    demand = pd.DataFrame(
+        [{"year": 2030, "region": "test", "demand_mwh": float(load_mwh)}]
+    )
+    units = pd.DataFrame(
+        [
+            {
+                "unit_id": "baseload",
+                "region": "test",
+                "fuel": "baseload_fuel",
+                "cap_mw": 50.0,
+                "availability": 1.0,
+                "hr_mmbtu_per_mwh": 8.0,
+                "vom_per_mwh": 5.0,
+                "fuel_price_per_mmbtu": 1.5,
+                "ef_ton_per_mwh": 0.8,
+            },
+            {
+                "unit_id": "peaker",
+                "region": "test",
+                "fuel": "peaker_fuel",
+                "cap_mw": 200.0,
+                "availability": 1.0,
+                "hr_mmbtu_per_mwh": 7.0,
+                "vom_per_mwh": 3.0,
+                "fuel_price_per_mmbtu": 3.0,
+                "ef_ton_per_mwh": 0.49,
+            },
+        ]
+    )
+    fuels = pd.DataFrame(
+        [
+            {
+                "fuel": "baseload_fuel",
+                "covered": True,
+                "co2_ton_per_mmbtu": 0.1,
+            },
+            {
+                "fuel": "peaker_fuel",
+                "covered": True,
+                "co2_ton_per_mmbtu": 0.07,
+            },
+        ]
+    )
+    coverage = pd.DataFrame(
+        [{"region": "test", "covered": True}]
+    )
+
+    return Frames(
+        {
+            "demand": demand,
+            "units": units,
+            "fuels": fuels,
+            "coverage": coverage,
+        }
+    )
+
+
+def _single_unit_frames(load_mwh: float) -> Frames:
+    demand = pd.DataFrame(
+        [{"year": 2030, "region": "solo", "demand_mwh": float(load_mwh)}]
+    )
+    units = pd.DataFrame(
+        [
+            {
+                "unit_id": "solo_unit",
+                "region": "solo",
+                "fuel": "solo_fuel",
+                "cap_mw": 200.0,
+                "availability": 1.0,
+                "hr_mmbtu_per_mwh": 9.0,
+                "vom_per_mwh": 2.0,
+                "fuel_price_per_mmbtu": 2.5,
+                "ef_ton_per_mwh": 0.9,
+            }
+        ]
+    )
+    fuels = pd.DataFrame(
+        [
+            {
+                "fuel": "solo_fuel",
+                "covered": True,
+                "co2_ton_per_mmbtu": 0.1,
+            }
+        ]
+    )
+    coverage = pd.DataFrame(
+        [{"region": "solo", "covered": True}]
+    )
+
+    return Frames(
+        {
+            "demand": demand,
+            "units": units,
+            "fuels": fuels,
+            "coverage": coverage,
+        }
+    )
+
+
 def test_congestion_leads_to_price_separation() -> None:
     demand = pd.DataFrame(
         [
@@ -353,3 +453,57 @@ def test_generation_standard_capacity_violation() -> None:
         solve_from_frames(
             frames, 2030, allowance_cost=0.0, generation_standard=policy
         )
+
+def test_heat_rate_and_fuel_price_determine_variable_cost() -> None:
+    frames = _two_unit_frames(load_mwh=500_000.0)
+    result = solve_from_frames(frames, 2030, allowance_cost=0.0)
+
+    units = frames.units()
+    fuels = frames.fuels()
+    co2_map = {
+        str(row.fuel): float(getattr(row, "co2_ton_per_mmbtu", 0.0))
+        for row in fuels.itertuples(index=False)
+    }
+
+    variable_costs = {
+        row.fuel: float(row.vom_per_mwh)
+        + float(row.hr_mmbtu_per_mwh) * float(row.fuel_price_per_mmbtu)
+        for row in units.itertuples(index=False)
+    }
+
+    active_costs = [
+        variable_costs[fuel]
+        for fuel, generation in result.gen_by_fuel.items()
+        if generation > 0.0
+    ]
+    assert active_costs
+    assert result.region_prices["test"] == pytest.approx(max(active_costs), rel=1e-6)
+
+    expected_emissions = 0.0
+    expected_from_fuel = 0.0
+    for row in units.itertuples(index=False):
+        generation = float(result.gen_by_fuel.get(row.fuel, 0.0))
+        expected_emissions += generation * float(row.ef_ton_per_mwh)
+        expected_from_fuel += (
+            generation * float(row.hr_mmbtu_per_mwh) * co2_map.get(row.fuel, 0.0)
+        )
+
+    assert result.emissions_tons == pytest.approx(expected_emissions, rel=1e-6)
+    assert result.emissions_tons == pytest.approx(expected_from_fuel, rel=1e-6)
+
+
+def test_generation_and_emissions_scale_with_demand() -> None:
+    base_frames = _single_unit_frames(load_mwh=400_000.0)
+    higher_frames = _single_unit_frames(load_mwh=440_000.0)
+
+    base = solve_from_frames(base_frames, 2030, allowance_cost=0.0)
+    higher = solve_from_frames(higher_frames, 2030, allowance_cost=0.0)
+
+    assert base.emissions_tons > 0.0
+    assert higher.total_generation > base.total_generation
+
+    generation_ratio = higher.total_generation / base.total_generation
+    emissions_ratio = higher.emissions_tons / base.emissions_tons
+
+    assert generation_ratio == pytest.approx(1.1, rel=1e-6)
+    assert emissions_ratio == pytest.approx(1.1, rel=1e-6)
