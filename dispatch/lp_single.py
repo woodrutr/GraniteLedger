@@ -11,6 +11,7 @@ except ImportError:  # pragma: no cover - optional dependency
 
 from io_loader import Frames
 
+from .capacity_expansion import plan_capacity_expansion
 from .interface import DispatchResult
 
 HOURS_PER_YEAR: float = 8760.0
@@ -194,6 +195,8 @@ def solve(
     *,
     frames: Optional[Frames | Mapping[str, pd.DataFrame]] = None,
     carbon_price: float = 0.0,
+    capacity_expansion: bool = False,
+    discount_rate: float = 0.07,
 ) -> DispatchResult:
     """Solve the single-region dispatch problem using the provided frame data."""
 
@@ -222,13 +225,43 @@ def solve(
 
     load_value = sum(demand.values())
 
-    dispatch = _dispatch_merit_order(
+    dispatch_summary = _dispatch_merit_order(
         units,
         float(load_value),
         allowance_cost,
         allowance_covered=allowance_covered,
         carbon_price=carbon_price,
     )
+
+    build_log: list[dict[str, object]] = []
+
+    if capacity_expansion:
+        try:
+            expansion_options = frames_obj.expansion_options()
+        except AttributeError:
+            expansion_options = pd.DataFrame()
+
+        if not expansion_options.empty:
+            def _dispatch_with(units_df: pd.DataFrame) -> dict:
+                return _dispatch_merit_order(
+                    units_df,
+                    float(load_value),
+                    allowance_cost,
+                    allowance_covered=allowance_covered,
+                    carbon_price=carbon_price,
+                )
+
+            units, dispatch_summary, build_log = plan_capacity_expansion(
+                units,
+                expansion_options,
+                dispatch_summary,
+                _dispatch_with,
+                allowance_cost=allowance_cost,
+                carbon_price=carbon_price,
+                discount_rate=float(discount_rate),
+            )
+
+    dispatch = dispatch_summary
 
     generation = dispatch["generation"]
     unit_data = dispatch["units"]
@@ -282,6 +315,7 @@ def solve(
         imports_to_covered=imports_to_covered,
         exports_from_covered=exports_from_covered,
         region_coverage=region_coverage,
+        capacity_builds=build_log,
     )
 
 

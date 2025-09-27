@@ -88,3 +88,49 @@ def infeasible_frames(year: int = 2030) -> Frames:
     demand.loc[demand["year"] == year, "demand_mwh"] = total_cap + 10_000.0
 
     return base.with_frame("demand", demand)
+
+
+def expansion_options() -> pd.DataFrame:
+    """Return candidate capacity build options for capacity expansion tests."""
+
+    return pd.DataFrame(
+        [
+            {
+                "unit_id": "solar",  # zero-emission technology
+                "fuel": "solar",
+                "region": "default",
+                "cap_mw": 60.0,
+                "availability": 0.4,
+                "hr_mmbtu_per_mwh": 0.0,
+                "vom_per_mwh": 2.0,
+                "fuel_price_per_mmbtu": 0.0,
+                "ef_ton_per_mwh": 0.0,
+                "capex_per_mw": 1_500_000.0,
+                "fixed_om_per_mw": 30_000.0,
+                "lifetime_years": 25,
+                "max_builds": 3,
+            },
+            {
+                "unit_id": "fast_gas",  # flexible build used to resolve shortages
+                "fuel": "gas",
+                "region": "default",
+                "cap_mw": 100.0,
+                "availability": 0.9,
+                "hr_mmbtu_per_mwh": 7.0,
+                "vom_per_mwh": 5.0,
+                "fuel_price_per_mmbtu": 3.0,
+                "ef_ton_per_mwh": 0.6,
+                "capex_per_mw": 900_000.0,
+                "fixed_om_per_mw": 20_000.0,
+                "lifetime_years": 20,
+                "max_builds": 2,
+            },
+        ]
+    )
+
+
+def frames_with_expansion(year: int = 2030, load_mwh: float = 1_000_000.0) -> Frames:
+    """Return frames augmented with expansion candidates."""
+
+    base = baseline_frames(year=year, load_mwh=load_mwh)
+    return base.with_frame("expansion", expansion_options())

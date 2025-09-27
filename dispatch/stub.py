@@ -31,6 +31,9 @@ def solve(
     year: int,
     allowance_cost: float,
     carbon_price: float = 0.0,
+    *,
+    capacity_expansion: bool = False,
+    **_ignored,
 ) -> DispatchResult:
     """Return a deterministic dispatch result.
 
@@ -63,6 +66,7 @@ def solve(
         emissions_tons=emissions,
         emissions_by_region={'system': emissions},
         flows={},
+        capacity_builds=[],
     )
 
 

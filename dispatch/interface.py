@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Dict, Tuple
+from typing import Dict, List, Tuple
 
 
 @dataclass(frozen=True)
@@ -48,6 +48,7 @@ class DispatchResult:
     imports_to_covered: float = 0.0
     exports_from_covered: float = 0.0
     region_coverage: Dict[str, bool] = field(default_factory=dict)
+    capacity_builds: List[Dict[str, object]] = field(default_factory=list)
 
     @property
     def total_generation(self) -> float:

@@ -992,6 +992,16 @@ def _dispatch_from_frames(
             generation_by_coverage = {
                 key: float(value) * scale for key, value in result.generation_by_coverage.items()
             }
+            capacity_builds = []
+            for entry in result.capacity_builds:
+                scaled_entry = dict(entry)
+                if "generation_mwh" in scaled_entry:
+                    scaled_entry["generation_mwh"] = float(scaled_entry["generation_mwh"]) * scale
+                if "opex_cost" in scaled_entry:
+                    scaled_entry["opex_cost"] = float(scaled_entry["opex_cost"]) * scale
+                if "emissions_tons" in scaled_entry:
+                    scaled_entry["emissions_tons"] = float(scaled_entry["emissions_tons"]) * scale
+                capacity_builds.append(scaled_entry)
             return DispatchResult(
                 gen_by_fuel=gen_by_fuel,
                 region_prices=dict(result.region_prices),
@@ -1003,6 +1013,7 @@ def _dispatch_from_frames(
                 imports_to_covered=float(result.imports_to_covered) * scale,
                 exports_from_covered=float(result.exports_from_covered) * scale,
                 region_coverage=dict(result.region_coverage),
+                capacity_builds=capacity_builds,
             )
         return result
 

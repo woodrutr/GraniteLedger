@@ -364,6 +364,78 @@ class Frames(Mapping[str, pd.DataFrame]):
 
         return df.reset_index(drop=True)
 
+    def expansion_options(self) -> pd.DataFrame:
+        """Return validated capacity expansion candidate data if available."""
+
+        df = self.optional_frame('expansion')
+        if df is None or df.empty:
+            return pd.DataFrame(
+                columns=[
+                    'unit_id',
+                    'region',
+                    'fuel',
+                    'cap_mw',
+                    'availability',
+                    'hr_mmbtu_per_mwh',
+                    'vom_per_mwh',
+                    'fuel_price_per_mmbtu',
+                    'ef_ton_per_mwh',
+                    'capex_per_mw',
+                    'fixed_om_per_mw',
+                    'lifetime_years',
+                    'max_builds',
+                ]
+            )
+
+        required = [
+            'unit_id',
+            'region',
+            'fuel',
+            'cap_mw',
+            'availability',
+            'hr_mmbtu_per_mwh',
+            'vom_per_mwh',
+            'fuel_price_per_mmbtu',
+            'ef_ton_per_mwh',
+            'capex_per_mw',
+            'fixed_om_per_mw',
+            'lifetime_years',
+        ]
+
+        df = _validate_columns('expansion', df, required)
+
+        df['unit_id'] = df['unit_id'].astype(str)
+        df['region'] = df['region'].astype(str)
+        df['fuel'] = df['fuel'].astype(str)
+
+        numeric_columns = [
+            'cap_mw',
+            'availability',
+            'hr_mmbtu_per_mwh',
+            'vom_per_mwh',
+            'fuel_price_per_mmbtu',
+            'ef_ton_per_mwh',
+            'capex_per_mw',
+            'fixed_om_per_mw',
+            'lifetime_years',
+        ]
+
+        for column in numeric_columns:
+            df[column] = _require_numeric('expansion', column, df[column]).astype(float)
+
+        df['availability'] = df['availability'].clip(lower=0.0, upper=1.0)
+        df['cap_mw'] = df['cap_mw'].clip(lower=0.0)
+        df['lifetime_years'] = df['lifetime_years'].clip(lower=1.0)
+
+        if 'max_builds' in df.columns:
+            df['max_builds'] = _require_numeric('expansion', 'max_builds', df['max_builds']).fillna(1.0)
+        else:
+            df['max_builds'] = 1.0
+
+        df['max_builds'] = df['max_builds'].clip(lower=0.0)
+
+        return df.reset_index(drop=True)
+
     def technology_incentives(self) -> pd.DataFrame:
         """Return merged technology incentive information if available."""
 
