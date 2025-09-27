@@ -992,6 +992,13 @@ def _dispatch_from_frames(
             generation_by_coverage = {
                 key: float(value) * scale for key, value in result.generation_by_coverage.items()
             }
+            generation_by_unit = {
+                key: float(value) * scale for key, value in result.generation_by_unit.items()
+            }
+            constraint_duals = {
+                key: {inner_key: float(inner_value) for inner_key, inner_value in bucket.items()}
+                for key, bucket in result.constraint_duals.items()
+            }
             return DispatchResult(
                 gen_by_fuel=gen_by_fuel,
                 region_prices=dict(result.region_prices),
@@ -1003,6 +1010,9 @@ def _dispatch_from_frames(
                 imports_to_covered=float(result.imports_to_covered) * scale,
                 exports_from_covered=float(result.exports_from_covered) * scale,
                 region_coverage=dict(result.region_coverage),
+                generation_by_unit=generation_by_unit,
+                constraint_duals=constraint_duals,
+                total_cost=float(result.total_cost) * scale,
             )
         return result
 

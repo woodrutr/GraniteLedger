@@ -63,6 +63,8 @@ def solve(
         emissions_tons=emissions,
         emissions_by_region={'system': emissions},
         flows={},
+        constraint_duals={'load_balance': dict(_REGION_PRICES)},
+        total_cost=0.0,
     )
 
 

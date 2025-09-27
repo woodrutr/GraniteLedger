@@ -11,6 +11,11 @@ try:  # pragma: no cover - optional dependency guard
 except ImportError:  # pragma: no cover - optional dependency
     pd = cast(Any, None)
 
+try:  # pragma: no cover - optional dependency guard
+    import numpy as np
+except ImportError:  # pragma: no cover - optional dependency
+    np = cast(Any, None)
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     import pandas as pd
 
@@ -34,6 +39,15 @@ def _ensure_pandas() -> None:
         )
 
 
+def _ensure_numpy() -> None:
+    """Ensure :mod:`numpy` is available before computing dual variables."""
+
+    if np is None:  # pragma: no cover - helper exercised indirectly
+        raise ImportError(
+            "numpy is required to compute duals in dispatch.lp_network; install it with `pip install numpy`."
+        )
+
+
 @dataclass(frozen=True)
 class GeneratorSpec:
     """Specification of an individual generator in the dispatch problem."""
@@ -53,6 +67,17 @@ class GeneratorSpec:
         price_component = float(carbon_price)
         carbon_cost = self.emission_rate * (allowance + price_component)
         return self.variable_cost + carbon_cost
+
+
+@dataclass(frozen=True)
+class LinearProgramSolution:
+    """Container describing the optimal solution of the linear program."""
+
+    values: List[float]
+    objective: float
+    basis: Tuple[int, ...]
+    duals: List[float]
+    reduced_costs: List[float]
 
 
 def _normalize_interfaces(
@@ -211,7 +236,7 @@ def _solve_dispatch_problem(
     upper_bounds: List[float],
     costs: List[float],
     tol: float = _TOL,
-) -> Tuple[List[float], float]:
+) -> LinearProgramSolution:
     """Solve the linear program using enumeration of basic feasible solutions."""
 
     num_vars = len(costs)
@@ -227,6 +252,7 @@ def _solve_dispatch_problem(
     indices = list(range(num_vars))
     best_solution: List[float] | None = None
     best_objective: float | None = None
+    best_basis: Tuple[int, ...] | None = None
 
     for basis_indices in combinations(indices, rank):
         basis_set = set(basis_indices)
@@ -283,11 +309,37 @@ def _solve_dispatch_problem(
             if best_objective is None or objective < best_objective - 1e-9:
                 best_objective = objective
                 best_solution = candidate
+                best_basis = tuple(basis_indices)
 
-    if best_solution is None or best_objective is None:
+    if best_solution is None or best_objective is None or best_basis is None:
         raise RuntimeError("Unable to find feasible dispatch solution.")
 
-    return best_solution, best_objective
+    _ensure_numpy()
+    matrix_array = np.array(matrix, dtype=float)
+    costs_array = np.array(costs, dtype=float)
+
+    if matrix_array.size == 0:
+        dual_values: List[float] = []
+    else:
+        basis_matrix = matrix_array[:, list(best_basis)]
+        if basis_matrix.size == 0:
+            dual_values = [0.0] * matrix_array.shape[0]
+        else:
+            solved, *_ = np.linalg.lstsq(basis_matrix.T, costs_array[list(best_basis)], rcond=None)
+            dual_values = [float(value) for value in solved]
+
+    if matrix_array.size == 0:
+        reduced_costs_array = costs_array
+    else:
+        reduced_costs_array = costs_array - matrix_array.T @ np.array(dual_values, dtype=float)
+
+    return LinearProgramSolution(
+        values=best_solution,
+        objective=float(best_objective),
+        basis=best_basis,
+        duals=[float(value) for value in dual_values],
+        reduced_costs=[float(value) for value in reduced_costs_array.tolist()],
+    )
 
 
 def solve(
@@ -343,6 +395,7 @@ def solve(
     generator_refs: List[GeneratorSpec | None] = []
     generator_indices: List[int] = []
     flow_indices: Dict[int, Tuple[str, str]] = {}
+    row_metadata: List[Tuple[str, str]] = []
 
     inferred_region_coverage: Dict[str, bool] = {}
 
@@ -384,7 +437,10 @@ def solve(
         generator_refs.append(None)
         flow_indices[len(matrix_columns) - 1] = (region_a, region_b)
 
-    rhs = [float(load_by_region.get(region, 0.0)) for region in region_list]
+    rhs: List[float] = []
+    for region in region_list:
+        rhs.append(float(load_by_region.get(region, 0.0)))
+        row_metadata.append(("load_balance", region))
 
     if generation_standard is not None:
         requirements = generation_standard.requirements_for_year(int(year))
@@ -426,6 +482,12 @@ def solve(
 
             row_index = len(rhs)
             rhs.append(0.0)
+            row_metadata.append(
+                (
+                    "generation_standard",
+                    f"{region}:{requirement.technology_key}",
+                )
+            )
             for column in matrix_columns:
                 column.append(0.0)
 
@@ -447,18 +509,28 @@ def solve(
 
     matrix = [[column[idx] for column in matrix_columns] for idx in range(len(rhs))]
 
-    solution, objective = _solve_dispatch_problem(matrix, rhs, lower_bounds, upper_bounds, costs)
+    lp_result = _solve_dispatch_problem(matrix, rhs, lower_bounds, upper_bounds, costs)
+    solution = lp_result.values
+    objective = lp_result.objective
+
+    constraint_duals: Dict[str, Dict[str, float]] = {}
+    for meta, dual_value in zip(row_metadata, lp_result.duals):
+        category, key = meta
+        bucket = constraint_duals.setdefault(category, {})
+        bucket[str(key)] = float(dual_value)
 
     gen_by_fuel: Dict[str, float] = {}
     emissions_tons = 0.0
     emissions_by_region_totals: Dict[str, float] = {region: 0.0 for region in region_list}
     generation_by_region: Dict[str, float] = {region: 0.0 for region in region_list}
     generation_by_coverage: Dict[str, float] = {"covered": 0.0, "non_covered": 0.0}
+    generation_by_unit: Dict[str, float] = {}
 
     for idx in generator_indices:
         generator = generator_refs[idx]
         assert generator is not None
         output = float(solution[idx])
+        generation_by_unit[generator.name] = output
         gen_by_fuel.setdefault(generator.fuel, 0.0)
         gen_by_fuel[generator.fuel] += output
         emissions_tons += generator.emission_rate * output
@@ -486,24 +558,10 @@ def solve(
             elif net_import < -_TOL:
                 exports_from_covered += -net_import
 
-    delta = 1e-4
-    region_prices: Dict[str, float] = {}
-    for region, row_idx in region_index.items():
-        rhs_up = rhs[:]
-        rhs_up[row_idx] += delta
-        try:
-            _, objective_up = _solve_dispatch_problem(
-                matrix, rhs_up, lower_bounds, upper_bounds, costs
-            )
-            price = (objective_up - objective) / delta
-        except RuntimeError:
-            rhs_down = rhs[:]
-            rhs_down[row_idx] -= delta
-            _, objective_down = _solve_dispatch_problem(
-                matrix, rhs_down, lower_bounds, upper_bounds, costs
-            )
-            price = (objective - objective_down) / delta
-        region_prices[region] = price
+    load_duals = constraint_duals.get("load_balance", {})
+    region_prices: Dict[str, float] = {
+        region: float(load_duals.get(region, 0.0)) for region in region_list
+    }
 
     emissions_by_region = {
         region: float(total) for region, total in emissions_by_region_totals.items()
@@ -524,6 +582,9 @@ def solve(
         imports_to_covered=imports_to_covered,
         exports_from_covered=exports_from_covered,
         region_coverage=region_coverage_result,
+        generation_by_unit=generation_by_unit,
+        constraint_duals=constraint_duals,
+        total_cost=float(objective),
     )
 
 

@@ -226,6 +226,121 @@ def test_region_coverage_overrides_fuel_flags() -> None:
     assert result.generation_by_coverage["non_covered"] > 0.0
 
 
+def test_dispatch_duals_and_costs_align() -> None:
+    demand = pd.DataFrame(
+        [{"year": 2032, "region": "core", "demand_mwh": 60.0 * HOURS_PER_YEAR}]
+    )
+    units = pd.DataFrame(
+        [
+            {
+                "unit_id": "core_cheap",
+                "region": "core",
+                "fuel": "cheap",
+                "cap_mw": 40.0,
+                "availability": 1.0,
+                "hr_mmbtu_per_mwh": 0.0,
+                "vom_per_mwh": 30.0,
+                "fuel_price_per_mmbtu": 0.0,
+                "ef_ton_per_mwh": 0.0,
+            },
+            {
+                "unit_id": "core_expensive",
+                "region": "core",
+                "fuel": "expensive",
+                "cap_mw": 40.0,
+                "availability": 1.0,
+                "hr_mmbtu_per_mwh": 0.0,
+                "vom_per_mwh": 50.0,
+                "fuel_price_per_mmbtu": 0.0,
+                "ef_ton_per_mwh": 0.0,
+            },
+        ]
+    )
+    fuels = pd.DataFrame(
+        [
+            {"fuel": "cheap", "covered": True},
+            {"fuel": "expensive", "covered": True},
+        ]
+    )
+
+    frames = Frames({"demand": demand, "units": units, "fuels": fuels})
+
+    result = solve_from_frames(frames, 2032, allowance_cost=0.0)
+
+    cheap_dispatch = result.generation_by_unit["core_cheap"]
+    expensive_dispatch = result.generation_by_unit["core_expensive"]
+
+    expected_cheap = 40.0 * HOURS_PER_YEAR
+    expected_expensive = 20.0 * HOURS_PER_YEAR
+    assert cheap_dispatch == pytest.approx(expected_cheap)
+    assert expensive_dispatch == pytest.approx(expected_expensive)
+
+    expected_cost = expected_cheap * 30.0 + expected_expensive * 50.0
+    assert result.total_cost == pytest.approx(expected_cost)
+
+    price = result.region_prices["core"]
+    assert price == pytest.approx(50.0)
+    assert result.constraint_duals["load_balance"]["core"] == pytest.approx(price)
+
+    assert 30.0 <= price + 1e-6
+    assert 50.0 == pytest.approx(price)
+
+
+def test_generation_standard_dual_reported() -> None:
+    demand = pd.DataFrame(
+        [{"year": 2030, "region": "alpha", "demand_mwh": 100.0 * HOURS_PER_YEAR}]
+    )
+    units = pd.DataFrame(
+        [
+            {
+                "unit_id": "alpha_wind",
+                "region": "alpha",
+                "fuel": "wind",
+                "cap_mw": 80.0,
+                "availability": 1.0,
+                "hr_mmbtu_per_mwh": 0.0,
+                "vom_per_mwh": 20.0,
+                "fuel_price_per_mmbtu": 0.0,
+                "ef_ton_per_mwh": 0.0,
+            },
+            {
+                "unit_id": "alpha_gas",
+                "region": "alpha",
+                "fuel": "gas",
+                "cap_mw": 120.0,
+                "availability": 1.0,
+                "hr_mmbtu_per_mwh": 0.0,
+                "vom_per_mwh": 30.0,
+                "fuel_price_per_mmbtu": 0.0,
+                "ef_ton_per_mwh": 0.1,
+            },
+        ]
+    )
+    fuels = pd.DataFrame(
+        [
+            {"fuel": "wind", "covered": True},
+            {"fuel": "gas", "covered": True},
+        ]
+    )
+
+    frames = Frames({"demand": demand, "units": units, "fuels": fuels})
+
+    share_df = pd.DataFrame({"alpha": [0.5]}, index=pd.Index([2030], name="year"))
+    standard = TechnologyStandard(
+        technology="wind", generation_table=share_df, enabled_regions={"alpha"}
+    )
+    policy = GenerationStandardPolicy([standard])
+
+    result = solve_from_frames(
+        frames, 2030, allowance_cost=0.0, generation_standard=policy
+    )
+
+    duals = result.constraint_duals.get("generation_standard")
+    assert duals is not None
+    assert "alpha:wind" in duals
+    assert isinstance(duals["alpha:wind"], float)
+
+
 def test_leakage_percentage_helper() -> None:
     baseline = DispatchResult(
         gen_by_fuel={"coal": 60.0},

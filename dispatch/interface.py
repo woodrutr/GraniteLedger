@@ -48,6 +48,9 @@ class DispatchResult:
     imports_to_covered: float = 0.0
     exports_from_covered: float = 0.0
     region_coverage: Dict[str, bool] = field(default_factory=dict)
+    generation_by_unit: Dict[str, float] = field(default_factory=dict)
+    constraint_duals: Dict[str, Dict[str, float]] = field(default_factory=dict)
+    total_cost: float = 0.0
 
     @property
     def total_generation(self) -> float:

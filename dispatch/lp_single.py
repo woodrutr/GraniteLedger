@@ -236,6 +236,11 @@ def solve(
     gen_by_region = _aggregate_generation_by_region(generation, unit_data)
 
     region_prices = {_DEFAULT_REGION: float(dispatch["price"])}
+    generation_by_unit = {
+        str(unit_id): float(value) for unit_id, value in generation.items()
+    }
+    total_cost = float((generation * unit_data["marginal_cost"]).sum())
+    constraint_duals = {"load_balance": {_DEFAULT_REGION: float(dispatch["price"])}}
 
     # emissions by region (codex branch)
     emissions_series = generation * unit_data["ef_ton_per_mwh"]
@@ -282,6 +287,9 @@ def solve(
         imports_to_covered=imports_to_covered,
         exports_from_covered=exports_from_covered,
         region_coverage=region_coverage,
+        generation_by_unit=generation_by_unit,
+        constraint_duals=constraint_duals,
+        total_cost=total_cost,
     )
 
 
