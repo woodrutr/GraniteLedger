@@ -600,6 +600,58 @@ def test_engine_outputs_expose_emissions_mappings() -> None:
     assert regional_value == pytest.approx(df_value)
 
 
+def test_engine_audits_pass_for_three_year_run(three_year_outputs):
+    audits = three_year_outputs.audits
+    assert isinstance(audits, dict)
+    assert audits["emissions"]["passed"]
+    assert audits["generation_capacity"]["passed"]
+    assert audits["cost"]["passed"]
+    assert float(audits["emissions"].get("max_region_gap", 1.0)) <= 1e-6
+    assert float(audits["emissions"].get("max_fuel_gap", 1.0)) <= 1e-6
+
+
+def test_generation_and_capacity_tables_available(three_year_outputs):
+    generation_df = three_year_outputs.generation_by_fuel
+    capacity_df = three_year_outputs.capacity_by_fuel
+    assert not generation_df.empty
+    assert not capacity_df.empty
+    capacity_margins = three_year_outputs.audits["generation_capacity"]["capacity_margin"]
+    assert capacity_margins
+    assert all(float(margin) >= -1e-6 for margin in capacity_margins.values())
+    assert isinstance(
+        three_year_outputs.audits["generation_capacity"].get("stranded_units"), list
+    )
+
+
+def test_cost_breakdown_reconciles_components(three_year_outputs):
+    cost_df = three_year_outputs.cost_by_fuel
+    assert not cost_df.empty
+    residual = (
+        cost_df["total_cost"]
+        - (
+            cost_df["variable_cost"]
+            + cost_df["allowance_cost"]
+            + cost_df["carbon_price_cost"]
+        )
+    ).abs()
+    assert float(residual.max()) <= 1e-6
+
+
+def test_emissions_by_fuel_matches_totals(three_year_outputs):
+    fuel_totals = (
+        three_year_outputs.emissions_by_fuel.groupby("year")["emissions_tons"].sum()
+    )
+    annual_totals = (
+        three_year_outputs.annual.set_index("year")["emissions_tons"].astype(float)
+    )
+    combined_years = sorted(set(fuel_totals.index) | set(annual_totals.index))
+    max_gap = (
+        fuel_totals.reindex(combined_years, fill_value=0.0)
+        - annual_totals.reindex(combined_years, fill_value=0.0)
+    ).abs().max()
+    assert float(max_gap) <= 1e-6
+
+
 def test_engine_outputs_include_zero_rows_for_empty_regions() -> None:
     frames = baseline_frames(year=2025, load_mwh=1_000_000.0)
     demand = frames.demand()

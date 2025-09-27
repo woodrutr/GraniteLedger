@@ -454,6 +454,16 @@ def solve(
     emissions_by_region_totals: Dict[str, float] = {region: 0.0 for region in region_list}
     generation_by_region: Dict[str, float] = {region: 0.0 for region in region_list}
     generation_by_coverage: Dict[str, float] = {"covered": 0.0, "non_covered": 0.0}
+    emissions_by_fuel_totals: Dict[str, float] = {}
+    capacity_mwh_by_fuel: Dict[str, float] = {}
+    capacity_mw_by_fuel: Dict[str, float] = {}
+    generation_by_unit: Dict[str, float] = {}
+    capacity_mwh_by_unit: Dict[str, float] = {}
+    capacity_mw_by_unit: Dict[str, float] = {}
+    variable_cost_by_fuel: Dict[str, float] = {}
+    allowance_cost_by_fuel: Dict[str, float] = {}
+    carbon_price_cost_by_fuel: Dict[str, float] = {}
+    total_cost_by_fuel: Dict[str, float] = {}
 
     for idx in generator_indices:
         generator = generator_refs[idx]
@@ -466,6 +476,37 @@ def solve(
         generation_by_region[generator.region] += output
         coverage_key = "covered" if generator.covered else "non_covered"
         generation_by_coverage[coverage_key] += output
+
+        generation_by_unit[generator.name] = output
+        capacity_mwh = float(generator.capacity)
+        capacity_mw = capacity_mwh / HOURS_PER_YEAR
+        capacity_mwh_by_unit[generator.name] = capacity_mwh
+        capacity_mw_by_unit[generator.name] = capacity_mw
+        capacity_mwh_by_fuel[generator.fuel] = capacity_mwh_by_fuel.get(generator.fuel, 0.0) + capacity_mwh
+        capacity_mw_by_fuel[generator.fuel] = capacity_mw_by_fuel.get(generator.fuel, 0.0) + capacity_mw
+
+        emissions_value = generator.emission_rate * output
+        emissions_by_fuel_totals[generator.fuel] = (
+            emissions_by_fuel_totals.get(generator.fuel, 0.0) + emissions_value
+        )
+
+        variable_rate = float(generator.variable_cost)
+        allowance_rate = generator.emission_rate * (float(allowance_cost) if generator.covered else 0.0)
+        carbon_price_rate = generator.emission_rate * float(carbon_price)
+        total_rate = variable_rate + allowance_rate + carbon_price_rate
+
+        variable_cost_by_fuel[generator.fuel] = (
+            variable_cost_by_fuel.get(generator.fuel, 0.0) + variable_rate * output
+        )
+        allowance_cost_by_fuel[generator.fuel] = (
+            allowance_cost_by_fuel.get(generator.fuel, 0.0) + allowance_rate * output
+        )
+        carbon_price_cost_by_fuel[generator.fuel] = (
+            carbon_price_cost_by_fuel.get(generator.fuel, 0.0) + carbon_price_rate * output
+        )
+        total_cost_by_fuel[generator.fuel] = (
+            total_cost_by_fuel.get(generator.fuel, 0.0) + total_rate * output
+        )
 
     region_coverage_result: Dict[str, bool] = {}
     imports_to_covered = 0.0
@@ -519,6 +560,16 @@ def solve(
         emissions_tons=emissions_tons,
         emissions_by_region=emissions_by_region,
         flows=flows,
+        emissions_by_fuel=emissions_by_fuel_totals,
+        capacity_mwh_by_fuel=capacity_mwh_by_fuel,
+        capacity_mw_by_fuel=capacity_mw_by_fuel,
+        generation_by_unit=generation_by_unit,
+        capacity_mwh_by_unit=capacity_mwh_by_unit,
+        capacity_mw_by_unit=capacity_mw_by_unit,
+        variable_cost_by_fuel=variable_cost_by_fuel,
+        allowance_cost_by_fuel=allowance_cost_by_fuel,
+        carbon_price_cost_by_fuel=carbon_price_cost_by_fuel,
+        total_cost_by_fuel=total_cost_by_fuel,
         generation_by_region=generation_by_region,
         generation_by_coverage=generation_by_coverage,
         imports_to_covered=imports_to_covered,

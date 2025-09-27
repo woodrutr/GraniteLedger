@@ -94,7 +94,10 @@ def _dispatch_merit_order(
     price_component = float(carbon_price)
 
     units = units.assign(
-        cap_mwh=(units["cap_mw"] * units["availability"] * HOURS_PER_YEAR).clip(lower=0.0)
+        cap_available_mw=(units["cap_mw"] * units["availability"]).clip(lower=0.0)
+    )
+    units = units.assign(
+        cap_mwh=(units["cap_available_mw"] * HOURS_PER_YEAR).clip(lower=0.0)
     )
     units = units.assign(
         marginal_cost=(
@@ -250,6 +253,56 @@ def solve(
     for region in demand_regions:
         emissions_by_region.setdefault(region, 0.0)
 
+    generation_by_unit = {str(unit): float(output) for unit, output in generation.items()}
+    capacity_mwh_by_unit = {
+        str(unit): float(unit_data.loc[unit, "cap_mwh"]) for unit in unit_data.index
+    }
+    capacity_mw_by_unit = {
+        str(unit): float(unit_data.loc[unit, "cap_available_mw"]) for unit in unit_data.index
+    }
+
+    capacity_mwh_by_fuel: Dict[str, float] = {}
+    capacity_mw_by_fuel: Dict[str, float] = {}
+    emissions_by_fuel: Dict[str, float] = {}
+    variable_cost_by_fuel: Dict[str, float] = {}
+    allowance_cost_by_fuel: Dict[str, float] = {}
+    carbon_price_cost_by_fuel: Dict[str, float] = {}
+    total_cost_by_fuel: Dict[str, float] = {}
+
+    allowance_component = float(allowance_cost) if allowance_covered else 0.0
+    carbon_component = float(carbon_price)
+
+    for unit in unit_data.index:
+        row = unit_data.loc[unit]
+        fuel = str(row.get("fuel", unit))
+        capacity_mwh = float(row["cap_mwh"])
+        capacity_mw = float(row["cap_available_mw"])
+        capacity_mwh_by_fuel[fuel] = capacity_mwh_by_fuel.get(fuel, 0.0) + capacity_mwh
+        capacity_mw_by_fuel[fuel] = capacity_mw_by_fuel.get(fuel, 0.0) + capacity_mw
+
+        dispatched = float(generation.get(unit, 0.0))
+        emission_rate = float(row["ef_ton_per_mwh"])
+        emissions_value = emission_rate * dispatched
+        emissions_by_fuel[fuel] = emissions_by_fuel.get(fuel, 0.0) + emissions_value
+
+        variable_rate = float(row["vom_per_mwh"]) + float(row["hr_mmbtu_per_mwh"]) * float(
+            row["fuel_price_per_mmbtu"]
+        )
+        allowance_rate = emission_rate * allowance_component
+        carbon_price_rate = emission_rate * carbon_component
+        total_rate = variable_rate + allowance_rate + carbon_price_rate
+
+        variable_cost_by_fuel[fuel] = (
+            variable_cost_by_fuel.get(fuel, 0.0) + variable_rate * dispatched
+        )
+        allowance_cost_by_fuel[fuel] = (
+            allowance_cost_by_fuel.get(fuel, 0.0) + allowance_rate * dispatched
+        )
+        carbon_price_cost_by_fuel[fuel] = (
+            carbon_price_cost_by_fuel.get(fuel, 0.0) + carbon_price_rate * dispatched
+        )
+        total_cost_by_fuel[fuel] = total_cost_by_fuel.get(fuel, 0.0) + total_rate * dispatched
+
     # coverage and imports/exports (main branch)
     total_generation = float(generation.sum())
     generation_by_coverage = {"covered": 0.0, "non_covered": 0.0}
@@ -277,6 +330,16 @@ def solve(
         emissions_tons=float(dispatch["emissions_tons"]),
         emissions_by_region=emissions_by_region,
         flows={},  # no transmission flows tracked in this solver path
+        emissions_by_fuel=emissions_by_fuel,
+        capacity_mwh_by_fuel=capacity_mwh_by_fuel,
+        capacity_mw_by_fuel=capacity_mw_by_fuel,
+        generation_by_unit=generation_by_unit,
+        capacity_mwh_by_unit=capacity_mwh_by_unit,
+        capacity_mw_by_unit=capacity_mw_by_unit,
+        variable_cost_by_fuel=variable_cost_by_fuel,
+        allowance_cost_by_fuel=allowance_cost_by_fuel,
+        carbon_price_cost_by_fuel=carbon_price_cost_by_fuel,
+        total_cost_by_fuel=total_cost_by_fuel,
         generation_by_region=gen_by_region,
         generation_by_coverage=generation_by_coverage,
         imports_to_covered=imports_to_covered,

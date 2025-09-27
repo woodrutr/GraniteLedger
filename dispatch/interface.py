@@ -25,6 +25,26 @@ class DispatchResult:
         Net energy transfers between regions measured in megawatt-hours. Keys
         are tuples ``(region_a, region_b)`` where positive values indicate a
         flow from ``region_a`` to ``region_b``.
+    emissions_by_fuel:
+        Mapping of fuel labels to their contribution to total emissions in tons.
+    capacity_mwh_by_fuel:
+        Available annual energy capability by fuel measured in megawatt-hours.
+    capacity_mw_by_fuel:
+        Available instantaneous capacity by fuel measured in megawatts.
+    generation_by_unit:
+        Dispatch by individual generating unit in megawatt-hours.
+    capacity_mwh_by_unit:
+        Available annual energy capability by unit in megawatt-hours.
+    capacity_mw_by_unit:
+        Available instantaneous capacity by unit in megawatts.
+    variable_cost_by_fuel:
+        Variable (fuel and operations) cost incurred by fuel in dollars.
+    allowance_cost_by_fuel:
+        Allowance compliance cost incurred by fuel in dollars.
+    carbon_price_cost_by_fuel:
+        Exogenous carbon price cost incurred by fuel in dollars.
+    total_cost_by_fuel:
+        Sum of variable and carbon-related costs by fuel in dollars.
     generation_by_region:
         Mapping of regions to total generation produced within the region.
     generation_by_coverage:
@@ -43,6 +63,16 @@ class DispatchResult:
     emissions_tons: float
     emissions_by_region: Dict[str, float] = field(default_factory=dict)
     flows: Dict[Tuple[str, str], float] = field(default_factory=dict)
+    emissions_by_fuel: Dict[str, float] = field(default_factory=dict)
+    capacity_mwh_by_fuel: Dict[str, float] = field(default_factory=dict)
+    capacity_mw_by_fuel: Dict[str, float] = field(default_factory=dict)
+    generation_by_unit: Dict[str, float] = field(default_factory=dict)
+    capacity_mwh_by_unit: Dict[str, float] = field(default_factory=dict)
+    capacity_mw_by_unit: Dict[str, float] = field(default_factory=dict)
+    variable_cost_by_fuel: Dict[str, float] = field(default_factory=dict)
+    allowance_cost_by_fuel: Dict[str, float] = field(default_factory=dict)
+    carbon_price_cost_by_fuel: Dict[str, float] = field(default_factory=dict)
+    total_cost_by_fuel: Dict[str, float] = field(default_factory=dict)
     generation_by_region: Dict[str, float] = field(default_factory=dict)
     generation_by_coverage: Dict[str, float] = field(default_factory=dict)
     imports_to_covered: float = 0.0

@@ -34,6 +34,7 @@ from dispatch.interface import DispatchResult
 from dispatch.lp_network import solve_from_frames as solve_network_from_frames
 from dispatch.lp_single import solve as solve_single
 from engine.outputs import EngineOutputs
+from engine.audits import run_audits
 from policy.allowance_annual import (
     RGGIPolicyAnnual,
     allowance_initial_state,
@@ -992,12 +993,41 @@ def _dispatch_from_frames(
             generation_by_coverage = {
                 key: float(value) * scale for key, value in result.generation_by_coverage.items()
             }
+            emissions_by_fuel = {
+                key: float(value) * scale for key, value in result.emissions_by_fuel.items()
+            }
+            generation_by_unit = {
+                key: float(value) * scale for key, value in result.generation_by_unit.items()
+            }
+            variable_cost_by_fuel = {
+                key: float(value) * scale for key, value in result.variable_cost_by_fuel.items()
+            }
+            allowance_cost_by_fuel = {
+                key: float(value) * scale for key, value in result.allowance_cost_by_fuel.items()
+            }
+            carbon_price_cost_by_fuel = {
+                key: float(value) * scale
+                for key, value in result.carbon_price_cost_by_fuel.items()
+            }
+            total_cost_by_fuel = {
+                key: float(value) * scale for key, value in result.total_cost_by_fuel.items()
+            }
             return DispatchResult(
                 gen_by_fuel=gen_by_fuel,
                 region_prices=dict(result.region_prices),
                 emissions_tons=float(result.emissions_tons) * scale,
                 emissions_by_region=emissions_by_region,
                 flows=flows,
+                emissions_by_fuel=emissions_by_fuel,
+                capacity_mwh_by_fuel=dict(result.capacity_mwh_by_fuel),
+                capacity_mw_by_fuel=dict(result.capacity_mw_by_fuel),
+                generation_by_unit=generation_by_unit,
+                capacity_mwh_by_unit=dict(result.capacity_mwh_by_unit),
+                capacity_mw_by_unit=dict(result.capacity_mw_by_unit),
+                variable_cost_by_fuel=variable_cost_by_fuel,
+                allowance_cost_by_fuel=allowance_cost_by_fuel,
+                carbon_price_cost_by_fuel=carbon_price_cost_by_fuel,
+                total_cost_by_fuel=total_cost_by_fuel,
                 generation_by_region=generation_by_region,
                 generation_by_coverage=generation_by_coverage,
                 imports_to_covered=float(result.imports_to_covered) * scale,
@@ -1112,6 +1142,7 @@ def _build_engine_outputs(
     policy: RGGIPolicyAnnual,
     *,
     limiting_factors: Sequence[str] | None = None,
+    demand_summary: Mapping[int, float] | None = None,
 ) -> EngineOutputs:
     """Convert fixed-point results into structured engine outputs."""
 
@@ -1238,10 +1269,71 @@ def _build_engine_outputs(
                     key_norm = (str(key[0]), str(key[1]))
                     flow_map[key_norm] += float(value)
 
+        generation_by_fuel = entry.setdefault("generation_by_fuel", defaultdict(float))
+        for fuel, value in getattr(dispatch_result, "gen_by_fuel", {}).items():
+            generation_by_fuel[str(fuel)] += float(value)
+
+        emissions_by_fuel_entry = entry.setdefault("emissions_by_fuel", defaultdict(float))
+        for fuel, value in getattr(dispatch_result, "emissions_by_fuel", {}).items():
+            emissions_by_fuel_entry[str(fuel)] += float(value)
+
+        capacity_mwh_entry = entry.setdefault("capacity_by_fuel_mwh", {})
+        for fuel, value in getattr(dispatch_result, "capacity_mwh_by_fuel", {}).items():
+            fuel_key = str(fuel)
+            current = float(capacity_mwh_entry.get(fuel_key, 0.0))
+            candidate = float(value)
+            capacity_mwh_entry[fuel_key] = max(current, candidate)
+
+        capacity_mw_entry = entry.setdefault("capacity_by_fuel_mw", {})
+        for fuel, value in getattr(dispatch_result, "capacity_mw_by_fuel", {}).items():
+            fuel_key = str(fuel)
+            current = float(capacity_mw_entry.get(fuel_key, 0.0))
+            candidate = float(value)
+            capacity_mw_entry[fuel_key] = max(current, candidate)
+
+        generation_by_unit_entry = entry.setdefault("generation_by_unit", defaultdict(float))
+        for unit, value in getattr(dispatch_result, "generation_by_unit", {}).items():
+            generation_by_unit_entry[str(unit)] += float(value)
+
+        capacity_unit_mwh_entry = entry.setdefault("capacity_by_unit_mwh", {})
+        for unit, value in getattr(dispatch_result, "capacity_mwh_by_unit", {}).items():
+            unit_key = str(unit)
+            current = float(capacity_unit_mwh_entry.get(unit_key, 0.0))
+            candidate = float(value)
+            capacity_unit_mwh_entry[unit_key] = max(current, candidate)
+
+        capacity_unit_mw_entry = entry.setdefault("capacity_by_unit_mw", {})
+        for unit, value in getattr(dispatch_result, "capacity_mw_by_unit", {}).items():
+            unit_key = str(unit)
+            current = float(capacity_unit_mw_entry.get(unit_key, 0.0))
+            candidate = float(value)
+            capacity_unit_mw_entry[unit_key] = max(current, candidate)
+
+        variable_cost_entry = entry.setdefault("variable_cost_by_fuel", defaultdict(float))
+        for fuel, value in getattr(dispatch_result, "variable_cost_by_fuel", {}).items():
+            variable_cost_entry[str(fuel)] += float(value)
+
+        allowance_cost_entry = entry.setdefault("allowance_cost_by_fuel", defaultdict(float))
+        for fuel, value in getattr(dispatch_result, "allowance_cost_by_fuel", {}).items():
+            allowance_cost_entry[str(fuel)] += float(value)
+
+        carbon_cost_entry = entry.setdefault("carbon_price_cost_by_fuel", defaultdict(float))
+        for fuel, value in getattr(dispatch_result, "carbon_price_cost_by_fuel", {}).items():
+            carbon_cost_entry[str(fuel)] += float(value)
+
+        total_cost_entry = entry.setdefault("total_cost_by_fuel", defaultdict(float))
+        for fuel, value in getattr(dispatch_result, "total_cost_by_fuel", {}).items():
+            total_cost_entry[str(fuel)] += float(value)
+
     annual_rows: list[dict[str, object]] = []
     emissions_rows: list[dict[str, object]] = []
     price_rows: list[dict[str, object]] = []
     flow_rows: list[dict[str, object]] = []
+    generation_rows: list[dict[str, object]] = []
+    capacity_rows: list[dict[str, object]] = []
+    cost_rows: list[dict[str, object]] = []
+    emissions_fuel_rows: list[dict[str, object]] = []
+    stranded_rows: list[dict[str, object]] = []
     emissions_map: dict[str, dict[int, float]] = {}
 
     region_order = sorted(all_regions) if all_regions else None
@@ -1258,6 +1350,7 @@ def _build_engine_outputs(
         iterations_value = int(entry.get("iterations_max", 0))
         shortage_flag = bool(entry.get("shortage_any", False))
         finalized = bool(entry.get("finalized", False))
+        allowance_value = float(entry.get("allowance_price_last", price_value))
 
         annual_rows.append(
             {
@@ -1315,6 +1408,71 @@ def _build_engine_outputs(
                     }
                 )
 
+        generation_fuel_map: Mapping[str, float] = entry.get("generation_by_fuel", {})
+        for fuel, value in sorted(generation_fuel_map.items()):
+            generation_rows.append(
+                {"year": year, "fuel": fuel, "generation_mwh": float(value)}
+            )
+
+        capacity_mwh_map: Mapping[str, float] = entry.get("capacity_by_fuel_mwh", {})
+        capacity_mw_map: Mapping[str, float] = entry.get("capacity_by_fuel_mw", {})
+        capacity_fuels = sorted(set(capacity_mwh_map) | set(capacity_mw_map))
+        for fuel in capacity_fuels:
+            capacity_rows.append(
+                {
+                    "year": year,
+                    "fuel": fuel,
+                    "capacity_mwh": float(capacity_mwh_map.get(fuel, 0.0)),
+                    "capacity_mw": float(capacity_mw_map.get(fuel, 0.0)),
+                }
+            )
+
+        emissions_fuel_map: Mapping[str, float] = entry.get("emissions_by_fuel", {})
+        for fuel, value in sorted(emissions_fuel_map.items()):
+            emissions_fuel_rows.append(
+                {"year": year, "fuel": fuel, "emissions_tons": float(value)}
+            )
+
+        variable_map: Mapping[str, float] = entry.get("variable_cost_by_fuel", {})
+        allowance_map: Mapping[str, float] = entry.get("allowance_cost_by_fuel", {})
+        carbon_price_map: Mapping[str, float] = entry.get("carbon_price_cost_by_fuel", {})
+        total_cost_map: Mapping[str, float] = entry.get("total_cost_by_fuel", {})
+        cost_fuels = sorted(
+            set(variable_map)
+            | set(allowance_map)
+            | set(carbon_price_map)
+            | set(total_cost_map)
+        )
+        for fuel in cost_fuels:
+            cost_rows.append(
+                {
+                    "year": year,
+                    "fuel": fuel,
+                    "variable_cost": float(variable_map.get(fuel, 0.0)),
+                    "allowance_cost": float(allowance_map.get(fuel, 0.0)),
+                    "carbon_price_cost": float(carbon_price_map.get(fuel, 0.0)),
+                    "total_cost": float(total_cost_map.get(fuel, 0.0)),
+                }
+            )
+
+        capacity_unit_mwh_map: Mapping[str, float] = entry.get("capacity_by_unit_mwh", {})
+        capacity_unit_mw_map: Mapping[str, float] = entry.get("capacity_by_unit_mw", {})
+        generation_unit_map: Mapping[str, float] = entry.get("generation_by_unit", {})
+        for unit, cap_value in capacity_unit_mwh_map.items():
+            cap_float = float(cap_value)
+            if cap_float <= 1e-6:
+                continue
+            generated = float(generation_unit_map.get(unit, 0.0))
+            if abs(generated) <= 1e-6:
+                stranded_rows.append(
+                    {
+                        "year": year,
+                        "unit": unit,
+                        "capacity_mwh": cap_float,
+                        "capacity_mw": float(capacity_unit_mw_map.get(unit, 0.0)),
+                    }
+                )
+
     annual_df = pd.DataFrame(annual_rows, columns=ANNUAL_OUTPUT_COLUMNS)
     if not annual_df.empty:
         annual_df = annual_df.sort_values("year").reset_index(drop=True)
@@ -1332,7 +1490,68 @@ def _build_engine_outputs(
     if not flows_df.empty:
         flows_df = flows_df.sort_values(flows_columns[:-1]).reset_index(drop=True)
 
+    generation_df = pd.DataFrame(
+        generation_rows, columns=["year", "fuel", "generation_mwh"]
+    )
+    if not generation_df.empty:
+        generation_df = generation_df.sort_values(["year", "fuel"]).reset_index(drop=True)
+
+    capacity_df = pd.DataFrame(
+        capacity_rows, columns=["year", "fuel", "capacity_mwh", "capacity_mw"]
+    )
+    if not capacity_df.empty:
+        capacity_df = capacity_df.sort_values(["year", "fuel"]).reset_index(drop=True)
+
+    cost_df = pd.DataFrame(
+        cost_rows,
+        columns=[
+            "year",
+            "fuel",
+            "variable_cost",
+            "allowance_cost",
+            "carbon_price_cost",
+            "total_cost",
+        ],
+    )
+    if not cost_df.empty:
+        cost_df = cost_df.sort_values(["year", "fuel"]).reset_index(drop=True)
+
+    emissions_fuel_df = pd.DataFrame(
+        emissions_fuel_rows, columns=["year", "fuel", "emissions_tons"]
+    )
+    if not emissions_fuel_df.empty:
+        emissions_fuel_df = emissions_fuel_df.sort_values(["year", "fuel"]).reset_index(
+            drop=True
+        )
+
+    stranded_df = pd.DataFrame(
+        stranded_rows, columns=["year", "unit", "capacity_mwh", "capacity_mw"]
+    )
+    if not stranded_df.empty:
+        stranded_df = stranded_df.sort_values(["year", "unit"]).reset_index(drop=True)
+
     emissions_total = {int(row["year"]): float(row["emissions_tons"]) for row in annual_rows}
+
+    normalized_demand: dict[int, float] = {}
+    if demand_summary:
+        for year, value in demand_summary.items():
+            try:
+                normalized_demand[int(year)] = float(value)
+            except (TypeError, ValueError):
+                continue
+
+    audits: dict[str, object] = {}
+    if normalized_demand:
+        audits = run_audits(
+            annual_df=annual_df,
+            emissions_by_region_df=emissions_df,
+            emissions_by_fuel_df=emissions_fuel_df,
+            generation_by_fuel_df=generation_df,
+            capacity_by_fuel_df=capacity_df,
+            cost_by_fuel_df=cost_df,
+            stranded_units_df=stranded_df,
+            demand_by_year=normalized_demand,
+        )
 
     outputs = EngineOutputs(
         annual=annual_df,
@@ -1342,6 +1561,12 @@ def _build_engine_outputs(
         limiting_factors=list(limiting_factors or []),
         emissions_total=emissions_total,
         emissions_by_region_map=emissions_map,
+        generation_by_fuel=generation_df,
+        capacity_by_fuel=capacity_df,
+        cost_by_fuel=cost_df,
+        emissions_by_fuel=emissions_fuel_df,
+        stranded_units=stranded_df,
+        audits=audits,
     )
 
     if LOGGER.isEnabledFor(logging.INFO):
@@ -1507,6 +1732,15 @@ def run_end_to_end_from_frames(
     frames_obj = Frames.coerce(frames, carbon_price_schedule=schedule_lookup_source)
     policy_spec = frames_obj.policy()
     policy = policy_spec.to_policy()
+
+    demand_summary: dict[int, float] = {}
+    try:
+        demand_df = frames_obj.demand()
+    except Exception:
+        demand_df = None
+    if isinstance(demand_df, pd.DataFrame) and not demand_df.empty:
+        grouped = demand_df.groupby("year")["demand_mwh"].sum()
+        demand_summary = {int(year): float(value) for year, value in grouped.items()}
 
     period_candidates: Iterable[int] | None = run_years if run_years else years
     years_sequence = _coerce_years(policy, period_candidates)
@@ -1993,4 +2227,5 @@ def run_end_to_end_from_frames(
         dispatch_solver,
         policy,
         limiting_factors=limiting_factors,
+        demand_summary=demand_summary,
     )

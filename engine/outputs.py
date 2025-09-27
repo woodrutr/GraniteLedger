@@ -35,6 +35,35 @@ class EngineOutputs:
     limiting_factors: list[str] = field(default_factory=list)
     emissions_total: Mapping[int, float] = field(default_factory=dict)
     emissions_by_region_map: Mapping[str, Mapping[int, float]] = field(default_factory=dict)
+    generation_by_fuel: pd.DataFrame = field(
+        default_factory=lambda: pd.DataFrame(columns=["year", "fuel", "generation_mwh"])
+    )
+    capacity_by_fuel: pd.DataFrame = field(
+        default_factory=lambda: pd.DataFrame(
+            columns=["year", "fuel", "capacity_mwh", "capacity_mw"]
+        )
+    )
+    cost_by_fuel: pd.DataFrame = field(
+        default_factory=lambda: pd.DataFrame(
+            columns=[
+                "year",
+                "fuel",
+                "variable_cost",
+                "allowance_cost",
+                "carbon_price_cost",
+                "total_cost",
+            ]
+        )
+    )
+    emissions_by_fuel: pd.DataFrame = field(
+        default_factory=lambda: pd.DataFrame(columns=["year", "fuel", "emissions_tons"])
+    )
+    stranded_units: pd.DataFrame = field(
+        default_factory=lambda: pd.DataFrame(
+            columns=["year", "unit", "capacity_mwh", "capacity_mw"]
+        )
+    )
+    audits: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         _ensure_pandas()
@@ -47,6 +76,11 @@ class EngineOutputs:
         emissions_filename: str = 'emissions_by_region.csv',
         price_filename: str = 'price_by_region.csv',
         flows_filename: str = 'flows.csv',
+        generation_filename: str = 'generation_by_fuel.csv',
+        capacity_filename: str = 'capacity_by_fuel.csv',
+        cost_filename: str = 'cost_by_fuel.csv',
+        emissions_fuel_filename: str = 'emissions_by_fuel.csv',
+        stranded_filename: str = 'stranded_units.csv',
     ) -> None:
         """Persist the stored DataFrames to ``outdir`` as CSV files."""
 
@@ -59,6 +93,18 @@ class EngineOutputs:
         self.emissions_by_region.to_csv(output_dir / emissions_filename, index=False)
         self.price_by_region.to_csv(output_dir / price_filename, index=False)
         self.flows.to_csv(output_dir / flows_filename, index=False)
+        if not self.generation_by_fuel.empty:
+            self.generation_by_fuel.to_csv(output_dir / generation_filename, index=False)
+        if not self.capacity_by_fuel.empty:
+            self.capacity_by_fuel.to_csv(output_dir / capacity_filename, index=False)
+        if not self.cost_by_fuel.empty:
+            self.cost_by_fuel.to_csv(output_dir / cost_filename, index=False)
+        if not self.emissions_by_fuel.empty:
+            self.emissions_by_fuel.to_csv(
+                output_dir / emissions_fuel_filename, index=False
+            )
+        if not self.stranded_units.empty:
+            self.stranded_units.to_csv(output_dir / stranded_filename, index=False)
 
     def emissions_summary_table(self) -> "pd.DataFrame":
         """Return a normalised emissions-by-region table for reporting."""

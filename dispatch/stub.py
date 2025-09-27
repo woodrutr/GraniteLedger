@@ -57,12 +57,28 @@ def solve(
         fuel: output * demand_factor for fuel, output in _BASE_GEN_BY_FUEL.items()
     }
 
+    emissions_by_fuel: Dict[str, float] = {}
+    total_gen = sum(gen_by_fuel.values())
+    if total_gen > 0.0:
+        for fuel, output in gen_by_fuel.items():
+            emissions_by_fuel[fuel] = emissions * float(output) / float(total_gen)
+
     return DispatchResult(
         gen_by_fuel=gen_by_fuel,
         region_prices=dict(_REGION_PRICES),
         emissions_tons=emissions,
         emissions_by_region={'system': emissions},
         flows={},
+        emissions_by_fuel=emissions_by_fuel,
+        capacity_mwh_by_fuel={},
+        capacity_mw_by_fuel={},
+        generation_by_unit={},
+        capacity_mwh_by_unit={},
+        capacity_mw_by_unit={},
+        variable_cost_by_fuel={},
+        allowance_cost_by_fuel={},
+        carbon_price_cost_by_fuel={},
+        total_cost_by_fuel={},
     )
 
 
